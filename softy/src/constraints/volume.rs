@@ -1,8 +1,8 @@
 use crate::attrib_defines::*;
-use crate::constraint::*;
 use crate::matrix::*;
 use crate::Error;
 use crate::Material;
+use crate::Real;
 use crate::{Mesh, TetMesh};
 use geo::{attrib::*, mesh::topology::*, mesh::CellType, ops::Volume};
 use tensr::{Matrix3, Vector3};
@@ -106,6 +106,73 @@ impl VolumeConstraint {
 
         Self::compute_volume(ref_pos)
     }
+
+    #[inline]
+    pub fn constraint_size(&self) -> usize {
+        1
+    }
+
+    #[inline]
+    pub fn constraint_bounds<T: Real>(&self) -> (Vec<T>, Vec<T>) {
+        (vec![T::zero()], vec![T::zero()])
+    }
+
+    pub fn constraint<T: Real>(&mut self, _x0: &[T], x1: &[T], value: &mut [T]) {
+        debug_assert_eq!(value.len(), self.constraint_size());
+        let pos1: &[[T; 3]] = bytemuck::cast_slice(x1);
+        let mut total_volume = T::zero();
+        for tri in self.surface_topo.iter() {
+            let p = Matrix3::new(tri_at(pos1, tri));
+            let signed_volume = p[0].dot(p[1].cross(p[2]));
+            total_volume += signed_volume;
+        }
+        value[0] = total_volume - T::from(6.0 * self.rest_volume).unwrap();
+    }
+
+    #[inline]
+    pub fn constraint_jacobian_size(&self) -> usize {
+        3 * 3 * self.surface_topo.len()
+    }
+    pub fn constraint_jacobian_values<T: Real>(
+        &mut self,
+        x0: &[T],
+        x1: &[T],
+        values: &mut [T],
+    ) -> Result<(), Error> {
+        debug_assert_eq!(values.len(), self.constraint_jacobian_size());
+        for (out, val) in values
+            .iter_mut()
+            .zip(self.constraint_jacobian_values_iter(x0, x1))
+        {
+            *out = val;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn constraint_hessian_size(&self) -> usize {
+        6 * 3 * self.surface_topo.len()
+    }
+    pub fn num_hessian_diagonal_nnz(&self) -> usize {
+        0
+    }
+    pub fn constraint_hessian_values<T: Real>(
+        &mut self,
+        x0: &[T],
+        x1: &[T],
+        lambda: &[T],
+        scale: T,
+        values: &mut [T],
+    ) -> Result<(), Error> {
+        debug_assert_eq!(values.len(), self.constraint_hessian_size());
+        for (out, val) in values
+            .iter_mut()
+            .zip(self.constraint_hessian_values_iter(x0, x1, lambda))
+        {
+            *out = T::from(val).unwrap() * scale;
+        }
+        Ok(())
+    }
 }
 
 /// A utility function to index a slice using three indices, creating a new array of 3
@@ -114,33 +181,9 @@ fn tri_at<T: Copy>(slice: &[T], tri: &[usize; 3]) -> [T; 3] {
     [slice[tri[0]], slice[tri[1]], slice[tri[2]]]
 }
 
-impl<'a> Constraint<'a, f64> for VolumeConstraint {
-    type Input = &'a [f64];
-
-    #[inline]
-    fn constraint_size(&self) -> usize {
-        1
-    }
-
-    fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
-        (vec![0.0], vec![0.0])
-    }
-
-    fn constraint(&mut self, _x0: &'a [f64], x1: &'a [f64], value: &mut [f64]) {
-        debug_assert_eq!(value.len(), self.constraint_size());
-        let pos1: &[[f64; 3]] = bytemuck::cast_slice(x1);
-        let mut total_volume = 0.0;
-        for tri in self.surface_topo.iter() {
-            let p = Matrix3::new(tri_at(pos1, tri));
-            let signed_volume = p[0].dot(p[1].cross(p[2]));
-            total_volume += signed_volume;
-        }
-        value[0] = total_volume - 6.0 * self.rest_volume;
-    }
-}
-
 impl VolumeConstraint {
     /// Compute the indices of the sparse matrix entries of the constraint Jacobian.
+    #[cfg(feature = "optsolver")]
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
@@ -155,12 +198,12 @@ impl VolumeConstraint {
     }
 
     /// Compute the values of the constraint Jacobian.
-    fn constraint_jacobian_values_iter<'a>(
+    fn constraint_jacobian_values_iter<'a, T: Real>(
         &'a self,
-        _x0: &'a [f64],
-        x1: &'a [f64],
-    ) -> impl Iterator<Item = f64> + 'a {
-        let pos1: &[[f64; 3]] = bytemuck::cast_slice(x1);
+        _x0: &'a [T],
+        x1: &'a [T],
+    ) -> impl Iterator<Item = T> + 'a {
+        let pos1: &[[T; 3]] = bytemuck::cast_slice(x1);
 
         self.surface_topo.iter().flat_map(move |tri| {
             let p = Matrix3::new(tri_at(pos1, tri));
@@ -168,35 +211,6 @@ impl VolumeConstraint {
 
             (0..3).flat_map(move |vi| (0..3).map(move |j| c[vi][j]))
         })
-    }
-}
-
-impl<'a> ConstraintJacobian<'a, f64> for VolumeConstraint {
-    #[inline]
-    fn constraint_jacobian_size(&self) -> usize {
-        3 * 3 * self.surface_topo.len()
-    }
-    fn constraint_jacobian_indices_iter<'b>(
-        &'b self,
-    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'b>, Error> {
-        Ok(Box::new(
-            VolumeConstraint::constraint_jacobian_indices_iter(self),
-        ))
-    }
-    fn constraint_jacobian_values(
-        &mut self,
-        x0: &'a [f64],
-        x1: &'a [f64],
-        values: &mut [f64],
-    ) -> Result<(), Error> {
-        debug_assert_eq!(values.len(), self.constraint_jacobian_size());
-        for (out, val) in values
-            .iter_mut()
-            .zip(self.constraint_jacobian_values_iter(x0, x1))
-        {
-            *out = val;
-        }
-        Ok(())
     }
 }
 
@@ -208,8 +222,12 @@ impl<'a> ConstraintJacobian<'a, f64> for VolumeConstraint {
 /// ⎣-y  x  0⎦
 /// ```
 #[inline]
-fn skew(x: Vector3<f64>) -> Matrix3<f64> {
-    Matrix3::new([[0.0, x[2], -x[1]], [-x[2], 0.0, x[0]], [x[1], -x[0], 0.0]])
+fn skew<T: Real>(x: Vector3<T>) -> Matrix3<T> {
+    Matrix3::new([
+        [T::zero(), x[2], -x[1]],
+        [-x[2], T::zero(), x[0]],
+        [x[1], -x[0], T::zero()],
+    ])
 }
 
 impl VolumeConstraint {
@@ -247,58 +265,22 @@ impl VolumeConstraint {
         })
     }
 
-    pub fn constraint_hessian_values_iter<'a>(
+    pub fn constraint_hessian_values_iter<'a, T: Real>(
         &'a self,
-        _x0: &'a [f64],
-        x1: &'a [f64],
-        lambda: &'a [f64],
-    ) -> impl Iterator<Item = f64> + 'a {
-        let pos1: &[[f64; 3]] = bytemuck::cast_slice(x1);
+        _x0: &'a [T],
+        x1: &'a [T],
+        lambda: &'a [T],
+    ) -> impl Iterator<Item = T> + 'a {
+        let pos1: &[[T; 3]] = bytemuck::cast_slice(x1);
 
         self.surface_topo.iter().flat_map(move |tri| {
             let p = Matrix3::new(tri_at(pos1, tri));
             let local_hess = [skew(p[0]), skew(p[1]), skew(p[2])];
             Self::constraint_hessian_iter(tri).map(move |(_, (r, c), vi, off)| {
                 let vjn = (vi + off + off) % 3;
-                let factor = if off == 1 { 1.0 } else { -1.0 };
+                let factor = if off == 1 { T::one() } else { -T::one() };
                 factor * lambda[0] * local_hess[vjn][c][r]
             })
         })
-    }
-}
-
-impl<'a> ConstraintHessian<'a, f64> for VolumeConstraint {
-    type InputDual = &'a [f64];
-
-    #[inline]
-    fn constraint_hessian_size(&self) -> usize {
-        6 * 3 * self.surface_topo.len()
-    }
-    fn num_hessian_diagonal_nnz(&self) -> usize {
-        0
-    }
-    fn constraint_hessian_indices_iter<'b>(
-        &'b self,
-    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'b>, Error> {
-        Ok(Box::new(VolumeConstraint::constraint_hessian_indices_iter(
-            self,
-        )))
-    }
-    fn constraint_hessian_values(
-        &mut self,
-        x0: &'a [f64],
-        x1: &'a [f64],
-        lambda: &'a [f64],
-        scale: f64,
-        values: &mut [f64],
-    ) -> Result<(), Error> {
-        debug_assert_eq!(values.len(), self.constraint_hessian_size());
-        for (out, val) in values
-            .iter_mut()
-            .zip(self.constraint_hessian_values_iter(x0, x1, lambda))
-        {
-            *out = val * scale;
-        }
-        Ok(())
     }
 }

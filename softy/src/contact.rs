@@ -1,6 +1,5 @@
 mod solver;
 
-#[cfg(feature = "optsolver")]
 use rayon::prelude::*;
 
 use crate::Real;
@@ -8,7 +7,6 @@ use num_traits::Float;
 use tensr::*;
 
 use crate::friction::FrictionParams;
-#[cfg(feature = "optsolver")]
 use crate::Index;
 pub use solver::ContactSolver;
 
@@ -478,7 +476,6 @@ impl<T: Real> TripletContactJacobian<T> {
         }
     }
 
-    #[cfg(feature = "optsolver")]
     pub fn from_selection<'a>(
         surf: &implicits::QueryTopo<T>,
         active_contact_points: SelectView<'a, Chunked3<&'a [T]>>,

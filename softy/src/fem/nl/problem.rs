@@ -5,12 +5,15 @@ use flatk::*;
 use geo::attrib::*;
 use geo::mesh::{topology::*, VertexPositions};
 use num_traits::{Float, Zero};
-use tensr::{AsMutTensor, IntoData, IntoTensor, Matrix, Tensor};
+use rayon::prelude::*;
+use tensr::{AsMutTensor, AsTensor, IntoData, IntoTensor, Matrix, Tensor};
 
 use super::state::*;
 use crate::attrib_defines::*;
-use crate::constraint::*;
-use crate::constraints::volume::VolumeConstraint;
+use crate::constraints::{
+    indexed_point_contact::{compute_contact_force_magnitude, IndexedPointContactConstraint},
+    volume::VolumeConstraint,
+};
 use crate::contact::ContactJacobianView;
 use crate::energy::{EnergyGradient, EnergyHessian, EnergyHessianTopology};
 use crate::energy_models::{gravity::*, inertia::*};
@@ -65,6 +68,38 @@ pub fn write_jacobian_img(jac: &na::DMatrix<f64>, iter: u32) {
         .expect("Failed to save Jacobian Image");
 }
 
+/// The id of the object subject to the appropriate contact constraint.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ObjectId {
+    pub obj_id: usize,
+    pub include_fixed: bool,
+}
+
+/// A struct that keeps track of which objects are being affected by the contact
+/// constraints.
+#[derive(Clone, Debug)]
+pub struct FrictionalContactConstraint<T: Real> {
+    pub object_id: ObjectId,
+    pub collider_id: ObjectId,
+    pub constraint: RefCell<IndexedPointContactConstraint<T>>,
+}
+
+impl<T: Real> FrictionalContactConstraint<T> {
+    pub fn clone_as_autodiff<S: Real>(&self) -> FrictionalContactConstraint<ad::FT<S>> {
+        let FrictionalContactConstraint {
+            object_id,
+            collider_id,
+            ref constraint,
+        } = *self;
+
+        FrictionalContactConstraint {
+            object_id,
+            collider_id,
+            constraint: RefCell::new(constraint.borrow().clone_as_autodiff()),
+        }
+    }
+}
+
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
 #[derive(Clone, Debug)]
@@ -81,10 +116,8 @@ pub struct NLProblem<T: Real> {
     /// Contact tolerance.
     // TODO: move this to FrictionalContactConstraint.
     pub delta: f64,
-    ///// One way contact constraints between a pair of objects.
-    //pub frictional_contacts: Vec<FrictionalContactConstraint<T>>,
-    ///// One way contact constraints between a pair of objects (used for automatic differentiation).
-    //pub frictional_contacts_ad: Vec<FrictionalContactConstraint<ad::FT<T>>>,
+    pub frictional_contact_constraints: Vec<FrictionalContactConstraint<T>>,
+    pub frictional_contact_constraints_ad: Vec<FrictionalContactConstraint<ad::FT<T>>>,
     /// Constraint on the volume of different regions of the simulation.
     pub volume_constraints: Vec<RefCell<VolumeConstraint>>,
     /// Gravitational potential energy.
@@ -121,9 +154,9 @@ impl<T: Real> NLProblem<T> {
         1.0 //utils::approx_power_of_two64(100.0 / (self.time_step() * self.max_element_force_scale))
     }
 
-    //fn volume_constraint_scale(&self) -> f64 {
-    //    1.0
-    //}
+    fn volume_constraint_scale(&self) -> f64 {
+        1.0
+    }
 
     //fn contact_constraint_scale(&self) -> f64 {
     //    1.0
@@ -167,7 +200,6 @@ impl<T: Real> NLProblem<T> {
 impl<T: Real64> NLProblem<T> {
     /// Returns a reference to the original mesh used to create this problem with updated position values from the given velocity degrees of freedom.
     pub fn mesh_with(&self, dq: &[T]) -> Mesh {
-        use tensr::AsTensor;
         let mut mesh = self.original_mesh.clone();
         let out = mesh.vertex_positions_mut();
 
@@ -203,7 +235,6 @@ impl<T: Real64> NLProblem<T> {
     }
     /// Returns a reference to the original mesh used to create this problem with updated values.
     pub fn mesh(&self) -> Mesh {
-        use tensr::AsTensor;
         let mut mesh = self.original_mesh.clone();
         let out = mesh.vertex_positions_mut();
 
@@ -229,7 +260,6 @@ impl<T: Real64> NLProblem<T> {
     }
 
     fn compute_residual(&self, mesh: &mut Mesh) {
-        use tensr::AsTensor;
         self.compute_vertex_be_residual();
         let state = &*self.state.borrow();
         let vertex_residuals = state.vtx.view().map_storage(|state| state.residual);
@@ -1415,6 +1445,74 @@ impl<T: Real64> NLProblem<T> {
         //constraint
     }
 
+    /// Computes and subtracts constraint forces from the given residual vector `r`.
+    ///
+    /// `pos` are the stacked position coordinates of all vertices.
+    /// `vel` are the stacked velocity coordinates of all vertices.
+    /// `lambda` is the workspace per constraint constraint force magnitude.
+    /// `r` is the output stacked force vector.
+    fn subtract_constraint_forces<S: Real>(
+        &self,
+        pos: &[S],
+        vel: &[S],
+        r: &mut [S],
+        mut lambda: ChunkedView<&mut [S]>,
+        frictional_contact_constraints: &[FrictionalContactConstraint<S>],
+    ) {
+        assert_eq!(pos.len(), vel.len());
+        assert_eq!(r.len(), pos.len());
+        let r3: &mut [[S; 3]] = bytemuck::cast_slice_mut(r);
+
+        // Compute contact lambda.
+        {
+            let mut lambda = lambda.view_mut().isolate(POINT_CONTACT_CONSTRAINT);
+
+            for fc in frictional_contact_constraints.iter() {
+                let mut fc_constraint = fc.constraint.borrow_mut();
+
+                // Take a slice of lambda for this particular contact constraint.
+                let num_constraints = fc_constraint.constraint_size();
+                let (local_lambda, rest) = lambda.split_at_mut(num_constraints);
+                lambda = rest; // Increment lambda
+
+                fc_constraint.constraint(Chunked3::from_flat(pos), local_lambda);
+
+                compute_contact_force_magnitude(lambda, self.delta as f32, self.kappa as f32);
+
+                // Compute lambda * constraint Jacobian (notice the order) and
+                // *subtract* it from f.
+
+                // Subtract contact force on object.
+                fc_constraint
+                    .object_constraint_jacobian_blocks_iter()
+                    .for_each(|(row, col, j)| {
+                        *r3[col].as_mut_tensor() -= *j.as_tensor() * local_lambda[row];
+                    });
+
+                //        // Subtract friction force force on object.
+                //        if let Some((obj_f, _)) = friction.as_ref() {
+                //            for (obj_f, fc) in zip!(obj_f.iter(), obj_fc.iter_mut()) {
+                //                *fc.as_mut_tensor() -= obj_f.as_tensor();
+                //            }
+                //        }
+
+                let col_j_blocks_iter = fc_constraint.collider_constraint_jacobian_blocks_iter();
+
+                // Subtract contact force on collider.
+                col_j_blocks_iter.for_each(|(row, col, j)| {
+                    *r3[col].as_mut_tensor() -= *j.as_tensor() * local_lambda[row];
+                });
+
+                //        // Subtract friction force force on collider.
+                //        if let Some((_, col_f)) = friction.as_ref() {
+                //            for (i, col_f, _) in col_f.iter() {
+                //                *col_fc[i].as_mut_tensor() -= col_f.as_tensor();
+                //            }
+                //        }
+            }
+        }
+    }
+
     //fn subtract_friction_and_contact_forces<S: Real>(
     //    &self,
     //    q: &[S],
@@ -1543,11 +1641,11 @@ impl<T: Real64> NLProblem<T> {
     fn subtract_force<S: Real>(
         &self,
         state: ResidualState<&[T], &[S], &mut [S]>,
+        lambda: ChunkedView<&mut [S]>,
         solid: &TetSolid,
         shell: &TriShell,
         //vfc: &mut [S],
-        //frictional_contacts: &[FrictionalContactConstraint<S>],
-        //lambda: &mut Vec<S>,
+        frictional_contacts: &[FrictionalContactConstraint<S>],
     ) {
         let ResidualState { cur, next, r } = state;
 
@@ -1560,16 +1658,7 @@ impl<T: Real64> NLProblem<T> {
             .gravity(self.gravity)
             .add_energy_gradient(cur.pos, next.pos, r);
 
-        //self.subtract_friction_and_contact_forces(
-        //    q,
-        //    dq,
-        //    pos,
-        //    vel,
-        //    f.storage_mut(),
-        //    vfc,
-        //    frictional_contacts,
-        //    lambda,
-        //);
+        self.subtract_constraint_forces(next.pos, next.vel, r, lambda, frictional_contacts);
 
         debug_assert!(r.iter().all(|r| r.is_finite()));
     }
@@ -1586,7 +1675,11 @@ impl<T: Real64> NLProblem<T> {
 
         {
             let State {
-                vtx, solid, shell, ..
+                vtx,
+                solid,
+                shell,
+                lambda_ad,
+                ..
             } = state;
 
             // Clear residual vector.
@@ -1597,8 +1690,10 @@ impl<T: Real64> NLProblem<T> {
 
             self.subtract_force(
                 vtx.residual_state_ad().into_storage(),
+                lambda_ad.view_mut(),
                 solid,
                 shell, //vtx_state, vfc, &self.frictional_contacts_ad, lambda,
+                self.frictional_contact_constraints_ad.as_slice(),
             );
         }
 
@@ -1637,27 +1732,33 @@ impl<T: Real64> NLProblem<T> {
 
     /// Compute the bE residual on simulated vertices.
     fn compute_vertex_be_residual(&self) {
-        let state = &mut *self.state.borrow_mut();
+        let State {
+            vtx,
+            solid,
+            shell,
+            lambda,
+            ..
+        } = &mut *self.state.borrow_mut();
 
         // Clear residual vector.
-        state
-            .vtx
-            .residual
+        vtx.residual
             .storage_mut()
             .iter_mut()
             .for_each(|x| *x = T::zero());
 
         self.subtract_force(
-            state.vtx.residual_state().into_storage(),
-            &state.solid,
-            &state.shell, //vfc, &self.frictional_contacts, lambda,
+            vtx.residual_state().into_storage(),
+            lambda.view_mut(),
+            &solid,
+            &shell, //vfc, &self.frictional_contacts, lambda,
+            self.frictional_contact_constraints.as_slice(),
         );
 
-        let mut res_state = state.vtx.residual_state();
+        let mut res_state = vtx.residual_state();
         *res_state.storage_mut().r.as_mut_tensor() *= T::from(self.time_step()).unwrap();
 
         if !self.is_static() {
-            self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
+            self.add_momentum_diff(res_state.into_storage(), &solid, &shell);
         }
     }
 
@@ -1776,13 +1877,17 @@ impl<T: Real64> NLProblem<T> {
         let dt = T::from(self.time_step()).unwrap();
 
         // Constraint scaling
-        //let c_scale = dt * dt;
+        let c_scale = dt * dt;
 
         // Multiply energy hessian by objective factor and scaling factors.
         let factor = T::from(self.impulse_inv_scale()).unwrap();
 
         let State {
-            vtx, solid, shell, ..
+            vtx,
+            solid,
+            shell,
+            lambda,
+            ..
         } = state;
 
         let ResidualState { cur, next, .. } = vtx.residual_state().into_storage();
@@ -1831,24 +1936,20 @@ impl<T: Real64> NLProblem<T> {
         }
         count += i;
 
-        //for (solid_idx, vc) in self.volume_constraints.iter() {
-        //    let q_cur = dof_cur.at(SOLIDS_INDEX).at(*solid_idx).into_storage().q;
-        //    let q_next = dof_next.at(SOLIDS_INDEX).at(*solid_idx).into_storage().q;
-        //    let nc = vc.borrow().constraint_size();
-        //    let nh = vc.borrow().constraint_hessian_size();
-        //    vc.borrow_mut()
-        //        .constraint_hessian_values(
-        //            q_cur,
-        //            q_next,
-        //            &lambda[coff..coff + nc],
-        //            c_scale * self.volume_constraint_scale(),
-        //            &mut vals[count..count + nh],
-        //        )
-        //        .unwrap();
+        for vc in self.volume_constraints.iter() {
+            let nh = vc.borrow().constraint_hessian_size();
+            vc.borrow_mut()
+                .constraint_hessian_values(
+                    cur.pos,
+                    next.pos,
+                    &lambda[VOLUME_CONSTRAINT],
+                    c_scale * self.volume_constraint_scale(),
+                    &mut vals[count..count + nh],
+                )
+                .unwrap();
 
-        //    count += nh;
-        //    coff += nc;
-        //}
+            count += nh;
+        }
 
         // TODO: Add frictional contact values
 
@@ -1991,6 +2092,7 @@ impl<T: Real> NLProblem<T> {
             kappa,
             delta,
             volume_constraints,
+            frictional_contact_constraints,
             gravity,
             time_step,
             iterations,
@@ -2005,11 +2107,21 @@ impl<T: Real> NLProblem<T> {
 
         let state = state.borrow();
         let state = RefCell::new(state.clone_as_autodiff());
+        let frictional_contact_constraints = frictional_contact_constraints
+            .iter()
+            .map(FrictionalContactConstraint::clone_as_autodiff::<f64>)
+            .collect::<Vec<_>>();
+        let frictional_contact_constraints_ad = frictional_contact_constraints
+            .iter()
+            .map(FrictionalContactConstraint::clone_as_autodiff::<ad::F1>)
+            .collect::<Vec<_>>();
         NLProblem {
             state,
             kappa,
             delta,
             volume_constraints,
+            frictional_contact_constraints,
+            frictional_contact_constraints_ad,
             gravity,
             time_step,
             iterations,

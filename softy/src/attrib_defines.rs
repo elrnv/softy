@@ -19,6 +19,8 @@ pub const CONTACT_ATTRIB: &str = "contact";
 pub(crate) const VERTEX_TYPE_ATTRIB: &str = "__softy_internal_vertex_type";
 pub(crate) const STRAIN_ENERGY_ATTRIB: &str = "strain_energy";
 pub(crate) const MASS_ATTRIB: &str = "mass";
+pub(crate) const MASS_INV_ATTRIB: &str = "__softy_internal_mass_inv";
+pub(crate) const ORIGINAL_VERTEX_INDEX_ATTRIB: &str = "__softy_internal_orig_vertex_index";
 pub const RESIDUAL_ATTRIB: &str = "residual";
 
 #[cfg(feature = "optsolver")]
@@ -48,11 +50,13 @@ use optsolver_defines::*;
 
 pub(crate) type StrainEnergyType = f64;
 pub type SourceIndexType = usize;
+pub type OriginalVertexIndexType = usize;
 pub type FixedIntType = i8;
 pub type MaterialIdType = i32;
 pub type ObjectIdType = i32;
 pub type VolumeZoneIdType = i32;
 pub(crate) type MassType = f64;
+pub(crate) type MassInvType = f64;
 pub type DensityType = f32;
 pub type DampingType = f32;
 pub type MuType = f32;

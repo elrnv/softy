@@ -948,6 +948,18 @@ impl SolverBuilder {
             }
         }
 
+        // Also compute mass inverses for internal use.
+        let fixed_iter = tetmesh
+            .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+            .unwrap_or_else(|| Box::new(std::iter::repeat(0).take(tetmesh.num_vertices())));
+        let mass_inv: Vec<_> = fixed_iter
+            .zip(masses.iter())
+            .map(|(fixed, m)| if fixed == 1 { 0.0 } else { 1.0 / m })
+            .collect();
+
+        tetmesh
+            .set_attrib_data::<MassInvType, VertexIndex>(MASS_INV_ATTRIB, mass_inv)
+            .unwrap();
         tetmesh
             .set_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses)
             .unwrap();

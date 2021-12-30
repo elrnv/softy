@@ -1,12 +1,10 @@
-#[cfg(feature = "optsolver")]
+pub mod indexed_point_contact;
 pub mod point_contact;
 pub mod volume;
 
 #[cfg(feature = "optsolver")]
 use crate::attrib_defines::*;
-#[cfg(feature = "optsolver")]
 use crate::contact::*;
-#[cfg(feature = "optsolver")]
 use num_traits::Zero;
 
 use crate::constraint::*;
@@ -15,13 +13,12 @@ use crate::Error;
 use crate::Real;
 
 //pub use self::linearized_point_contact::*;
-#[cfg(feature = "optsolver")]
+pub use self::indexed_point_contact::*;
 pub use self::point_contact::*;
 pub use self::volume::*;
 use tensr::*;
 
 /// An struct describing a fixed, rigid or deformable contact surface.
-#[cfg(feature = "optsolver")]
 #[derive(Copy, Clone, Debug)]
 pub struct ContactSurface<M, T> {
     pub mesh: M,
@@ -29,7 +26,6 @@ pub struct ContactSurface<M, T> {
 }
 
 /// The kind of contact surface: fixed, rigid or deformable.
-#[cfg(feature = "optsolver")]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SurfaceKind<T> {
     Fixed,
@@ -37,7 +33,6 @@ pub enum SurfaceKind<T> {
     Deformable,
 }
 
-#[cfg(feature = "optsolver")]
 impl<M, T> ContactSurface<M, T> {
     pub fn deformable(mesh: M) -> Self {
         ContactSurface {
@@ -67,10 +62,26 @@ impl<M, T> ContactSurface<M, T> {
 }
 
 /// Construct a new contact constraint based on the given parameters.
-#[cfg(feature = "optsolver")]
-pub fn build_contact_constraint<T: Real>(
+pub fn build_indexed_contact_constraint<T: Real, VP: geo::mesh::VertexMesh<f64>>(
     object: ContactSurface<&crate::TriMesh, f64>,
-    collider: ContactSurface<&crate::TriMesh, f64>,
+    collider: ContactSurface<&VP, f64>,
+    params: FrictionalContactParams,
+) -> Result<std::cell::RefCell<IndexedPointContactConstraint<T>>, crate::Error> {
+    Ok(std::cell::RefCell::new(IndexedPointContactConstraint::new(
+        object,
+        collider,
+        params.kernel,
+        params.friction_params,
+        params.contact_offset,
+        params.contact_type == ContactType::LinearizedPoint,
+    )?))
+}
+
+/// Construct a new contact constraint based on the given parameters.
+#[cfg(feature = "optsolver")]
+pub fn build_contact_constraint<T: Real, VP: geo::mesh::VertexMesh<f64>>(
+    object: ContactSurface<&crate::TriMesh, f64>,
+    collider: ContactSurface<&VP, f64>,
     params: FrictionalContactParams,
 ) -> Result<std::cell::RefCell<PointContactConstraint<T>>, crate::Error> {
     Ok(std::cell::RefCell::new(PointContactConstraint::new(
@@ -226,7 +237,6 @@ fn remap_values_complex_test() {
     );
 }
 
-#[cfg(feature = "optsolver")]
 pub trait ContactConstraint<T: Real>:
     for<'a> Constraint<'a, T, Input = [SubsetView<'a, Chunked3<&'a [T]>>; 2]>
     + for<'a> ContactConstraintJacobian<'a, T>
@@ -261,16 +271,16 @@ pub trait ContactConstraint<T: Real>:
     /// Update the position configuration of contacting objects using the given position data.
     fn update_contact_pos(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2]);
 
-    /// Update the underlying friction impulse based on the given predictive step.
-    fn update_frictional_contact_impulse(
-        &mut self,
-        contact_impulse: &[T],
-        x: [SubsetView<Chunked3<&[T]>>; 2],
-        dx: [SubsetView<Chunked3<&[T]>>; 2],
-        rigid_motion: [Option<[[T; 3]; 2]>; 2],
-        constraint_values: &[T],
-        friction_steps: u32,
-    ) -> u32;
+    ///// Update the underlying friction impulse based on the given predictive step.
+    //fn update_frictional_contact_impulse(
+    //    &mut self,
+    //    contact_impulse: &[T],
+    //    x: [SubsetView<Chunked3<&[T]>>; 2],
+    //    dx: [SubsetView<Chunked3<&[T]>>; 2],
+    //    rigid_motion: [Option<[[T; 3]; 2]>; 2],
+    //    constraint_values: &[T],
+    //    friction_steps: u32,
+    //) -> u32;
 
     fn add_mass_weighted_frictional_contact_impulse_to_object(
         &self,

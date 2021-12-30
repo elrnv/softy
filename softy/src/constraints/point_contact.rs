@@ -1,8 +1,7 @@
 use autodiff as ad;
-use geo::attrib::Attrib;
 use geo::bbox::BBox;
 use geo::mesh::topology::*;
-use geo::mesh::VertexPositions;
+use geo::mesh::{VertexMesh, VertexPositions};
 use geo::ops::*;
 use implicits::*;
 use lazycell::LazyCell;
@@ -14,11 +13,11 @@ use reinterpret::*;
 use tensr::*;
 
 use super::*;
+use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
 use crate::friction::*;
 use crate::matrix::*;
-use crate::objects::trishell::TriShell;
 use crate::Error;
 use crate::Real;
 use crate::TriMesh;
@@ -33,8 +32,10 @@ pub enum MassData<T> {
     Zero,                     // Infinite mass
 }
 
+#[cfg(feature = "optsolver")]
 type DBlockMatrix3<T> = Tensor![T; D D 3 3];
 
+#[cfg(feature = "optsolver")]
 #[derive(Clone, Debug, PartialEq)]
 enum MassMatrixInv<S, T, I> {
     /// Rigid body effective mass matrix on contact points
@@ -72,7 +73,6 @@ impl<T: Real> MassData<T> {
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
-#[cfg(feature = "optsolver")]
 #[derive(Clone, Debug)]
 pub struct PointContactConstraint<T = f64>
 where
@@ -80,8 +80,8 @@ where
 {
     /// Implicit surface that represents the deforming object.
     pub implicit_surface: QueryTopo<T>,
-    /// Vertex positions on the collider mesh where contact occurs.
-    pub contact_points: Chunked3<Vec<T>>,
+    /// Vertex positions on the collider object where contact occurs.
+    pub collider_vertex_positions: Chunked3<Vec<T>>,
 
     /// Friction impulses applied during contact.
     pub friction_impulses: Option<FrictionImpulses<T>>,
@@ -116,19 +116,17 @@ where
     /// Constraint Jacobian in two blocks: first for object Jacobian and second for collider
     /// Jacobian. If one is fixed, it will be `None`. This is used only when the constraint is
     /// linearized.
-    constraint_jacobian: LazyCell<[Option<DSBlockMatrix1x3<T>>; 2]>,
-
-    /// Vertex to vertex topology of the collider mesh along with a cotangent weight.
-    collider_vertex_topo: Chunked<Vec<(usize, f64)>>,
+    pub(crate) constraint_jacobian: LazyCell<[Option<DSBlockMatrix1x3<T>>; 2]>,
+    ///// Vertex to vertex topology of the collider mesh along with a cotangent weight.
+    //collider_vertex_topo: Chunked<Vec<(usize, f64)>>,
 }
 
-#[cfg(feature = "optsolver")]
 impl<T: Real> PointContactConstraint<T> {
     pub fn clone_cast<S: Real>(&self) -> PointContactConstraint<S> {
         PointContactConstraint {
             implicit_surface: self.implicit_surface.clone_cast(),
-            contact_points: self
-                .contact_points
+            collider_vertex_positions: self
+                .collider_vertex_positions
                 .iter()
                 .map(|x| x.as_tensor().cast::<S>().into())
                 .collect(),
@@ -145,15 +143,15 @@ impl<T: Real> PointContactConstraint<T> {
                 .map(|&x| S::from(x).unwrap())
                 .collect(),
             constraint_jacobian: LazyCell::new(),
-            collider_vertex_topo: self.collider_vertex_topo.clone(),
+            //collider_vertex_topo: self.collider_vertex_topo.clone(),
         }
     }
 
-    pub fn new(
+    pub fn new<VP: VertexMesh<f64>>(
         // Main object experiencing contact against its implicit surface representation.
         object: ContactSurface<&TriMesh, f64>,
         // Collision object consisting of points pushing against the solid object.
-        collider: ContactSurface<&TriMesh, f64>,
+        collider: ContactSurface<&VP, f64>,
         kernel: KernelType,
         friction_params: Option<FrictionParams>,
         contact_offset: f64,
@@ -217,7 +215,7 @@ impl<T: Real> PointContactConstraint<T> {
 
             let mut constraint = PointContactConstraint {
                 implicit_surface: surface.query_topo(&query_points),
-                contact_points: Chunked3::from_array_vec(query_points.clone()),
+                collider_vertex_positions: Chunked3::from_array_vec(query_points.clone()),
                 friction_impulses: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
                         Some(FrictionImpulses::new(fparams))
@@ -233,8 +231,9 @@ impl<T: Real> PointContactConstraint<T> {
                 problem_diameter: bbox.diameter(),
                 constraint_value: vec![T::zero(); query_points.len()],
                 constraint_jacobian: LazyCell::new(),
-                collider_vertex_topo: Self::build_vertex_topo(collider),
+                //collider_vertex_topo: Self::build_vertex_topo(collider),
             };
+            dbg!(constraint.constraint_value.len());
 
             if linearized {
                 constraint.linearize_constraint(
@@ -250,19 +249,21 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     /// Constructs a clone of this constraint with autodiff variables.
-    pub fn clone_as_autodiff(&self) -> PointContactConstraint<ad::F1> {
-        self.clone_cast::<ad::F1>()
+    pub fn clone_as_autodiff<S: Real>(&self) -> PointContactConstraint<ad::FT<S>> {
+        self.clone_cast::<ad::FT<S>>()
     }
 
-    fn object_is_fixed(&self) -> bool {
+    pub(crate) fn object_is_fixed(&self) -> bool {
         self.object_kind == SurfaceKind::Fixed
     }
-    fn collider_is_fixed(&self) -> bool {
+    pub(crate) fn collider_is_fixed(&self) -> bool {
         self.collider_kind == SurfaceKind::Fixed
     }
 
     // Construct mass data from a contact surface struct, and convert floats to type `T`.
-    fn mass_matrix_data(surf: ContactSurface<&TriMesh, f64>) -> Result<MassData<T>, Error> {
+    fn mass_matrix_data<VP: VertexMesh<f64>>(
+        surf: ContactSurface<&VP, f64>,
+    ) -> Result<MassData<T>, Error> {
         match surf.kind {
             SurfaceKind::Rigid { mass, inertia } => Ok(MassData::Dense(
                 T::from(mass).unwrap(),
@@ -271,40 +272,14 @@ impl<T: Real> PointContactConstraint<T> {
             SurfaceKind::Fixed => Ok(MassData::Zero),
             SurfaceKind::Deformable => surf
                 .mesh
-                .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
+                .attrib_as_slice::<MassInvType, VertexIndex>(MASS_INV_ATTRIB)
                 .map_err(|_| Error::InvalidParameter {
                     name: "Missing mass attribute or parameter".to_string(),
                 })
                 .and_then(|attrib| {
-                    if !attrib.iter().all(|&x| x > 0.0) {
-                        Err(Error::InvalidParameter {
-                            name: "Zero mass".to_string(),
-                        })
-                    } else {
-                        let data: Chunked3<Vec<_>> = if let Ok(fixed) = surf
-                            .mesh
-                            .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
-                        {
-                            // Fixed vertices have infinite mass, so zero inverse mass.
-                            attrib
-                                .iter()
-                                .zip(fixed)
-                                .map(|(&x, &fixed)| {
-                                    if fixed != 0 {
-                                        [T::zero(); 3]
-                                    } else {
-                                        [T::one() / T::from(x).unwrap(); 3]
-                                    }
-                                })
-                                .collect()
-                        } else {
-                            attrib
-                                .iter()
-                                .map(|&x| [T::one() / T::from(x).unwrap(); 3])
-                                .collect()
-                        };
-                        Ok(MassData::Sparse(data))
-                    }
+                    let data: Chunked3<Vec<T>> =
+                        attrib.iter().map(|&x| [T::from(x).unwrap(); 3]).collect();
+                    Ok(MassData::Sparse(data))
                 }),
         }
     }
@@ -314,14 +289,14 @@ impl<T: Real> PointContactConstraint<T> {
         pos: [SubsetView<Chunked3<&[T]>>; 2],
     ) -> [Option<DSBlockMatrix1x3<T>>; 2] {
         self.update_surface_with_mesh_pos(pos[0]);
-        self.update_contact_points(pos[1]);
+        self.update_collider_vertex_positions(pos[1]);
         //{
-        //    let mut indices = vec![1; contact_points.len() * 2];
-        //    for i in 0..contact_points.len() {
+        //    let mut indices = vec![1; collider_vertex_positions.len() * 2];
+        //    for i in 0..collider_vertex_positions.len() {
         //        indices[2 * i + 1] = i;
         //    }
 
-        //    let polymesh = geo::mesh::PolyMesh::new(contact_points.clone().into(), &indices);
+        //    let polymesh = geo::mesh::PolyMesh::new(collider_vertex_positions.clone().into(), &indices);
         //    geo::io::save_polymesh(&polymesh, "./out/before_jac_points.vtk");
         //}
 
@@ -341,7 +316,7 @@ impl<T: Real> PointContactConstraint<T> {
                 .surface_jacobian_block_indices_iter()
                 .zip(
                     self.implicit_surface
-                        .surface_jacobian_block_iter(self.contact_points.view().into()),
+                        .surface_jacobian_block_iter(self.collider_vertex_positions.view().into()),
                 )
                 .map(row_correction);
             Some(
@@ -353,12 +328,12 @@ impl<T: Real> PointContactConstraint<T> {
         };
 
         let coll_jac = if !self.collider_is_fixed() {
-            let num_cols = self.contact_points.len();
+            let num_cols = self.collider_vertex_positions.len();
             let iter = surf
                 .query_jacobian_block_indices_iter()
                 .zip(
                     self.implicit_surface
-                        .query_jacobian_block_iter(self.contact_points.view().into()),
+                        .query_jacobian_block_iter(self.collider_vertex_positions.view().into()),
                 )
                 .map(row_correction);
             Some(
@@ -374,6 +349,7 @@ impl<T: Real> PointContactConstraint<T> {
 
     /// Compute vertex to vertex topology of the entire collider mesh along with corresponding
     /// cotangent weights. This makes it easy to query neighbors when we are computing laplacians.
+    #[cfg(feature = "optsolver")]
     fn build_vertex_topo(mesh: &TriMesh) -> Chunked<Vec<(usize, f64)>> {
         let mut topo = vec![Vec::with_capacity(5); mesh.num_vertices()];
         let pos = mesh.vertex_positions();
@@ -421,91 +397,91 @@ impl<T: Real> PointContactConstraint<T> {
         Chunked::from_nested_vec(topo)
     }
 
-    /// Build a matrix that smoothes values at contact points with their neighbors by the given
-    /// weight. For `weight = 0.0`, no smoothing is performed, and this matrix is the identity.
-    ///
-    /// The implementation uses cotangent weights. This is especially important here since we are
-    /// using this matrix to smooth pressures, which are inherently area based.
-    fn build_contact_laplacian(
-        &self,
-        weight: f64,
-        active_contact_indices: Option<&[usize]>,
-    ) -> DSMatrix<T> {
-        let surf = &self.implicit_surface;
-        if let Some(active_contact_indices) = active_contact_indices {
-            let size = active_contact_indices.len();
-            let mut neighborhood_indices = vec![Index::INVALID; surf.num_query_points()];
-            for (i, &aci) in active_contact_indices.iter().enumerate() {
-                neighborhood_indices[aci] = Index::new(i);
-            }
+    ///// Build a matrix that smoothes values at contact points with their neighbors by the given
+    ///// weight. For `weight = 0.0`, no smoothing is performed, and this matrix is the identity.
+    /////
+    ///// The implementation uses cotangent weights. This is especially important here since we are
+    ///// using this matrix to smooth pressures, which are inherently area based.
+    //fn build_contact_laplacian(
+    //    &self,
+    //    weight: f64,
+    //    active_contact_indices: Option<&[usize]>,
+    //) -> DSMatrix<T> {
+    //    let surf = &self.implicit_surface;
+    //    if let Some(active_contact_indices) = active_contact_indices {
+    //        let size = active_contact_indices.len();
+    //        let mut neighborhood_indices = vec![Index::INVALID; surf.num_query_points()];
+    //        for (i, &aci) in active_contact_indices.iter().enumerate() {
+    //            neighborhood_indices[aci] = Index::new(i);
+    //        }
 
-            let triplets =
-                active_contact_indices
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(valid_idx, &active_idx)| {
-                        let weighted_nbrhood = &self.collider_vertex_topo[active_idx];
-                        let n = weighted_nbrhood
-                            .iter()
-                            .filter(|&(nbr_idx, _)| neighborhood_indices[*nbr_idx].is_valid())
-                            .count();
-                        std::iter::repeat((valid_idx, T::from(weight / n as f64).unwrap()))
-                            .zip(weighted_nbrhood.iter())
-                            .filter_map(|((valid_idx, normalized_weight), (nbr_idx, w))| {
-                                neighborhood_indices[*nbr_idx]
-                                    .into_option()
-                                    .map(|valid_nbr| {
-                                        (
-                                            valid_idx,
-                                            valid_nbr,
-                                            T::from(*w).unwrap() * normalized_weight,
-                                        )
-                                    })
-                            })
-                            .chain(std::iter::once((
-                                valid_idx,
-                                valid_idx,
-                                T::from(1.0 - weight).unwrap(),
-                            )))
-                    });
-            // Don't need to sort or compress.
-            DSMatrix::from_sorted_triplets_iter_uncompressed(triplets, size, size)
-        } else {
-            let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(&surf);
-            let size = surf.num_neighborhoods();
-            let triplets = self
-                .collider_vertex_topo
-                .iter()
-                .zip(neighborhood_indices.iter())
-                .filter_map(|(nbrhood, idx)| idx.into_option().map(|i| (nbrhood, i)))
-                .flat_map(|(weighted_nbrhood, valid_idx)| {
-                    let n = weighted_nbrhood
-                        .iter()
-                        .filter(|&(nbr_idx, _)| neighborhood_indices[*nbr_idx].is_valid())
-                        .count();
-                    std::iter::repeat((valid_idx, T::from(weight / n as f64).unwrap()))
-                        .zip(weighted_nbrhood.iter())
-                        .filter_map(|((valid_idx, normalized_weight), (nbr_idx, w))| {
-                            neighborhood_indices[*nbr_idx]
-                                .into_option()
-                                .map(|valid_nbr| {
-                                    (
-                                        valid_idx,
-                                        valid_nbr,
-                                        T::from(*w).unwrap() * normalized_weight,
-                                    )
-                                })
-                        })
-                        .chain(std::iter::once((
-                            valid_idx,
-                            valid_idx,
-                            T::from(1.0 - weight).unwrap(),
-                        )))
-                });
-            // Don't need to sort or compress.
-            DSMatrix::from_sorted_triplets_iter_uncompressed(triplets, size, size)
-        }
-    }
+    //        let triplets =
+    //            active_contact_indices
+    //                .iter()
+    //                .enumerate()
+    //                .flat_map(|(valid_idx, &active_idx)| {
+    //                    let weighted_nbrhood = &self.collider_vertex_topo[active_idx];
+    //                    let n = weighted_nbrhood
+    //                        .iter()
+    //                        .filter(|&(nbr_idx, _)| neighborhood_indices[*nbr_idx].is_valid())
+    //                        .count();
+    //                    std::iter::repeat((valid_idx, T::from(weight / n as f64).unwrap()))
+    //                        .zip(weighted_nbrhood.iter())
+    //                        .filter_map(|((valid_idx, normalized_weight), (nbr_idx, w))| {
+    //                            neighborhood_indices[*nbr_idx]
+    //                                .into_option()
+    //                                .map(|valid_nbr| {
+    //                                    (
+    //                                        valid_idx,
+    //                                        valid_nbr,
+    //                                        T::from(*w).unwrap() * normalized_weight,
+    //                                    )
+    //                                })
+    //                        })
+    //                        .chain(std::iter::once((
+    //                            valid_idx,
+    //                            valid_idx,
+    //                            T::from(1.0 - weight).unwrap(),
+    //                        )))
+    //                });
+    //        // Don't need to sort or compress.
+    //        DSMatrix::from_sorted_triplets_iter_uncompressed(triplets, size, size)
+    //    } else {
+    //        let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(&surf);
+    //        let size = surf.num_neighborhoods();
+    //        let triplets = self
+    //            .collider_vertex_topo
+    //            .iter()
+    //            .zip(neighborhood_indices.iter())
+    //            .filter_map(|(nbrhood, idx)| idx.into_option().map(|i| (nbrhood, i)))
+    //            .flat_map(|(weighted_nbrhood, valid_idx)| {
+    //                let n = weighted_nbrhood
+    //                    .iter()
+    //                    .filter(|&(nbr_idx, _)| neighborhood_indices[*nbr_idx].is_valid())
+    //                    .count();
+    //                std::iter::repeat((valid_idx, T::from(weight / n as f64).unwrap()))
+    //                    .zip(weighted_nbrhood.iter())
+    //                    .filter_map(|((valid_idx, normalized_weight), (nbr_idx, w))| {
+    //                        neighborhood_indices[*nbr_idx]
+    //                            .into_option()
+    //                            .map(|valid_nbr| {
+    //                                (
+    //                                    valid_idx,
+    //                                    valid_nbr,
+    //                                    T::from(*w).unwrap() * normalized_weight,
+    //                                )
+    //                            })
+    //                    })
+    //                    .chain(std::iter::once((
+    //                        valid_idx,
+    //                        valid_idx,
+    //                        T::from(1.0 - weight).unwrap(),
+    //                    )))
+    //            });
+    //        // Don't need to sort or compress.
+    //        DSMatrix::from_sorted_triplets_iter_uncompressed(triplets, size, size)
+    //    }
+    //}
 
     /// Update implicit surface using the given position data from mesh vertices.
     /// Return the number of positions that were actually updated.
@@ -513,8 +489,8 @@ impl<T: Real> PointContactConstraint<T> {
         self.implicit_surface.update_surface(pos.iter().cloned())
     }
 
-    pub fn update_contact_points(&mut self, x: SubsetView<Chunked3<&[T]>>) {
-        x.clone_into_other(&mut self.contact_points);
+    pub fn update_collider_vertex_positions(&mut self, x: SubsetView<Chunked3<&[T]>>) {
+        x.clone_into_other(&mut self.collider_vertex_positions);
     }
 
     #[allow(dead_code)]
@@ -640,7 +616,7 @@ impl<T: Real> PointContactConstraint<T> {
         potential: &[T],
     ) -> (Vec<usize>, Vec<usize>, Vec<T>) {
         let surf = &self.implicit_surface;
-        let query_points = &self.contact_points;
+        let query_points = &self.collider_vertex_positions;
         let radius = surf.radius() * 0.999;
         let query_indices = self.active_constraint_indices();
         assert_eq!(query_indices.len(), contact_impulse.len());
@@ -676,6 +652,7 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     // Note that this does NOT set the num_cols and num_rows fields of TripletContactJacobian.
+    #[cfg(feature = "optsolver")]
     pub(crate) fn append_contact_jacobian_triplets(
         &self,
         jac_triplets: &mut TripletContactJacobian<T>,
@@ -684,7 +661,7 @@ impl<T: Real> PointContactConstraint<T> {
         object_offset: usize,
         collider_offset: usize,
     ) {
-        let query_points = &self.contact_points;
+        let query_points = &self.collider_vertex_positions;
         let surf = &self.implicit_surface;
         let active_contact_points = Select::new(active_contact_indices, query_points.view());
 
@@ -699,7 +676,7 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     fn compute_contact_jacobian(&self, active_contact_indices: &[usize]) -> ContactJacobian<T> {
-        let query_points = &self.contact_points;
+        let query_points = &self.collider_vertex_positions;
         let surf = &self.implicit_surface;
         let active_contact_points = Select::new(active_contact_indices, query_points.view());
 
@@ -711,6 +688,7 @@ impl<T: Real> PointContactConstraint<T> {
             .into_data()
     }
 
+    #[cfg(feature = "optsolver")]
     fn compute_effective_mass_inv(
         &self,
         active_contact_indices: &[usize],
@@ -733,7 +711,7 @@ impl<T: Real> PointContactConstraint<T> {
                 if active_contact_indices.is_empty() {
                     MassMatrixInv::Zero
                 } else {
-                    let query_points = &self.contact_points;
+                    let query_points = &self.collider_vertex_positions;
                     let translation = rigid_motion[1].unwrap()[0];
                     let rotation = rigid_motion[1].unwrap()[1];
                     MassMatrixInv::Dense(
@@ -802,6 +780,7 @@ impl<T: Real> PointContactConstraint<T> {
         })
     }
 
+    #[cfg(feature = "optsolver")]
     fn compute_predictor_impulse(
         v: [SubsetView<Chunked3<&[T]>>; 2],
         active_contact_indices: &[usize],
@@ -899,8 +878,8 @@ impl<T: Real> PointContactConstraint<T> {
         let FrictionImpulses {
             contact_basis,
             params,
-            object_impulse,
-            collider_impulse, // for active point contacts
+            object_impulse: _,
+            collider_impulse: _, // for active point contacts
         } = self.friction_impulses.as_mut().unwrap();
 
         let mu = T::from(params.dynamic_friction).unwrap();
@@ -941,219 +920,13 @@ impl<T: Real> PointContactConstraint<T> {
         let obj_f = jac.view().into_tensor().transpose() * vc.view();
         let col_f = Sparse::from_dim(
             active_contact_indices.clone(),
-            self.contact_points.len(),
+            self.collider_vertex_positions.len(),
             vc.into_data(),
         );
         Some((obj_f.into_data(), col_f))
     }
-}
 
-/// Computes the derivative of a cubic penalty function for contacts multiplied by `-κ`.
-///
-/// The penalty and its derivative alone:
-/// ```verbatim
-/// b(x;δ) = -((x-δ)^3)/δ if x < δ and 0 otherwise
-/// db(x;δ) = -(3/δ)(x-δ)^2 if x < δ and 0 otherwise
-/// ```
-pub fn compute_contact_force_magnitude<S: Real>(
-    // Input distance & Output force magnitude
-    lambda: &mut [S],
-    delta: f32,
-    kappa: f32,
-) {
-    lambda.iter_mut().for_each(|lambda| {
-        let d = *lambda;
-        *lambda = if d.to_f32().unwrap() >= delta {
-            S::zero()
-        } else {
-            let _2 = S::from(2.0).unwrap();
-            let delta = S::from(delta).unwrap();
-            let kappa = S::from(kappa).unwrap();
-            -kappa * (_2 / delta) * (d - delta)
-        }
-    });
-}
-
-/// Enumerate non-empty neighborhoods in place.
-fn enumerate_nonempty_neighborhoods_inplace<T: Real>(surf: &QueryTopo<T>) -> Vec<Index> {
-    neighborhood_indices_with(surf, |_, s| s != 0)
-}
-
-/// Prune neighborhood indices using a given function that takes the index (query point)
-/// and size of the neighborhood.
-/// Only those neighborhoods for which `f` returns true will be present in the output.
-fn neighborhood_indices_with<T: Real>(
-    surf: &QueryTopo<T>,
-    f: impl Fn(usize, usize) -> bool,
-) -> Vec<Index> {
-    let mut neighborhood_indices = vec![Index::INVALID; surf.num_query_points()];
-
-    let neighborhood_sizes = surf.neighborhood_sizes();
-
-    for (i, (_, (idx, _))) in neighborhood_indices
-        .iter_mut()
-        .zip(neighborhood_sizes.iter())
-        .enumerate()
-        .filter(|&(i, (_, &s))| f(i, s))
-        .enumerate()
-    {
-        *idx = Index::new(i);
-    }
-
-    neighborhood_indices
-}
-
-#[cfg(feature = "optsolver")]
-impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
-    // Get the total number of contacts that could potentially occur.
-    fn num_potential_contacts(&self) -> usize {
-        self.contact_points.len()
-    }
-    fn frictional_contact(&self) -> Option<&FrictionImpulses<T>> {
-        self.friction_impulses.as_ref()
-    }
-    fn frictional_contact_mut(&mut self) -> Option<&mut FrictionImpulses<T>> {
-        self.friction_impulses.as_mut()
-    }
-    fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]> {
-        ARef::Plain(&[])
-    }
-
-    fn smooth_collider_values(&self, mut values: SubsetView<&mut [T]>) {
-        if let Some(ref frictional_contact) = self.frictional_contact() {
-            let weight = frictional_contact.params.smoothing_weight;
-            let lap = self.build_contact_laplacian(weight, None);
-            let mut contacts = vec![T::zero(); frictional_contact.collider_impulse.len()];
-            let indices = frictional_contact.collider_impulse.indices();
-            assert_eq!(indices.len(), contacts.len());
-            for (&i, v) in zip!(indices.iter(), contacts.iter_mut()) {
-                *v = values[i];
-            }
-            let res = lap.view() * contacts.as_tensor();
-            let res: Vec<T> = (lap.view() * res.view()).into_data();
-            for (&i, &v) in zip!(indices.iter(), res.iter()) {
-                values[i] = v;
-            }
-        }
-    }
-
-    #[cfg(feature = "af")]
-    fn contact_jacobian_af(&self) -> af::Array<f64> {
-        // Compute contact jacobian
-        let surf = &self.implicit_surface;
-        let query_points = &self.contact_points;
-
-        let mut cj_values = vec![0.0; surf.num_contact_jacobian_entries()];
-        surf.contact_jacobian_values(
-            query_points.view().into(),
-            reinterpret_mut_slice(&mut cj_values),
-        );
-        let cj_indices_iter = surf.contact_jacobian_indices_iter();
-
-        let nnz = self.constraint_jacobian_size();
-        let mut rows = vec![0i32; nnz];
-        let mut cols = vec![0i32; nnz];
-
-        for ((row, col), (r, c)) in cj_indices_iter.zip(rows.iter_mut().zip(cols.iter_mut())) {
-            *r = row as i32;
-            *c = col as i32;
-        }
-
-        // Build ArrayFire matrix
-        let nnz = nnz as u64;
-        let num_rows = 3 * query_points.len() as u64;
-        let num_cols = 3 * surf.surface_vertex_positions().len() as u64;
-
-        let values = af::Array::new(&cj_values, af::Dim4::new(&[nnz, 1, 1, 1]));
-        let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
-        let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
-
-        af::sparse(
-            num_rows,
-            num_cols,
-            &values,
-            &row_indices,
-            &col_indices,
-            af::SparseFormat::COO,
-        )
-    }
-
-    fn collider_contact_normals(&mut self, mut out_normals: Chunked3<&mut [T]>) {
-        if self.friction_impulses.is_none() {
-            return;
-        }
-
-        let normals = self.contact_normals();
-        let FrictionImpulses {
-            collider_impulse, // for active point contacts
-            ..
-        } = self.friction_impulses.as_ref().unwrap();
-
-        let query_indices = self.implicit_surface.nonempty_neighborhood_indices();
-        assert_eq!(query_indices.len(), normals.len());
-
-        // Only interested in normals at contact points on the collider impulse.
-        let remapped_normals_iter = crate::constraints::remap_values_iter(
-            normals.into_iter(),
-            [T::zero(); 3], // Default normal (there should not be any).
-            query_indices.into_iter(),
-            collider_impulse.selection().index_iter().cloned(),
-        );
-
-        for (&aci, nml) in zip!(
-            collider_impulse.selection().index_iter(),
-            remapped_normals_iter,
-        ) {
-            out_normals[aci] = nml;
-        }
-    }
-
-    fn project_friction_impulses(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2]) {
-        if self.friction_impulses.is_none() {
-            return;
-        }
-        self.update_contact_pos(x);
-
-        let normals = self.contact_normals();
-        let query_indices = self.active_constraint_indices();
-
-        let FrictionImpulses {
-            object_impulse,
-            collider_impulse, // for active point contacts
-            ..
-        } = self.friction_impulses.as_mut().unwrap();
-
-        // Only interested in normals at contact points on the collider impulse.
-        let remapped_normals_iter = crate::constraints::remap_values_iter(
-            normals.into_iter(),
-            [T::zero(); 3], // Default normal (there should not be many).
-            query_indices.into_iter(),
-            collider_impulse.selection().indices.clone().into_iter(),
-        );
-
-        if remapped_normals_iter.len() == 0 {
-            return;
-        }
-
-        // Project contact impulse
-        ContactBasis::project_out_normal_component(
-            remapped_normals_iter,
-            collider_impulse.source_iter_mut().map(|(_, imp)| imp),
-        );
-
-        // Project object impulse
-        ContactBasis::project_out_normal_component(
-            self.implicit_surface.surface_vertex_normals().into_iter(),
-            object_impulse.iter_mut().map(|(_, imp)| imp),
-        );
-    }
-
-    /// Update the position configuration of contacting objects using the given position data.
-    fn update_contact_pos(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2]) {
-        self.update_surface_with_mesh_pos(x[0]);
-        self.update_contact_points(x[1]);
-    }
-
+    #[cfg(feature = "optsolver")]
     fn update_frictional_contact_impulse(
         &mut self,
         orig_contact_impulse_n: &[T],
@@ -1512,7 +1285,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
 
         *collider_impulse = Sparse::from_dim(
             active_contact_indices.clone(),
-            self.contact_points.len(),
+            self.collider_vertex_positions.len(),
             Chunked3::from_flat((
                 impulse_corrector.into_storage(),
                 forwarded_impulse.into_storage(),
@@ -1524,6 +1297,186 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
         } else {
             0
         }
+    }
+}
+
+/// Enumerate non-empty neighborhoods in place.
+pub(crate) fn enumerate_nonempty_neighborhoods_inplace<T: Real>(surf: &QueryTopo<T>) -> Vec<Index> {
+    neighborhood_indices_with(surf, |_, s| s != 0)
+}
+
+/// Prune neighborhood indices using a given function that takes the index (query point)
+/// and size of the neighborhood.
+/// Only those neighborhoods for which `f` returns true will be present in the output.
+fn neighborhood_indices_with<T: Real>(
+    surf: &QueryTopo<T>,
+    f: impl Fn(usize, usize) -> bool,
+) -> Vec<Index> {
+    let mut neighborhood_indices = vec![Index::INVALID; surf.num_query_points()];
+
+    let neighborhood_sizes = surf.neighborhood_sizes();
+
+    for (i, (_, (idx, _))) in neighborhood_indices
+        .iter_mut()
+        .zip(neighborhood_sizes.iter())
+        .enumerate()
+        .filter(|&(i, (_, &s))| f(i, s))
+        .enumerate()
+    {
+        *idx = Index::new(i);
+    }
+
+    neighborhood_indices
+}
+
+impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
+    // Get the total number of contacts that could potentially occur.
+    fn num_potential_contacts(&self) -> usize {
+        self.collider_vertex_positions.len()
+    }
+    fn frictional_contact(&self) -> Option<&FrictionImpulses<T>> {
+        self.friction_impulses.as_ref()
+    }
+    fn frictional_contact_mut(&mut self) -> Option<&mut FrictionImpulses<T>> {
+        self.friction_impulses.as_mut()
+    }
+    fn active_surface_vertex_indices(&self) -> utils::aref::ARef<'_, [usize]> {
+        utils::aref::ARef::Plain(&[])
+    }
+
+    //fn smooth_collider_values(&self, mut values: SubsetView<&mut [T]>) {
+    //    if let Some(ref frictional_contact) = self.frictional_contact() {
+    //        let weight = frictional_contact.params.smoothing_weight;
+    //        let lap = self.build_contact_laplacian(weight, None);
+    //        let mut contacts = vec![T::zero(); frictional_contact.collider_impulse.len()];
+    //        let indices = frictional_contact.collider_impulse.indices();
+    //        assert_eq!(indices.len(), contacts.len());
+    //        for (&i, v) in zip!(indices.iter(), contacts.iter_mut()) {
+    //            *v = values[i];
+    //        }
+    //        let res = lap.view() * contacts.as_tensor();
+    //        let res: Vec<T> = (lap.view() * res.view()).into_data();
+    //        for (&i, &v) in zip!(indices.iter(), res.iter()) {
+    //            values[i] = v;
+    //        }
+    //    }
+    //}
+
+    #[cfg(feature = "af")]
+    fn contact_jacobian_af(&self) -> af::Array<f64> {
+        // Compute contact jacobian
+        let surf = &self.implicit_surface;
+        let query_points = &self.collider_vertex_positions;
+
+        let mut cj_values = vec![0.0; surf.num_contact_jacobian_entries()];
+        surf.contact_jacobian_values(
+            query_points.view().into(),
+            reinterpret_mut_slice(&mut cj_values),
+        );
+        let cj_indices_iter = surf.contact_jacobian_indices_iter();
+
+        let nnz = self.constraint_jacobian_size();
+        let mut rows = vec![0i32; nnz];
+        let mut cols = vec![0i32; nnz];
+
+        for ((row, col), (r, c)) in cj_indices_iter.zip(rows.iter_mut().zip(cols.iter_mut())) {
+            *r = row as i32;
+            *c = col as i32;
+        }
+
+        // Build ArrayFire matrix
+        let nnz = nnz as u64;
+        let num_rows = 3 * query_points.len() as u64;
+        let num_cols = 3 * surf.surface_vertex_positions().len() as u64;
+
+        let values = af::Array::new(&cj_values, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
+
+        af::sparse(
+            num_rows,
+            num_cols,
+            &values,
+            &row_indices,
+            &col_indices,
+            af::SparseFormat::COO,
+        )
+    }
+
+    fn collider_contact_normals(&mut self, mut out_normals: Chunked3<&mut [T]>) {
+        if self.friction_impulses.is_none() {
+            return;
+        }
+
+        let normals = self.contact_normals();
+        let FrictionImpulses {
+            collider_impulse, // for active point contacts
+            ..
+        } = self.friction_impulses.as_ref().unwrap();
+
+        let query_indices = self.implicit_surface.nonempty_neighborhood_indices();
+        assert_eq!(query_indices.len(), normals.len());
+
+        // Only interested in normals at contact points on the collider impulse.
+        let remapped_normals_iter = crate::constraints::remap_values_iter(
+            normals.into_iter(),
+            [T::zero(); 3], // Default normal (there should not be any).
+            query_indices.into_iter(),
+            collider_impulse.selection().index_iter().cloned(),
+        );
+
+        for (&aci, nml) in zip!(
+            collider_impulse.selection().index_iter(),
+            remapped_normals_iter,
+        ) {
+            out_normals[aci] = nml;
+        }
+    }
+
+    fn project_friction_impulses(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2]) {
+        if self.friction_impulses.is_none() {
+            return;
+        }
+        self.update_contact_pos(x);
+
+        let normals = self.contact_normals();
+        let query_indices = self.active_constraint_indices();
+
+        let FrictionImpulses {
+            object_impulse,
+            collider_impulse, // for active point contacts
+            ..
+        } = self.friction_impulses.as_mut().unwrap();
+
+        // Only interested in normals at contact points on the collider impulse.
+        let remapped_normals_iter = crate::constraints::remap_values_iter(
+            normals.into_iter(),
+            [T::zero(); 3], // Default normal (there should not be many).
+            query_indices.into_iter(),
+            collider_impulse.selection().indices.clone().into_iter(),
+        );
+
+        if remapped_normals_iter.len() == 0 {
+            return;
+        }
+
+        // Project contact impulse
+        ContactBasis::project_out_normal_component(
+            remapped_normals_iter,
+            collider_impulse.source_iter_mut().map(|(_, imp)| imp),
+        );
+
+        // Project object impulse
+        ContactBasis::project_out_normal_component(
+            self.implicit_surface.surface_vertex_normals().into_iter(),
+            object_impulse.iter_mut().map(|(_, imp)| imp),
+        );
+    }
+
+    /// Update the position configuration of contacting objects using the given position data.
+    fn update_contact_pos(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2]) {
+        self.update_surface_with_mesh_pos(x[0]);
+        self.update_collider_vertex_positions(x[1]);
     }
 
     fn add_mass_weighted_frictional_contact_impulse_to_object(
@@ -1675,7 +1628,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
         mut impulse: [Chunked3<&mut [T]>; 2],
     ) {
         //self.update_surface_with_mesh_pos(x[0]);
-        //self.update_contact_points(x[1]);
+        //self.update_collider_vertex_positions(x[1]);
 
         let active_constraint_indices = self.active_constraint_indices();
         let normals = self.contact_normals();
@@ -1691,7 +1644,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
             impulse[1][aci] = (Vector3::new(nml) * cr).into();
         }
 
-        let query_points = &self.contact_points;
+        let query_points = &self.collider_vertex_positions;
         assert_eq!(impulse[1].len(), query_points.len());
 
         let surf = &self.implicit_surface;
@@ -1711,10 +1664,10 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
     fn contact_normals(&self) -> Vec<[T; 3]> {
         // Contacts occur at the vertex positions of the colliding mesh.
         let surf = &self.implicit_surface;
-        let contact_points = &self.contact_points;
+        let collider_vertex_positions = &self.collider_vertex_positions;
 
         let mut normal_coords = vec![T::zero(); surf.num_query_jacobian_entries()];
-        surf.query_jacobian_values(contact_points.view().into(), &mut normal_coords);
+        surf.query_jacobian_values(collider_vertex_positions.view().into(), &mut normal_coords);
         let mut normals = Chunked3::from_flat(normal_coords).into_arrays();
 
         // Normalize normals
@@ -1758,9 +1711,12 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
             num_vertices_updated,
             self.implicit_surface.surface_vertex_positions().len()
         );
-        self.update_contact_points(collider_pos);
+        self.update_collider_vertex_positions(collider_pos);
 
-        let updated = { self.implicit_surface.reset(self.contact_points.as_arrays()) };
+        let updated = {
+            self.implicit_surface
+                .reset(self.collider_vertex_positions.as_arrays())
+        };
 
         if self.constraint_jacobian.filled() {
             self.linearize_constraint(object_pos, collider_pos);
@@ -1802,8 +1758,10 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
 
         let num_non_zero_constraints = self.implicit_surface.num_neighborhoods();
         let mut c0 = vec![T::zero(); num_non_zero_constraints];
-        self.implicit_surface
-            .local_potential(self.contact_points.view().into(), c0.as_mut_slice());
+        self.implicit_surface.local_potential(
+            self.collider_vertex_positions.view().into(),
+            c0.as_mut_slice(),
+        );
         //if let Some(lap) = lap {
         //    self.constraint_value = (lap.expr() * c0.expr()).eval();
         //} else {
@@ -1817,9 +1775,9 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 pub(crate) type Input<'a, T> = [SubsetView<'a, Chunked3<&'a [T]>>; 2]; // Object and collider vertices
 
-#[cfg(feature = "optsolver")]
 impl<T: Real> PointContactConstraint<T> {
     pub(crate) fn constraint_size(&self) -> usize {
         self.implicit_surface.num_neighborhoods()
@@ -1831,11 +1789,14 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     pub(crate) fn constraint(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2], value: &mut [T]) {
+        dbg!(value.len());
+        dbg!(self.constraint_size());
+        dbg!(self.constraint_value.len());
         debug_assert_eq!(value.len(), self.constraint_size());
         if let Some(jac) = self.constraint_jacobian.borrow() {
             // Constraint is linearized
 
-            let x0_coll = &self.contact_points;
+            let x0_coll = &self.collider_vertex_positions;
             let x0_obj = self.implicit_surface.surface_vertex_positions();
 
             value.copy_from_slice(self.constraint_value.as_slice());
@@ -1869,7 +1830,7 @@ impl<T: Real> PointContactConstraint<T> {
 
         // Constraint not linearized, compute the true constraint.
         self.update_surface_with_mesh_pos(x[0]);
-        self.update_contact_points(x[1]);
+        self.update_collider_vertex_positions(x[1]);
 
         let radius = T::from(self.contact_radius()).unwrap();
 
@@ -1877,7 +1838,7 @@ impl<T: Real> PointContactConstraint<T> {
         for (val, q) in self
             .constraint_value
             .iter_mut()
-            .zip(self.contact_points.iter())
+            .zip(self.collider_vertex_positions.iter())
         {
             // Clear potential value.
             let closest_sample = surf.nearest_neighbor_lookup(*q).unwrap();
@@ -1893,7 +1854,7 @@ impl<T: Real> PointContactConstraint<T> {
         }
 
         surf.potential(
-            self.contact_points.view().into(),
+            self.collider_vertex_positions.view().into(),
             &mut self.constraint_value,
         );
 
@@ -1913,7 +1874,9 @@ impl<T: Real> PointContactConstraint<T> {
             *v = *new_v - T::from(self.contact_offset).unwrap();
         }
     }
+}
 
+impl<T: Real> PointContactConstraint<T> {
     pub(crate) fn object_constraint_jacobian_size(&self) -> usize {
         if let Some(jac) = self.constraint_jacobian.borrow() {
             jac[0].as_ref().map_or(0, |jac| jac.num_non_zeros())
@@ -2037,9 +2000,9 @@ impl<T: Real> PointContactConstraint<T> {
             )
         } else {
             let surf = &self.implicit_surface;
-            let iter = surf
-                .surface_jacobian_block_indices_iter()
-                .zip(surf.surface_jacobian_block_iter(self.contact_points.view().into()));
+            let iter = surf.surface_jacobian_block_indices_iter().zip(
+                surf.surface_jacobian_block_iter(self.collider_vertex_positions.view().into()),
+            );
             let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
             Either::Right(
                 if self.object_is_fixed() {
@@ -2080,8 +2043,9 @@ impl<T: Real> PointContactConstraint<T> {
             )
         } else {
             let surf = &self.implicit_surface;
-            let iter =
-                surf.surface_jacobian_indexed_block_par_iter(self.contact_points.view().into());
+            let iter = surf.surface_jacobian_indexed_block_par_iter(
+                self.collider_vertex_positions.view().into(),
+            );
             let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
             Either::Right(
                 if self.object_is_fixed() {
@@ -2122,7 +2086,7 @@ impl<T: Real> PointContactConstraint<T> {
             let surf = &self.implicit_surface;
             let iter = surf
                 .query_jacobian_block_indices_iter()
-                .zip(surf.query_jacobian_block_iter(self.contact_points.view().into()));
+                .zip(surf.query_jacobian_block_iter(self.collider_vertex_positions.view().into()));
             let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
             Either::Right(
                 if self.collider_is_fixed() {
@@ -2163,8 +2127,9 @@ impl<T: Real> PointContactConstraint<T> {
             )
         } else {
             let surf = &self.implicit_surface;
-            let iter =
-                surf.query_jacobian_indexed_block_par_iter(self.contact_points.view().into());
+            let iter = surf.query_jacobian_indexed_block_par_iter(
+                self.collider_vertex_positions.view().into(),
+            );
             let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
             Either::Right(
                 if self.collider_is_fixed() {
@@ -2195,6 +2160,7 @@ impl<T: Real> PointContactConstraint<T> {
         obj_indices_iter.chain(coll_indices_iter)
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn object_constraint_jacobian_values_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = T> + 'a {
@@ -2219,8 +2185,9 @@ impl<T: Real> PointContactConstraint<T> {
             Either::Right(
                 if !self.object_is_fixed() {
                     Some(
-                        self.implicit_surface
-                            .surface_jacobian_values_iter(self.contact_points.view().into()),
+                        self.implicit_surface.surface_jacobian_values_iter(
+                            self.collider_vertex_positions.view().into(),
+                        ),
                     )
                 } else {
                     None
@@ -2231,6 +2198,7 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn collider_constraint_jacobian_values_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = T> + 'a {
@@ -2255,8 +2223,9 @@ impl<T: Real> PointContactConstraint<T> {
             Either::Right(
                 if !self.collider_is_fixed() {
                     Some(
-                        self.implicit_surface
-                            .query_jacobian_values_iter(self.contact_points.view().into()),
+                        self.implicit_surface.query_jacobian_values_iter(
+                            self.collider_vertex_positions.view().into(),
+                        ),
                     )
                 } else {
                     None
@@ -2267,6 +2236,7 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
+    #[cfg(feature = "optsolver")]
     #[allow(dead_code)]
     pub(crate) fn constraint_jacobian_values_iter<'a>(
         &'a mut self,
@@ -2275,7 +2245,7 @@ impl<T: Real> PointContactConstraint<T> {
         if !self.is_linear() {
             // Must not update the surface if constraint is linearized.
             self.update_surface_with_mesh_pos(x[0]);
-            self.update_contact_points(x[1]);
+            self.update_collider_vertex_positions(x[1]);
         }
 
         self.object_constraint_jacobian_values_iter()
@@ -2344,6 +2314,7 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     // Assumes surface and contact points are upto date.
+    #[cfg(feature = "optsolver")]
     pub(crate) fn object_constraint_hessian_values_iter<'a>(
         &'a self,
         lambda: &'a [T],
@@ -2352,14 +2323,18 @@ impl<T: Real> PointContactConstraint<T> {
             None
         } else {
             let surf = &self.implicit_surface;
-            surf.surface_hessian_product_values_iter(self.contact_points.view().into(), lambda)
-                .ok()
+            surf.surface_hessian_product_values_iter(
+                self.collider_vertex_positions.view().into(),
+                lambda,
+            )
+            .ok()
         }
         .into_iter()
         .flatten()
     }
 
     // Assumes surface and contact points are upto date.
+    #[cfg(feature = "optsolver")]
     pub(crate) fn collider_constraint_hessian_values_iter<'a>(
         &'a self,
         lambda: &'a [T],
@@ -2368,12 +2343,16 @@ impl<T: Real> PointContactConstraint<T> {
             None
         } else {
             let surf = &self.implicit_surface;
-            Some(surf.query_hessian_product_values_iter(self.contact_points.view().into(), lambda))
+            Some(surf.query_hessian_product_values_iter(
+                self.collider_vertex_positions.view().into(),
+                lambda,
+            ))
         }
         .into_iter()
         .flatten()
     }
 
+    #[cfg(feature = "optsolver")]
     #[allow(dead_code)]
     pub(crate) fn constraint_hessian_values_iter<'a>(
         &'a mut self,
@@ -2383,14 +2362,13 @@ impl<T: Real> PointContactConstraint<T> {
         if !self.is_linear() {
             // Must not update the surface if constraint is linearized.
             self.update_surface_with_mesh_pos(x[0]);
-            self.update_contact_points(x[1]);
+            self.update_collider_vertex_positions(x[1]);
         }
         self.object_constraint_hessian_values_iter(lambda)
             .chain(self.collider_constraint_hessian_values_iter(lambda))
     }
 }
 
-#[cfg(feature = "optsolver")]
 impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
     type Input = [SubsetView<'a, Chunked3<&'a [T]>>; 2]; // Object and collider vertices
 
@@ -2406,7 +2384,7 @@ impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
     fn constraint(&mut self, _x0: Self::Input, x1: Self::Input, value: &mut [T]) {
         debug_assert_eq!(value.len(), self.constraint_size());
         self.update_surface_with_mesh_pos(x1[0]);
-        self.update_contact_points(x1[1]);
+        self.update_collider_vertex_positions(x1[1]);
 
         let radius = self.contact_radius();
 
@@ -2414,7 +2392,7 @@ impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
         for (val, q) in self
             .constraint_value
             .iter_mut()
-            .zip(self.contact_points.iter())
+            .zip(self.collider_vertex_positions.iter())
         {
             // Clear potential value.
             let closest_sample = surf.nearest_neighbor_lookup(*q).unwrap();
@@ -2430,7 +2408,7 @@ impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
         }
 
         surf.potential(
-            self.contact_points.view().into(),
+            self.collider_vertex_positions.view().into(),
             &mut self.constraint_value,
         );
 
@@ -2459,7 +2437,6 @@ impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
     }
 }
 
-#[cfg(feature = "optsolver")]
 impl<T: Real> ContactConstraintJacobian<'_, T> for PointContactConstraint<T> {
     fn constraint_jacobian_size(&self) -> usize {
         let num_obj = if !self.object_is_fixed() {
@@ -2520,7 +2497,7 @@ impl<T: Real> ContactConstraintJacobian<'_, T> for PointContactConstraint<T> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
 
         self.update_surface_with_mesh_pos(x1[0]);
-        self.update_contact_points(x1[1]);
+        self.update_collider_vertex_positions(x1[1]);
 
         let num_obj_jac_nnz;
 
@@ -2528,7 +2505,7 @@ impl<T: Real> ContactConstraintJacobian<'_, T> for PointContactConstraint<T> {
             num_obj_jac_nnz = self.implicit_surface.num_surface_jacobian_entries();
 
             self.implicit_surface.surface_jacobian_values(
-                self.contact_points.view().into(),
+                self.collider_vertex_positions.view().into(),
                 &mut values[..num_obj_jac_nnz],
             );
         } else {
@@ -2537,7 +2514,7 @@ impl<T: Real> ContactConstraintJacobian<'_, T> for PointContactConstraint<T> {
 
         if !self.collider_is_fixed() {
             self.implicit_surface.query_jacobian_values(
-                self.contact_points.view().into(),
+                self.collider_vertex_positions.view().into(),
                 &mut values[num_obj_jac_nnz..],
             );
         }
@@ -2545,7 +2522,6 @@ impl<T: Real> ContactConstraintJacobian<'_, T> for PointContactConstraint<T> {
     }
 }
 
-#[cfg(feature = "optsolver")]
 impl<'a, T: Real> ContactConstraintHessian<'a, T> for PointContactConstraint<T> {
     type InputDual = &'a [T];
     fn constraint_hessian_size(&self) -> usize {
@@ -2601,7 +2577,7 @@ impl<'a, T: Real> ContactConstraintHessian<'a, T> for PointContactConstraint<T> 
         values: &mut [T],
     ) -> Result<(), Error> {
         self.update_surface_with_mesh_pos(x1[0]);
-        self.update_contact_points(x1[1]);
+        self.update_collider_vertex_positions(x1[1]);
         let surf = &self.implicit_surface;
 
         let mut obj_hess_nnz = 0;
@@ -2613,7 +2589,7 @@ impl<'a, T: Real> ContactConstraintHessian<'a, T> for PointContactConstraint<T> 
                 .unwrap_or(0);
 
             surf.surface_hessian_product_scaled_values(
-                self.contact_points.view().into(),
+                self.collider_vertex_positions.view().into(),
                 lambda,
                 scale,
                 &mut values[..obj_hess_nnz],
@@ -2622,7 +2598,7 @@ impl<'a, T: Real> ContactConstraintHessian<'a, T> for PointContactConstraint<T> 
 
         if !self.collider_is_fixed() {
             surf.query_hessian_product_scaled_values(
-                self.contact_points.view().into(),
+                self.collider_vertex_positions.view().into(),
                 lambda,
                 scale,
                 &mut values[obj_hess_nnz..],
@@ -2632,6 +2608,7 @@ impl<'a, T: Real> ContactConstraintHessian<'a, T> for PointContactConstraint<T> 
     }
 }
 
+#[cfg(feature = "optsolver")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2639,7 +2616,6 @@ mod tests {
 
     /// Test the `fill_background_potential` function on a small grid.
     #[test]
-    #[cfg(feature = "optsolver")]
     fn background_fill_test() {
         // Make a small grid.
         let mut grid = TriMesh::from(

@@ -17,7 +17,11 @@ use crate::Real;
 pub const VERTEX_DOFS: usize = 0;
 pub const RIGID_DOFS: usize = 1;
 
-///// Integrate rotation axis-angle.
+/// Index for each constraint
+/// type.
+pub const POINT_CONTACT_CONSTRAINT: usize = 1;
+pub const VOLUME_CONSTRAINT: usize = 0;
+
 ///// `k0` is previous axis-angle vector.
 /////
 ///// The idea here is taken from https://arxiv.org/pdf/1604.08139.pdf
@@ -132,7 +136,7 @@ impl<Q: Real, D: Real> GeneralizedState<Vec<Q>, Vec<D>> {
 //}
 
 #[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
-pub struct VertexWorkspaceComponent<X, V, XAD, VAD, R, RAD, L, LAD, FC, FCAD, M, I, VT> {
+pub struct VertexWorkspaceComponent<X, V, XAD, VAD, R, RAD, M, I, VT> {
     #[component]
     pub cur: ParticleState<X, V>,
     #[component]
@@ -141,21 +145,17 @@ pub struct VertexWorkspaceComponent<X, V, XAD, VAD, R, RAD, L, LAD, FC, FCAD, M,
     pub next_ad: ParticleState<XAD, VAD>,
     pub residual: R,
     pub residual_ad: RAD,
-    pub lambda: L,
-    pub lambda_ad: LAD,
-    pub vfc: FC,
-    pub vfc_ad: FCAD,
     pub mass_inv: M,
     pub orig_index: I,
     pub vertex_type: VT,
 }
 
-pub type VertexWorkspace<V, VF, S, SF, I, VT> =
-    VertexWorkspaceComponent<V, V, VF, VF, V, VF, S, SF, V, VF, S, I, VT>;
+pub type VertexWorkspace<V, VF, S, I, VT> = VertexWorkspaceComponent<V, V, VF, VF, V, VF, S, I, VT>;
 
 impl<T: Real, F: Real>
-    VertexWorkspace<Chunked3<Vec<T>>, Chunked3<Vec<F>>, Vec<T>, Vec<F>, Vec<usize>, Vec<VertexType>>
+    VertexWorkspace<Chunked3<Vec<T>>, Chunked3<Vec<F>>, Vec<T>, Vec<usize>, Vec<VertexType>>
 {
+    /// Index of the vertex from which the simulation vertex originated.
     pub fn residual_state(&mut self) -> Chunked3<ResidualState<&[T], &[T], &mut [T]>> {
         Chunked3::from_flat(ResidualState {
             cur: ParticleState {
@@ -189,7 +189,6 @@ impl<'a, T: Real, F: Real>
         Chunked3<&'a mut [T]>,
         Chunked3<&'a mut [F]>,
         &'a mut [T],
-        &'a mut [F],
         &'a mut [usize],
         &'a mut [VertexType],
     >
@@ -231,6 +230,7 @@ impl<T: Real, F: Real> GeneralizedCoords<Vec<T>, Vec<F>> {
             GeneralizedState::new_chunked(vtx_pos, vtx_vel, vertex_types).into_inner();
         let prev = cur.clone();
         let next_q = cur.q.clone();
+
         let next_ad = GeneralizedState {
             q: cur.q.iter().map(|&x| F::from(x).unwrap()).collect(),
             dq: cur.dq.iter().map(|&x| F::from(x).unwrap()).collect(),
@@ -374,14 +374,14 @@ pub struct State<T, F> {
     pub dof: Chunked<GeneralizedCoords<Vec<T>, Vec<F>>>,
 
     /// Per vertex positions, velocities and other workspace quantities.
-    pub vtx: VertexWorkspace<
-        Chunked3<Vec<T>>,
-        Chunked3<Vec<F>>,
-        Vec<T>,
-        Vec<F>,
-        Vec<usize>,
-        Vec<VertexType>,
-    >,
+    pub vtx:
+        VertexWorkspace<Chunked3<Vec<T>>, Chunked3<Vec<F>>, Vec<T>, Vec<usize>, Vec<VertexType>>,
+
+    /// Constraint multipliers.
+    ///
+    /// Chunked by constraint type.
+    pub lambda: Chunked<Vec<T>>,
+    pub lambda_ad: Chunked<Vec<F>>,
 
     pub shell: TriShell,
     pub solid: TetSolid,
@@ -557,16 +557,12 @@ impl<T: Real> State<T, ad::FT<T>> {
             },
             residual: Chunked3::from_flat(vec![T::zero(); num_verts * 3]),
             residual_ad: Chunked3::from_flat(vec![ad::FT::<T>::zero(); num_verts * 3]),
-            lambda: vec![T::zero(); num_verts],
-            lambda_ad: vec![ad::FT::<T>::zero(); num_verts],
-            vfc: Chunked3::from_flat(vec![T::zero(); num_verts * 3]),
-            vfc_ad: Chunked3::from_flat(vec![ad::FT::<T>::zero(); num_verts * 3]),
             mass_inv: mass
                 .into_iter()
                 .take(num_free_verts)
                 .map(|m| T::from(1.0 / m).unwrap())
                 .chain(std::iter::repeat(T::zero()).take(num_verts - num_free_verts))
-                .collect(),
+                .collect::<Vec<_>>(),
             // Save the map to original indices, which is needed when we update
             // vertex positions.
             orig_index: mesh
@@ -585,6 +581,9 @@ impl<T: Real> State<T, ad::FT<T>> {
             vtx,
             shell,
             solid,
+            // Differ initialization.
+            lambda: Chunked::default(),
+            lambda_ad: Chunked::default(),
             //rigid
         })
     }
@@ -593,6 +592,8 @@ impl<T: Real> State<T, ad::FT<T>> {
         let State {
             dof,
             vtx,
+            lambda,
+            lambda_ad,
             shell,
             solid,
             //rigid,
@@ -645,7 +646,6 @@ impl<T: Real> State<T, ad::FT<T>> {
             Chunked3<&[T]>,
             Chunked3<&[ad::FT<T>]>,
             &[T],
-            &[ad::FT<T>],
             &[usize],
             &[VertexType],
         >| VertexWorkspace {
@@ -657,10 +657,6 @@ impl<T: Real> State<T, ad::FT<T>> {
             },
             residual: convert3(ws.residual),
             residual_ad: convert3_ad(ws.residual_ad),
-            lambda: convert(ws.lambda),
-            lambda_ad: convert_ad(ws.lambda_ad),
-            vfc: convert3(ws.vfc),
-            vfc_ad: convert3_ad(ws.vfc_ad),
             mass_inv: convert(ws.mass_inv),
             orig_index: ws.orig_index.to_vec(),
             vertex_type: ws.vertex_type.to_vec(),
@@ -669,9 +665,13 @@ impl<T: Real> State<T, ad::FT<T>> {
         let dof = dof.clone_with_storage(dof_storage);
         let vtx_storage = convert_vtx_workspace(vtx.view().storage());
         let vtx = vtx.clone_with_storage(vtx_storage);
+        let lambda = lambda.clone_with_storage(convert(lambda.view().storage()));
+        let lambda_ad = lambda_ad.clone_with_storage(convert_ad(lambda_ad.view().storage()));
         State {
             dof,
             vtx,
+            lambda,
+            lambda_ad,
             shell: shell.clone(),
             solid: solid.clone(),
             //rigid: rigid.clone(),

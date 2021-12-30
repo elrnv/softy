@@ -7,7 +7,7 @@ use tensr::*;
 
 use super::mcp::*;
 use super::newton::*;
-use super::problem::{NLProblem, NonLinearProblem};
+use super::problem::{FrictionalContactConstraint, NLProblem, NonLinearProblem};
 use super::state::*;
 use super::{NLSolver, SimParams, SolveResult, Status};
 use crate::attrib_defines::*;
@@ -115,6 +115,133 @@ impl SolverBuilder {
             .collect())
     }
 
+    fn build_frictional_contact_constraints<T: Real>(
+        mesh: &Mesh,
+        vertex_type: &[VertexType],
+        frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
+    ) -> Result<Vec<FrictionalContactConstraint<T>>, crate::Error> {
+        use super::problem::ObjectId;
+        use crate::TriMesh;
+        use geo::algo::*;
+        use hashbrown::HashMap;
+
+        let object_ids = mesh
+            .attrib_as_slice::<ObjectIdType, CellIndex>(OBJECT_ID_ATTRIB)
+            .unwrap();
+        let (partition, num_parts) = partition_slice(object_ids);
+
+        // Create a lookup table for object ids.
+        let mut id_map = vec![0; num_parts];
+        for (&part_index, &obj_id) in partition.iter().zip(object_ids.iter()) {
+            // as cast is safe since Object id is clamped to 0 during initializtion.
+            id_map[part_index] = obj_id as usize;
+        }
+
+        let parts = mesh.clone().split_by_cell_partition(partition, num_parts).0;
+        let object_surface_meshes: HashMap<usize, TriMesh> = parts
+            .into_iter()
+            .enumerate()
+            .map(|(part_index, part)| {
+                // Split a tetmesh from the mesh and construct a surface mesh out of that.
+                // Then merge the result with remaining triangles.
+                let mut surface_mesh =
+                    TriMesh::merge_iter(part.split_into_typed_meshes().into_iter().map(
+                        |typed_mesh| match typed_mesh {
+                            TypedMesh::Tet(mesh) => mesh.surface_trimesh(),
+                            TypedMesh::Tri(mesh) => mesh,
+                        },
+                    ));
+                // Sort indices by original vertex so we can use this attribute to make subsets.
+                if let Ok(orig_vertex_index) = surface_mesh
+                    .attrib_clone_into_vec::<OriginalVertexIndexType, VertexIndex>(
+                        ORIGINAL_VERTEX_INDEX_ATTRIB,
+                    )
+                {
+                    surface_mesh.sort_vertices_by_key(|i| orig_vertex_index[i]);
+                }
+                (id_map[part_index], surface_mesh)
+            })
+            .collect();
+
+        let build_contact_surface = |id| -> Result<_, Error> {
+            let mesh = object_surface_meshes
+                .get(&id)
+                .ok_or(Error::ContactObjectIdError { id })?;
+            // Detecting if the whole mesh is fixed allows us to skip generating potentially expensive Jacobians for the entire mesh.
+            // TODO: Investigate if this is perhaps more efficient if done on a per vertex level.
+            let is_fixed = mesh
+                .face_iter()
+                .all(|face| face.iter().all(|&i| vertex_type[i] == VertexType::Fixed));
+            Ok(if is_fixed {
+                ContactSurface::fixed(mesh)
+            } else {
+                ContactSurface::deformable(mesh)
+            })
+        };
+
+        frictional_contacts
+            .into_iter()
+            .map(|(params, (object_id, collider_id))| {
+                let object = build_contact_surface(object_id)?;
+                let collider = build_contact_surface(collider_id)?;
+                Ok(FrictionalContactConstraint {
+                    object_id: ObjectId {
+                        obj_id: object_id,
+                        include_fixed: params.use_fixed,
+                    },
+                    collider_id: ObjectId {
+                        obj_id: collider_id,
+                        include_fixed: params.use_fixed,
+                    },
+                    constraint: build_indexed_contact_constraint(object, collider, params)?,
+                })
+            })
+            .collect::<Result<Vec<_>, crate::Error>>()
+    }
+
+    /// A helper function to initialize the object ID attribute if one doesn't already exist.
+    ///
+    /// This function also sets all ids that are out of bounds to 0, to avoid out of bounds errors.
+    pub(crate) fn init_object_id_attribute(mesh: &mut Mesh) -> Result<(), Error> {
+        use std::convert::TryFrom;
+        let clamp_id = move |id: ObjectIdType| id.max(0);
+
+        // If there is already an attribute with the right type, normalize the ids.
+        if let Ok(attrib) = mesh.attrib_mut::<CellIndex>(OBJECT_ID_ATTRIB) {
+            if let Ok(attrib_slice) = attrib.as_mut_slice::<ObjectIdType>() {
+                attrib_slice.iter_mut().for_each(|id| *id = clamp_id(*id));
+                return Ok(());
+            }
+        }
+        // Remove an attribute with the same name if it exists since it will have the wrong type.
+        if let Ok(attrib) = mesh.remove_attrib::<CellIndex>(OBJECT_ID_ATTRIB) {
+            if let Ok(iter) = attrib.iter::<i32>() {
+                let obj_ids = iter
+                    .map(|&id| clamp_id(ObjectIdType::try_from(id).unwrap_or(0)))
+                    .collect();
+                mesh.insert_attrib_data::<ObjectIdType, VertexIndex>(OBJECT_ID_ATTRIB, obj_ids)?;
+                return Ok(());
+            } else if let Ok(iter) = attrib.iter::<u8>() {
+                let obj_ids = iter
+                    .map(|&id| clamp_id(ObjectIdType::try_from(id).unwrap_or(0)))
+                    .collect();
+                mesh.insert_attrib_data::<ObjectIdType, VertexIndex>(OBJECT_ID_ATTRIB, obj_ids)?;
+                return Ok(());
+            } else if let Ok(iter) = attrib.iter::<u32>() {
+                let obj_ids = iter
+                    .map(|&id| clamp_id(ObjectIdType::try_from(id).unwrap_or(0)))
+                    .collect();
+                mesh.insert_attrib_data::<ObjectIdType, VertexIndex>(OBJECT_ID_ATTRIB, obj_ids)?;
+                return Ok(());
+            }
+        }
+        // If no attribute exists, just insert the new attribute with a default value.
+        // We know that this will not panic because above we removed any attribute with the same name.
+        mesh.attrib_or_insert_with_default::<ObjectIdType, CellIndex>(OBJECT_ID_ATTRIB, 0)
+            .unwrap();
+        Ok(())
+    }
+
     /// A helper function to initialize the material id attribute if one doesn't already exist.
     ///
     /// This function also sets all ids that are out of bounds to 0, to avoid out of bounds errors,
@@ -179,6 +306,31 @@ impl SolverBuilder {
         Ok(())
     }
 
+    /// A helper function to initialize a vertex index attribute to keep track of vertex indices
+    /// for derivative meshes (after splits and merges).
+    pub(crate) fn init_original_vertex_index_attribute(mesh: &mut Mesh) {
+        let _ = mesh
+            .remove_attrib::<VertexIndex>(ORIGINAL_VERTEX_INDEX_ATTRIB)
+            .ok();
+        // Add an original vertex index attribute to track vertices after they are split when
+        // building surface meshes from tetmeshes.
+        mesh.insert_attrib_data::<OriginalVertexIndexType, VertexIndex>(
+            ORIGINAL_VERTEX_INDEX_ATTRIB,
+            (0..mesh.num_vertices()).collect(),
+        )
+        .unwrap();
+    }
+
+    /// A helper function to initialize the inverse mass vertex attribute.
+    /// Any previously added attributes of the same name are overwritten.
+    pub(crate) fn init_mass_inv_attribute<T: Real>(mesh: &mut Mesh, mass_inv: &[T]) {
+        let _ = mesh.remove_attrib::<VertexIndex>(MASS_INV_ATTRIB).ok();
+        mesh.insert_attrib_data::<MassInvType, VertexIndex>(
+            MASS_INV_ATTRIB,
+            mass_inv.iter().map(|&x| x.to_f64().unwrap()).collect(),
+        )
+        .unwrap(); // Should not panic, since we removed the attribute beforehand.
+    }
     /// A helper function to initialize the fixed attribute if one doesn't already exist.
     pub(crate) fn init_fixed_attribute(mesh: &mut Mesh) -> Result<(), Error> {
         use num_traits::{One, Zero};
@@ -378,15 +530,60 @@ impl SolverBuilder {
         // Compute the reference position attribute temporarily.
         // This is used when building the simulation elements and constraints of the mesh.
         init_mesh_source_index_attribute(&mut mesh)?;
+
+        Self::init_original_vertex_index_attribute(&mut mesh);
         Self::init_cell_vertex_ref_pos_attribute(&mut mesh)?;
         Self::init_velocity_attribute(&mut mesh)?;
         Self::init_material_id_attribute(&mut mesh, materials.len())?;
+        Self::init_object_id_attribute(&mut mesh)?;
         Self::init_fixed_attribute(&mut mesh)?;
 
         let vertex_type = crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
-        let state = State::try_from_mesh_and_materials(&mesh, &materials, &vertex_type)?;
+
+        // Initialize state (but not constraint multipliers).
+        let mut state = State::<T, autodiff::FT<T>>::try_from_mesh_and_materials(
+            &mesh,
+            &materials,
+            &vertex_type,
+        )?;
+
+        // Initialize constraints.
 
         let volume_constraints = Self::build_volume_constraints(&mesh, &materials)?;
+
+        // Early exit if we detect any self contacts.
+        if frictional_contacts.iter().any(|(_, (i, j))| i == j) {
+            return Err(Error::UnimplementedFeature {
+                description: String::from("Self contacts"),
+            });
+        }
+
+        // Frictional contacts need to be built after state since state initializes the vertex mass inverses.
+        Self::init_mass_inv_attribute::<T>(&mut mesh, &state.vtx.mass_inv);
+
+        let frictional_contact_constraints = Self::build_frictional_contact_constraints::<T>(
+            &mesh,
+            &vertex_type,
+            frictional_contacts,
+        )?;
+        let frictional_contact_constraints_ad = frictional_contact_constraints
+            .iter()
+            .map(FrictionalContactConstraint::clone_as_autodiff::<T>)
+            .collect::<Vec<_>>();
+
+        // Allocate space for constraint multipliers.
+        let mut constraint_sizes = vec![volume_constraints.len()];
+        constraint_sizes.extend(
+            frictional_contact_constraints
+                .iter()
+                .map(|fc| fc.constraint.borrow().constraint_size()),
+        );
+        let num_constraints: usize = constraint_sizes.iter().sum();
+        state.lambda = Chunked::from_sizes(&constraint_sizes, vec![T::zero(); num_constraints]);
+        state.lambda_ad = Chunked::from_sizes(
+            constraint_sizes,
+            vec![num_traits::Zero::zero(); num_constraints],
+        );
 
         let gravity = [
             f64::from(params.gravity[0]),
@@ -395,23 +592,6 @@ impl SolverBuilder {
         ];
 
         let time_step = f64::from(params.time_step.unwrap_or(0.0f32));
-
-        if frictional_contacts.iter().any(|(_, (i, j))| i == j) {
-            return Err(Error::UnimplementedFeature {
-                description: String::from("Self contacts"),
-            });
-        }
-
-        // TODO: implement frictional contacts
-        //let frictional_contacts_ad = Self::build_frictional_contacts::<ad::FT<T>>(
-        //    &state.solid,
-        //    &state.shell,
-        //    &frictional_contacts,
-        //);
-        //let frictional_contacts =
-        //    Self::build_frictional_contacts::<T>(&state.solid, &state.shell, &frictional_contacts);
-        //let frictional_contacts = Vec::new();
-        //let frictional_contacts_ad = Vec::new();
 
         // Compute maxes
 
@@ -494,8 +674,8 @@ impl SolverBuilder {
             state: RefCell::new(state),
             kappa: 1.0 / params.contact_tolerance as f64,
             delta: params.contact_tolerance as f64,
-            //frictional_contacts,
-            //frictional_contacts_ad,
+            frictional_contact_constraints,
+            frictional_contact_constraints_ad,
             volume_constraints,
             time_step,
             gravity,
@@ -786,7 +966,8 @@ where
                 .unwrap()
         } else {
             u32::MAX
-        }.max(1);
+        }
+        .max(1);
 
         // Loop to resolve all contacts.
         loop {

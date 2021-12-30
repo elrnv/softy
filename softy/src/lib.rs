@@ -60,7 +60,7 @@ impl<T> Real64 for T where T: Real + tensr::Real64 {}
 pub enum Error {
     #[error("Size mismatch error")]
     SizeMismatch,
-    #[error("Attribute error: {source:?}")]
+    #[error("Attribute error: {source}")]
     AttribError {
         #[from]
         source: attrib::Error,
@@ -75,37 +75,37 @@ pub enum Error {
     InvertedReferenceElement { inverted: Vec<usize> },
     #[error("Error during main non-linear solve step: {result:?}")]
     NLSolveError { result: nl_fem::SolveResult },
+    #[error("Error during main optimization solve step: Status: {status:?}; Result: {result:?}")]
     #[cfg(feature = "optsolver")]
-    #[error("Error during main optimization solve step")]
     /// This reports iterations, objective value and max inner iterations.
     OptSolveError {
         status: ipopt::SolveStatus,
         result: opt_fem::SolveResult,
     },
+    #[error("Error during an inner solve step: {status:?}; Objective: {objective_value}; Iterations": {iterations})]
     #[cfg(feature = "optsolver")]
-    #[error("Error during an inner solve step")]
     /// This reports iterations and objective value.
     InnerOptSolveError {
         status: ipopt::SolveStatus,
         objective_value: f64,
         iterations: u32,
     },
+    #[error("Friction solve error: {status:?}")]
     #[cfg(feature = "optsolver")]
-    #[error("Friction solve error: {:?}", .status)]
     FrictionSolveError {
         status: ipopt::SolveStatus,
         result: FrictionSolveResult,
     },
+    #[error("Contact solve error: {status}")]
     #[cfg(feature = "optsolver")]
-    #[error("Contact solve error: {:?}", .status)]
     ContactSolveError { status: ipopt::SolveStatus },
+    #[error("Solver create error: {source}")]
     #[cfg(feature = "optsolver")]
-    #[error("Solver create error")]
     SolverCreateError {
         #[from]
         source: ipopt::CreateError,
     },
-    #[error("Invalid parameter: {name:?}")]
+    #[error("Invalid parameter: {name}")]
     InvalidParameter { name: String },
     #[error("Missing source index")]
     MissingSourceIndex,
@@ -121,34 +121,36 @@ pub enum Error {
     NoSimulationMesh,
     #[error("No kinematic mesh found")]
     NoKinematicMesh,
-    #[error("Incorrect object is used for the given material")]
     /// This may be an internal error.
+    #[error("Incorrect object is used for the given material")]
     ObjectMaterialMismatch,
-    #[error("Error during mesh IO")]
     /// Typically happens during debugging
+    #[error("Error during mesh IO: {source}")]
     MeshIOError {
         #[from]
         source: geo::io::Error,
     },
-    #[error("File I/O Error")]
+    #[error("File I/O Error: {source}")]
     FileIOError {
         #[from]
         source: std::io::Error,
     },
     #[error("File I/O Error")]
     InvalidImplicitSurface,
-    #[error("Error generating the implicit field")]
+    #[error("Error generating the implicit field: {source}")]
     ImplicitsError {
         #[from]
         source: implicits::Error,
     },
     #[error("Unimplemented feature: {description:?}")]
     UnimplementedFeature { description: String },
-    #[error("Invalid solver configuration")]
+    #[error("Invalid solver configuration: {source}")]
     InvalidSolverConfig {
         #[from]
         source: fem::nl::Error,
     },
+    #[error("Specified ID ({id}) for a contact constraint does not match any object ID in the input mesh.")]
+    ContactObjectIdError { id: usize },
 }
 
 pub enum SimResult {

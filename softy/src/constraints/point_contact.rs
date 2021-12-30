@@ -1789,9 +1789,6 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     pub(crate) fn constraint(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2], value: &mut [T]) {
-        dbg!(value.len());
-        dbg!(self.constraint_size());
-        dbg!(self.constraint_value.len());
         debug_assert_eq!(value.len(), self.constraint_size());
         if let Some(jac) = self.constraint_jacobian.borrow() {
             // Constraint is linearized

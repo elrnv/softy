@@ -181,9 +181,10 @@ impl SolverBuilder {
 
         frictional_contacts
             .into_iter()
-            .map(|(params, (object_id, collider_id))| {
+            .map(|(mut params, (object_id, collider_id))| {
                 let object = build_contact_surface(object_id)?;
                 let collider = build_contact_surface(collider_id)?;
+                params.contact_type = ContactType::Point; // linearized not supported on nl solvers.
                 Ok(FrictionalContactConstraint {
                     object_id: ObjectId {
                         obj_id: object_id,

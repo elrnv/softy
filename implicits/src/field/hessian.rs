@@ -114,12 +114,22 @@ impl<T: Real> QueryTopo<T> {
     pub fn query_hessian_product_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize)> + 'a {
-        self.trivial_neighborhood_seq()
-            .enumerate()
-            .filter(move |(_, nbrs)| !nbrs.is_empty())
-            .flat_map(move |(i, _)| {
+        self.query_hessian_product_block_indices_iter()
+            .flat_map(move |i| {
                 (0..3).flat_map(move |r| (0..=r).map(move |c| (3 * i + r, 3 * i + c)))
             })
+    }
+
+    /// Returns an iterator over all query hessian blocks.
+    ///
+    /// The query hessian is diagonal so the iterator returns the index of each diagonal element
+    /// in the sparse matrix.
+    pub fn query_hessian_product_block_indices_iter<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = usize> + 'a {
+        self.trivial_neighborhood_seq().enumerate()
+            .filter(move |(_, nbrs)| !nbrs.is_empty())
+            .map(move |(i, _)| i)
     }
 
     pub fn query_hessian_product_values_iter<'a>(
@@ -170,6 +180,25 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
+        self.query_hessian_product_indexed_blocks_iter_impl(query_points, multipliers,kernel).flat_map(|(_, mtx)|
+            (0..3).flat_map(move |r| (0..=r).map(move |c| mtx[r][c]))
+        )
+    }
+
+    /// This function returns an iterator over the row-major blocks of the hessian product matrix.
+    ///
+    /// This matrix is diagonal so the returned index represents both row and column index of each
+    /// block.
+    pub(crate) fn query_hessian_product_indexed_blocks_iter_impl<'a, K: 'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [T],
+        kernel: K,
+    ) -> impl Iterator<Item = (usize, [[T; 3];3])> + 'a
+        where
+            T: Real,
+            K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
         let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
@@ -179,13 +208,13 @@ impl<T: Real> QueryTopo<T> {
         } = *self.base();
 
         // For each row (query point)
-        zip!(query_points.iter(), neigh_points)
-            .filter(|(_, nbrs)| !nbrs.is_empty())
+        zip!(query_points.iter(), neigh_points).enumerate()
+            .filter(|(_, (_, nbrs))| !nbrs.is_empty())
             .zip(multipliers.iter())
-            .flat_map(move |((q, nbr_points), &mult)| {
+            .map(move |((idx, (q, nbr_points)), &mult)| {
                 let view = SamplesView::new(nbr_points, samples);
                 let mtx = query_hessian_at(Vector3::new(*q), view, kernel, bg_field_params) * mult;
-                (0..3).flat_map(move |r| (0..=r).map(move |c| mtx[r][c]))
+                (idx, mtx.into_data())
             })
     }
 

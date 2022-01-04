@@ -1,4 +1,4 @@
-pub mod indexed_point_contact;
+pub mod penalty_point_contact;
 pub mod point_contact;
 pub mod volume;
 
@@ -13,7 +13,7 @@ use crate::Error;
 use crate::Real;
 
 //pub use self::linearized_point_contact::*;
-pub use self::indexed_point_contact::*;
+pub use self::penalty_point_contact::*;
 pub use self::point_contact::*;
 pub use self::volume::*;
 use tensr::*;
@@ -62,18 +62,19 @@ impl<M, T> ContactSurface<M, T> {
 }
 
 /// Construct a new contact constraint based on the given parameters.
-pub fn build_indexed_contact_constraint<T: Real, VP: geo::mesh::VertexMesh<f64>>(
+pub fn build_penalty_contact_constraint<T: Real, VP: geo::mesh::VertexMesh<f64>>(
     object: ContactSurface<&crate::TriMesh, f64>,
     collider: ContactSurface<&VP, f64>,
     params: FrictionalContactParams,
-) -> Result<std::cell::RefCell<IndexedPointContactConstraint<T>>, crate::Error> {
-    Ok(std::cell::RefCell::new(IndexedPointContactConstraint::new(
+    num_vertices: usize,
+) -> Result<std::cell::RefCell<PenaltyPointContactConstraint<T>>, crate::Error> {
+    Ok(std::cell::RefCell::new(PenaltyPointContactConstraint::new(
         object,
         collider,
         params.kernel,
         params.friction_params,
         params.contact_offset,
-        params.contact_type == ContactType::LinearizedPoint,
+        num_vertices,
     )?))
 }
 

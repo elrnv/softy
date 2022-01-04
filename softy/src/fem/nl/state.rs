@@ -17,11 +17,6 @@ use crate::Real;
 pub const VERTEX_DOFS: usize = 0;
 pub const RIGID_DOFS: usize = 1;
 
-/// Index for each constraint
-/// type.
-pub const POINT_CONTACT_CONSTRAINT: usize = 1;
-pub const VOLUME_CONSTRAINT: usize = 0;
-
 ///// `k0` is previous axis-angle vector.
 /////
 ///// The idea here is taken from https://arxiv.org/pdf/1604.08139.pdf
@@ -378,10 +373,8 @@ pub struct State<T, F> {
         VertexWorkspace<Chunked3<Vec<T>>, Chunked3<Vec<F>>, Vec<T>, Vec<usize>, Vec<VertexType>>,
 
     /// Constraint multipliers.
-    ///
-    /// Chunked by constraint type.
-    pub lambda: Chunked<Vec<T>>,
-    pub lambda_ad: Chunked<Vec<F>>,
+    pub lambda: Vec<T>,
+    pub lambda_ad: Vec<F>,
 
     pub shell: TriShell,
     pub solid: TetSolid,
@@ -582,8 +575,8 @@ impl<T: Real> State<T, ad::FT<T>> {
             shell,
             solid,
             // Differ initialization.
-            lambda: Chunked::default(),
-            lambda_ad: Chunked::default(),
+            lambda: Vec::new(),
+            lambda_ad: Vec::new(),
             //rigid
         })
     }
@@ -1087,6 +1080,7 @@ impl<T: Real> State<T, ad::FT<T>> {
                 *cur_vel = (*next_pos - *cur_pos) * dt_inv;
                 *cur_pos = *next_pos;
             });
+
         next.iter_mut()
             .zip(new_pos_iter)
             .zip(vertex_type.iter())

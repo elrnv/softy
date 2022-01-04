@@ -99,6 +99,8 @@ pub trait NLSolver<P, T> {
     fn problem(&self) -> &P;
     /// Gets a mutable reference the underlying problem instance.
     fn problem_mut(&mut self) -> &mut P;
+    /// Updates the constraint set which may change the jacobian sparsity.
+    fn update_jacobian_indices(&mut self);
     /// Solves the problem and returns the solution along with the solve result
     /// info.
     fn solve(&mut self) -> (Vec<T>, SolveResult);

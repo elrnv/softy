@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
 use accelerate::*;
+use lazycell::LazyCell;
 #[cfg(not(target_os = "macos"))]
 use mkl_corrode as mkl;
 use serde::{Deserialize, Serialize};
@@ -197,6 +198,17 @@ impl SparseDirectSolver {
     }
 }
 
+pub struct SparseJacobian<T: Real> {
+    j_rows: Vec<usize>,
+    j_cols: Vec<usize>,
+    j_vals: Vec<T>,
+    /// Mapping from original triplets given by the `j_*` members to the final
+    /// compressed sparse matrix.
+    j_mapping: Vec<Index>,
+    j: DSMatrix<T>,
+    sparse_solver: LazyCell<SparseDirectSolver>,
+}
+
 pub struct NewtonWorkspace<T: Real> {
     linsolve: BiCGSTAB<T>,
     x_prev: Vec<T>,
@@ -205,14 +217,7 @@ pub struct NewtonWorkspace<T: Real> {
     jp: Vec<T>,
     r_cur: Vec<T>,
     r_next: Vec<T>,
-    j_rows: Vec<usize>,
-    j_cols: Vec<usize>,
-    j_vals: Vec<T>,
-    /// Mapping from original triplets given by the `j_*` members to the final
-    /// compressed sparse matrix.
-    j_mapping: Vec<Index>,
-    j: DSMatrix<T>,
-    sparse_solver: SparseDirectSolver,
+    sparse_jacobian: SparseJacobian<T>,
 }
 
 pub struct Newton<P, T: Real> {
@@ -287,19 +292,8 @@ where
         let r_cur = r.clone();
         let p = r.clone();
 
-        // Construct the sparse Jacobian.
-
-        let (j_rows, j_cols) = problem.jacobian_indices();
-        assert_eq!(j_rows.len(), j_cols.len());
-        let j_nnz = j_rows.len();
-        let j_vals = vec![T::zero(); j_nnz];
-
-        let (j, j_mapping) = sparse_matrix_and_mapping(&j_rows, &j_cols, &j_vals, n);
-
         // Allocate space for the linear solver.
         let linsolve = BiCGSTAB::new(n, params.linsolve_max_iter, params.linsolve_tol);
-
-        let sparse_solver = SparseDirectSolver::new(j.view());
 
         Newton {
             problem,
@@ -314,15 +308,18 @@ where
                 jp,
                 r_cur,
                 r_next,
-                j_rows,
-                j_cols,
-                j_vals,
-                j_mapping,
-                j,
-                sparse_solver,
+                sparse_jacobian: SparseJacobian {
+                    j_vals: Vec::new(),
+                    j_cols: Vec::new(),
+                    j_rows: Vec::new(),
+                    j: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
+                    j_mapping: Vec::new(),
+                    sparse_solver:  LazyCell::new()
+                }
             }),
         }
     }
+
 }
 
 impl<T, P> NLSolver<P, T> for Newton<P, T>
@@ -349,6 +346,22 @@ where
     /// Gets a mutable reference the underlying problem instance.
     fn problem_mut(&mut self) -> &mut P {
         &mut self.problem
+    }
+    fn update_jacobian_indices(&mut self) {
+        // Construct the sparse Jacobian.
+        let n = self.problem().num_variables();
+        let (j_rows, j_cols) = self.problem.jacobian_indices();
+        assert_eq!(j_rows.len(), j_cols.len());
+        let j_nnz = j_rows.len();
+        let mut ws = self.workspace.borrow_mut();
+        let sj = &mut ws.sparse_jacobian;
+        sj.j_vals.resize(j_nnz, T::zero());
+        let (j, j_mapping) = sparse_matrix_and_mapping(&j_rows, &j_cols, &sj.j_vals, n);
+        sj.j_cols = j_cols;
+        sj.j_rows = j_rows;
+        sj.j = j;
+        sj.j_mapping = j_mapping;
+        sj.sparse_solver.replace(SparseDirectSolver::new(sj.j.view()));
     }
 
     /// Solves the problem and returns the solution along with the solve result
@@ -388,19 +401,25 @@ where
             jp,
             r_cur,
             r_next,
+            sparse_jacobian,
+        } = &mut *workspace.borrow_mut();
+
+        let SparseJacobian {
             j_rows,
             j_cols,
             j_vals,
             j_mapping,
             j,
             sparse_solver,
-        } = &mut *workspace.borrow_mut();
+        } = sparse_jacobian;
+
+        // Unwrap the sparse solver. In case of panic check update_jacobian_indices function.
+        let sparse_solver = sparse_solver.borrow_mut().expect("Uninitialized sparse solver.");
 
         let mut iterations = 0;
 
         // Initialize the residual.
         problem.residual(x, r.as_mut_slice());
-        //let num_variables = x.len();
 
         // Convert to sprs format for debugging. The CSR structure is preserved.
         //let mut j_sprs: sprs::CsMat<T> = j.clone().into();
@@ -429,8 +448,8 @@ where
         let mut r_cur_norm = r_prev_norm;
         let mut r_next_norm;
 
-        //let mut j_dense =
-        //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
+        let mut j_dense =
+            ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
         //let mut identity =
         //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
         //for (i, id) in identity.iter_mut().enumerate() {
@@ -459,24 +478,10 @@ where
             //for (jp, p) in j_dense.iter_mut().zip(identity.iter()) {
             //    problem.jacobian_product(x, &p, &r, jp)
             //}
-            //for jd in j_dense.storage_mut().iter_mut() {
-            //    *jd = T::zero();
-            //}
-            //let mut j_dense_view = j_dense.view_mut();
-            //for ((&r, &c), &v) in j_rows.iter().zip(j_cols.iter()).zip(j_vals.iter()) {
-            //    if r < num_variables && c < num_variables {
-            //        j_dense_view[r][c] += v;
-            //    }
-            //}
-            //eprintln!("J = [");
-            //for jp in j_dense.iter() {
-            //    for j in jp.iter() {
-            //        eprint!("{:?} ", j);
-            //    }
-            //    eprintln!(";");
-            //}
-            //eprintln!("]");
-            //svd_values(j_dense.view());
+            build_dense(j_dense.view_mut(), &j_rows, &j_cols, &j_vals, x.len());
+            //print_dense(j_dense.view());
+            //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
+            log::debug!("Condition number: {:?}", condition_number(j_dense.view()));
             //write_jacobian_img(j_dense.view(), iterations);
             //jprod_time += Instant::now() - before_j;
 
@@ -817,8 +822,44 @@ fn eig<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
     log::debug!("J eigenvalues: {:?}", dense.complex_eigenvalues());
 }
 
+// Helper function for debugging the jacobian.
 #[allow(dead_code)]
-fn svd_values<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
+fn build_dense<T: Real>(mut j_dense: ChunkedN<&mut [T]>, j_rows: &[usize], j_cols: &[usize], j_vals: &[T], num_variables: usize) {
+    // Clear j_dense
+    for jd in j_dense.storage_mut().iter_mut() {
+        *jd = T::zero();
+    }
+    // Copy j_vals to j_dense
+    for ((&r, &c), &v) in j_rows.iter().zip(j_cols.iter()).zip(j_vals.iter()) {
+        if r < num_variables && c < num_variables {
+            j_dense[r][c] += v;
+        }
+    }
+}
+
+// Helper function for debugging the jacobian.
+#[allow(dead_code)]
+fn print_dense<T: Real>(j_dense: ChunkedN<&[T]>) {
+    eprintln!("J = [");
+    for jp in j_dense.iter() {
+        for j in jp.iter() {
+            eprint!("{:?} ", j);
+        }
+        eprintln!(";");
+    }
+    eprintln!("]");
+}
+
+#[allow(dead_code)]
+fn condition_number<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) -> T{
+    let svd = svd_values(mtx);
+    let max_sigma = svd.iter().cloned().max_by(|a,b| a.partial_cmp(b).unwrap()).unwrap();
+    let min_sigma = svd.iter().cloned().min_by(|a,b| a.partial_cmp(b).unwrap()).unwrap();
+    max_sigma/min_sigma
+}
+
+#[allow(dead_code)]
+fn svd_values<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) -> Vec<T> {
     // nalgebra dense prototype using lu.
     let mut dense = na::DMatrix::zeros(mtx.len(), mtx.len());
 
@@ -827,9 +868,14 @@ fn svd_values<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
             *dense.index_mut((row_idx, col_idx)) = *val;
         }
     }
-
-    log::debug!("J singular values: {:?}", dense.singular_values());
+    let v = dense.singular_values();
+    v.into_iter().cloned().collect()
 }
+
+#[allow(dead_code)]
+fn print_svd<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
+}
+
 #[allow(dead_code)]
 fn write_jacobian_img<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>, iter: u32) {
     // nalgebra dense prototype using lu.

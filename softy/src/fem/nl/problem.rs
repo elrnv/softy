@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::ops::{Deref, DerefMut};
 
 use autodiff as ad;
 use flatk::*;
@@ -11,8 +12,7 @@ use tensr::{AsMutTensor, AsTensor, IntoData, IntoTensor, Matrix, Tensor};
 use super::state::*;
 use crate::attrib_defines::*;
 use crate::constraints::{
-    indexed_point_contact::{compute_contact_force_magnitude, IndexedPointContactConstraint},
-    volume::VolumeConstraint,
+    penalty_point_contact::PenaltyPointContactConstraint, volume::VolumeConstraint, ContactPenalty,
 };
 use crate::contact::ContactJacobianView;
 use crate::energy::{EnergyGradient, EnergyHessian, EnergyHessianTopology};
@@ -81,7 +81,7 @@ pub struct ObjectId {
 pub struct FrictionalContactConstraint<T: Real> {
     pub object_id: ObjectId,
     pub collider_id: ObjectId,
-    pub constraint: RefCell<IndexedPointContactConstraint<T>>,
+    pub constraint: RefCell<PenaltyPointContactConstraint<T>>,
 }
 
 impl<T: Real> FrictionalContactConstraint<T> {
@@ -256,7 +256,34 @@ impl<T: Real64> NLProblem<T> {
 
         // TODO: add additional attributes.
         self.compute_residual(&mut mesh);
+        self.compute_distance_potential(&mut mesh);
         mesh
+    }
+
+    fn compute_distance_potential(&self, mesh: &mut Mesh) {
+        let state = &*self.state.borrow();
+        let mut orig_order_distance_potential = vec![0.0; mesh.num_vertices()];
+        for (i, fc) in self.frictional_contact_constraints.iter().enumerate() {
+            let constraint = fc.constraint.borrow();
+            let dist = constraint.cached_distance_potential(mesh.num_vertices());
+            orig_order_distance_potential.iter_mut().for_each(|d| *d = 0.0); // zero out.
+            state
+                .vtx
+                .orig_index
+                .iter()
+                .zip(dist.iter())
+                .for_each(|(&i, d)| {
+                    orig_order_distance_potential[i] = d.to_f64().unwrap();
+                });
+
+            let potential_attrib_name = format!("{}{}", POTENTIAL_ATTRIB, i);
+            // Should not panic since distance potential should have the same number of elements as vertices.
+            mesh.set_attrib_data::<PotentialType, VertexIndex>(
+                &potential_attrib_name,
+                orig_order_distance_potential.clone(),
+            )
+                .unwrap();
+        }
     }
 
     fn compute_residual(&self, mesh: &mut Mesh) {
@@ -382,57 +409,31 @@ impl<T: Real64> NLProblem<T> {
     /// Return an estimate if any constraints have changed, though this estimate may have false
     /// negatives.
     pub fn update_constraint_set(&mut self) -> bool {
-        let changed = false; // Report if anything has changed to the caller.
+        let mut changed = false; // Report if anything has changed to the caller.
+
+        let NLProblem {
+            ref mut frictional_contact_constraints,
+            ref mut frictional_contact_constraints_ad,
+            ref state,
+            ..
+        } = *self;
+
+        let state = &*state.borrow();
+        let pos = state.vtx.next.pos.view();
+        let pos_ad: Chunked3<Vec<_>> = pos
+            .iter()
+            .map(|&[x, y, z]| [ad::F::cst(x), ad::F::cst(y), ad::F::cst(z)])
+            .collect();
+
+        for fc in frictional_contact_constraints.iter_mut() {
+            changed |= fc.constraint.borrow_mut().update_neighbors(pos);
+        }
+
+        for fc in frictional_contact_constraints_ad.iter_mut() {
+            changed |= fc.constraint.borrow_mut().update_neighbors(pos_ad.view());
+        }
+
         changed
-
-        //    let NLProblem {
-        //        //ref mut frictional_contacts,
-        //        //ref mut frictional_contacts_ad,
-        //        ref state,
-        //        ..
-        //    } = *self;
-
-        //    let q = state.dof.view().storage().cur.q;
-        //    let pos = state.vtx.view().storage().cur.pos;
-
-        //    let q_ad: Vec<_> = q.iter().map(|&x| ad::F::cst(x)).collect();
-        //    let pos_ad: Vec<_> = pos.iter().map(|&x| ad::F::cst(x)).collect();
-
-        //    let q = state.dof.view().map_storage(|_| q);
-        //    let pos = state.vtx.view().map_storage(|_| pos);
-
-        //    for FrictionalContactConstraint {
-        //        object_index,
-        //        collider_index,
-        //        constraint,
-        //    } in frictional_contacts.iter_mut()
-        //    {
-        //        let object_pos = state.mesh_vertex_subset(q, pos, *object_index);
-        //        let collider_pos = state.mesh_vertex_subset(q, pos, *collider_index);
-
-        //        changed |= constraint
-        //            .borrow_mut()
-        //            .update_neighbors(object_pos.view(), collider_pos.view());
-        //    }
-
-        //    let q_ad = state.dof.view().map_storage(|_| q_ad.view());
-        //    let pos_ad = state.vtx.view().map_storage(|_| pos_ad.view());
-
-        //    for FrictionalContactConstraint {
-        //        object_index,
-        //        collider_index,
-        //        constraint,
-        //    } in frictional_contacts_ad.iter_mut()
-        //    {
-        //        let object_pos = state.mesh_vertex_subset(q_ad, pos_ad, *object_index);
-        //        let collider_pos = state.mesh_vertex_subset(q_ad, pos_ad, *collider_index);
-
-        //        changed |= constraint
-        //            .borrow_mut()
-        //            .update_neighbors(object_pos.view(), collider_pos.view());
-        //    }
-
-        //    changed
     }
 
     //pub fn apply_frictional_contact_impulse(&mut self) {
@@ -1360,20 +1361,19 @@ impl<T: Real64> NLProblem<T> {
                     0
                 };
         }
+
         for vc in self.volume_constraints.iter() {
             num +=
                 2 * vc.borrow().constraint_hessian_size() - vc.borrow().num_hessian_diagonal_nnz()
         }
 
-        //for fc in self.frictional_contacts.iter() {
-        //    //TODO: add frictional contact counts
-        //    //if !self.is_rigid(fc.object_index) {
-        //    //    num += fc.constraint.borrow().object_constraint_hessian_size();
-        //    //}
-        //    //if !self.is_rigid(fc.collider_index) {
-        //    //    num += fc.constraint.borrow().collider_constraint_hessian_size();
-        //    //}
-        //}
+        for fc in self.frictional_contact_constraints.iter() {
+            //TODO: add frictional contact counts
+            let nh = fc.constraint.borrow().constraint_hessian_size();
+            let ndh = fc.constraint.borrow().num_hessian_diagonal_nnz();
+            num += 2 * nh - ndh;
+        }
+
         num
     }
 
@@ -1456,59 +1456,24 @@ impl<T: Real64> NLProblem<T> {
         pos: &[S],
         vel: &[S],
         r: &mut [S],
-        mut lambda: ChunkedView<&mut [S]>,
         frictional_contact_constraints: &[FrictionalContactConstraint<S>],
     ) {
         assert_eq!(pos.len(), vel.len());
         assert_eq!(r.len(), pos.len());
-        let r3: &mut [[S; 3]] = bytemuck::cast_slice_mut(r);
+        let orig_r = r.to_vec();
 
         // Compute contact lambda.
         {
-            let mut lambda = lambda.view_mut().isolate(POINT_CONTACT_CONSTRAINT);
-
             for fc in frictional_contact_constraints.iter() {
                 let mut fc_constraint = fc.constraint.borrow_mut();
+                fc_constraint.update_state(Chunked3::from_flat(pos));
+                fc_constraint.update_constraint_gradient();
+                fc_constraint.update_multipliers(
+                    self.delta as f32,
+                    self.kappa as f32,
+                );
 
-                // Take a slice of lambda for this particular contact constraint.
-                let num_constraints = fc_constraint.constraint_size();
-                let (local_lambda, rest) = lambda.split_at_mut(num_constraints);
-                lambda = rest; // Increment lambda
-
-                fc_constraint.constraint(Chunked3::from_flat(pos), local_lambda);
-
-                compute_contact_force_magnitude(lambda, self.delta as f32, self.kappa as f32);
-
-                // Compute lambda * constraint Jacobian (notice the order) and
-                // *subtract* it from f.
-
-                // Subtract contact force on object.
-                fc_constraint
-                    .object_constraint_jacobian_blocks_iter()
-                    .for_each(|(row, col, j)| {
-                        *r3[col].as_mut_tensor() -= *j.as_tensor() * local_lambda[row];
-                    });
-
-                //        // Subtract friction force force on object.
-                //        if let Some((obj_f, _)) = friction.as_ref() {
-                //            for (obj_f, fc) in zip!(obj_f.iter(), obj_fc.iter_mut()) {
-                //                *fc.as_mut_tensor() -= obj_f.as_tensor();
-                //            }
-                //        }
-
-                let col_j_blocks_iter = fc_constraint.collider_constraint_jacobian_blocks_iter();
-
-                // Subtract contact force on collider.
-                col_j_blocks_iter.for_each(|(row, col, j)| {
-                    *r3[col].as_mut_tensor() -= *j.as_tensor() * local_lambda[row];
-                });
-
-                //        // Subtract friction force force on collider.
-                //        if let Some((_, col_f)) = friction.as_ref() {
-                //            for (i, col_f, _) in col_f.iter() {
-                //                *col_fc[i].as_mut_tensor() -= col_f.as_tensor();
-                //            }
-                //        }
+                fc_constraint.subtract_constraint_force(Chunked3::from_flat(r));
             }
         }
     }
@@ -1641,10 +1606,8 @@ impl<T: Real64> NLProblem<T> {
     fn subtract_force<S: Real>(
         &self,
         state: ResidualState<&[T], &[S], &mut [S]>,
-        lambda: ChunkedView<&mut [S]>,
         solid: &TetSolid,
         shell: &TriShell,
-        //vfc: &mut [S],
         frictional_contacts: &[FrictionalContactConstraint<S>],
     ) {
         let ResidualState { cur, next, r } = state;
@@ -1658,7 +1621,7 @@ impl<T: Real64> NLProblem<T> {
             .gravity(self.gravity)
             .add_energy_gradient(cur.pos, next.pos, r);
 
-        self.subtract_constraint_forces(next.pos, next.vel, r, lambda, frictional_contacts);
+        self.subtract_constraint_forces(next.pos, next.vel, r, frictional_contacts);
 
         debug_assert!(r.iter().all(|r| r.is_finite()));
     }
@@ -1678,7 +1641,6 @@ impl<T: Real64> NLProblem<T> {
                 vtx,
                 solid,
                 shell,
-                lambda_ad,
                 ..
             } = state;
 
@@ -1690,9 +1652,8 @@ impl<T: Real64> NLProblem<T> {
 
             self.subtract_force(
                 vtx.residual_state_ad().into_storage(),
-                lambda_ad.view_mut(),
                 solid,
-                shell, //vtx_state, vfc, &self.frictional_contacts_ad, lambda,
+                shell,
                 self.frictional_contact_constraints_ad.as_slice(),
             );
         }
@@ -1736,7 +1697,6 @@ impl<T: Real64> NLProblem<T> {
             vtx,
             solid,
             shell,
-            lambda,
             ..
         } = &mut *self.state.borrow_mut();
 
@@ -1748,9 +1708,8 @@ impl<T: Real64> NLProblem<T> {
 
         self.subtract_force(
             vtx.residual_state().into_storage(),
-            lambda.view_mut(),
             &solid,
-            &shell, //vfc, &self.frictional_contacts, lambda,
+            &shell,
             self.frictional_contact_constraints.as_slice(),
         );
 
@@ -1785,9 +1744,11 @@ impl<T: Real64> NLProblem<T> {
             })
     }
 
-    fn jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {
-        let mut rows = vec![0; self.jacobian_nnz()];
-        let mut cols = vec![0; self.jacobian_nnz()];
+    fn be_jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {
+        let num_active_coords = self.num_variables();
+        let jac_nnz = self.jacobian_nnz();
+        let mut rows = vec![0; jac_nnz];
+        let mut cols = vec![0; jac_nnz];
         let mut count = 0; // Constraint counter
 
         let state = self.state.borrow();
@@ -1827,16 +1788,43 @@ impl<T: Real64> NLProblem<T> {
 
         // Add volume constraint indices
         for vc in self.volume_constraints.iter() {
-            for MatrixElementIndex { row, col } in vc.borrow().constraint_hessian_indices_iter() {
+            for MatrixElementIndex { row, col } in vc.borrow().constraint_hessian_indices_iter()
+                .filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
+            {
                 rows[count] = row;
                 cols[count] = col;
                 count += 1;
             }
         }
 
+        // Add symmetric contact constraint Jacobian
+        for fc in self.frictional_contact_constraints.iter() {
+            let constraint = fc.constraint.borrow();
+            // Indices for constraint hessian first term (multipliers held constant)
+            count += constraint
+                .constraint_hessian_indices_iter()
+                .filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
+                .zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
+                .map(|(MatrixElementIndex { row, col }, (out_row, out_col))| {
+                    *out_row = row;
+                    *out_col = col;
+                })
+                .count();
+        }
+
         // Duplicate off-diagonal indices to form a complete matrix.
         let (rows_begin, rows_end) = rows.split_at_mut(count);
         let (cols_begin, cols_end) = cols.split_at_mut(count);
+
+        // Ensure there is nothing in the upper triangular part.
+        debug_assert_eq!(
+            rows_begin
+                .iter()
+                .zip(cols_begin.iter())
+                .filter(|(&r, &c)| r < c)
+                .count(),
+            0
+        );
 
         // TODO: Parallelize this function
         let num_off_diagonals = rows_begin
@@ -1849,12 +1837,15 @@ impl<T: Real64> NLProblem<T> {
                 *out_r = c;
             })
             .count();
+
         count += num_off_diagonals;
 
-        // TODO: Add frictional contact indices
+        // TODO: add friction here
 
-        assert_eq!(count, rows.len());
-        assert_eq!(count, cols.len());
+        //assert_eq!(count, rows.len());
+        //assert_eq!(count, cols.len());
+        rows.resize(count, 0);
+        cols.resize(count, 0);
 
         (rows, cols)
     }
@@ -1867,12 +1858,12 @@ impl<T: Real64> NLProblem<T> {
         cols: &[usize],
         vals: &mut [T],
     ) {
+        let num_active_coords = self.num_variables();
         let state = &mut *self.state.borrow_mut();
         State::be_step(state.step_state(dq), self.time_step());
         state.update_vertices(dq);
 
         let mut count = 0; // Values counter
-                           //let mut coff = 0; // Constraint offset
 
         let dt = T::from(self.time_step()).unwrap();
 
@@ -1886,7 +1877,6 @@ impl<T: Real64> NLProblem<T> {
             vtx,
             solid,
             shell,
-            lambda,
             ..
         } = state;
 
@@ -1899,12 +1889,26 @@ impl<T: Real64> NLProblem<T> {
             dt * dt * factor,
             &mut vals[count..count + n],
         );
+        for ((&row, &col), v) in rows[count..count+n].iter().zip(cols[count..count+n].iter()).zip(vals[count..count +n].iter()) {
+            if row < num_active_coords && col < num_active_coords {
+                if row == col {
+                    eprintln!("e ({}, {}): {}", row, col, v);
+                }
+            }
+        }
         count += n;
 
         if !self.is_static() {
             let inertia = solid.inertia();
             let n = inertia.energy_hessian_size();
             inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n]);
+            for ((&row, &col), v) in rows[count..count+n].iter().zip(cols[count..count+n].iter()).zip(vals[count..count +n].iter()) {
+                if row < num_active_coords && col < num_active_coords {
+                    if row == col {
+                        eprintln!("i ({}, {}): {}", row, col, v);
+                    }
+                }
+            }
             count += n;
         }
 
@@ -1916,49 +1920,100 @@ impl<T: Real64> NLProblem<T> {
             dt * dt * factor,
             &mut vals[count..count + n],
         );
+        for ((&row, &col), v) in rows[count..count+n].iter().zip(rows[count..count+n].iter()).zip(vals[count..count +n].iter()) {
+            if row < num_active_coords && col < num_active_coords {
+                //eprintln!("se ({}, {}): {}", row, col, v);
+            }
+        }
         count += n;
 
         if !self.is_static() {
             let inertia = shell.inertia();
             let n = inertia.energy_hessian_size();
             inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n]);
+            for ((&row, &col), v) in rows[count..count+n].iter().zip(rows[count..count+n].iter()).zip(vals[count..count +n].iter()) {
+                if row < num_active_coords && col < num_active_coords {
+                    //eprintln!("si ({}, {}): {}", row, col, v);
+                }
+            }
             count += n;
         }
 
-        // Duplicate off-diagonal entries.
-        let (vals_begin, vals_end) = vals.split_at_mut(count);
-        let mut i = 0;
-        for (&r, &c, &val) in zip!(rows.iter(), cols.iter(), vals_begin.iter()) {
-            if r != c {
-                vals_end[i] = val;
-                i += 1;
-            }
-        }
-        count += i;
-
+        // Add volume constraint entries.
         for vc in self.volume_constraints.iter() {
             let nh = vc.borrow().constraint_hessian_size();
             vc.borrow_mut()
                 .constraint_hessian_values(
                     cur.pos,
                     next.pos,
-                    &lambda[VOLUME_CONSTRAINT],
+                    &[T::one()][..], // TOOD: update this multiplier
                     c_scale * self.volume_constraint_scale(),
                     &mut vals[count..count + nh],
                 )
                 .unwrap();
 
+            for v in &mut vals[count..count + nh] {
+                *v = -*v;
+            }
+
             count += nh;
         }
 
-        // TODO: Add frictional contact values
+        dbg!(count);
 
-        assert_eq!(count, vals.len());
-        //assert_eq!(coff, lambda.len());
+        // Add symmetric contact constraint jacobian entries here.
+        for fc in self.frictional_contact_constraints.iter() {
+            let mut constraint = fc.constraint.borrow_mut();
+            let delta = self.delta as f32;
+            let kappa = self.kappa as f32;
+            constraint.update_multipliers(delta, kappa);
+            // Compute constraint hessian first term (multipliers held constant)
+            let num_hess_values =  constraint
+                .constraint_hessian_indexed_values_iter(delta, kappa)
+                .filter_map(|(s, (MatrixElementIndex { row, col }, val))| {
+                    if row < num_active_coords && col < num_active_coords {
+                        if row == col {
+                            eprintln!("{} ({}, {}): {}", s, row, col, -dt * dt * val);
+                        }
+                        Some(val)
+                    } else {
+                        None
+                    }
+                })
+                .zip(vals[count..].iter_mut())
+                .map(|(val, out_val)| {
+                    *out_val = -dt * dt * val;
+                })
+                .count();
+            dbg!(num_hess_values);
+            count += num_hess_values;
+        }
+
+        // Duplicate off-diagonal entries.
+        let (vals_begin, vals_end) = vals.split_at_mut(count);
+
+        dbg!(vals_begin.len());
+        dbg!(vals_end.len());
+
+        debug_assert_eq!(rows.iter().zip(cols.iter()).zip(vals_begin.iter()).filter(|((&r, &c), _)| r != c).count(), vals_end.len());
+
+        count += rows
+            .iter()
+            .zip(cols.iter())
+            .zip(vals_begin.iter())
+            .filter(|((&r, &c), _)| r != c)
+            .zip(vals_end.iter_mut())
+            .map(|((_, &val), out_val)| {
+                *out_val = val;
+            })
+            .count();
+
+        // TODO: Add friction here.
+
         //self.print_jacobian_svd(vals);
         *self.iter_counter.borrow_mut() += 1;
 
-        debug_assert!(vals.iter().all(|x| x.is_finite()));
+        debug_assert!(vals.iter().take(count).all(|x| x.is_finite()));
     }
 
     fn be_jacobian_product(&self, v: &[T], p: &[T], jp: &mut [T]) {
@@ -1982,6 +2037,7 @@ impl<T: Real64> NLProblem<T> {
     }
 }
 
+/// An api for a non-linear problem.
 pub trait NonLinearProblem<T: Real> {
     /// Returns a mesh updated with the given velocity information.
     fn mesh_with(&self, dq: &[T]) -> Mesh;
@@ -2060,7 +2116,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
     #[inline]
     fn jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {
-        NLProblem::jacobian_indices(self)
+        NLProblem::be_jacobian_indices(self)
     }
 
     #[inline]
@@ -2135,10 +2191,10 @@ impl<T: Real> NLProblem<T> {
     }
 
     /// Checks that the given problem has a consistent Jacobian imlementation.
-    pub(crate) fn check_jacobian(&self, perturb_initial: bool) -> bool {
-        log::debug!("Checking Jacobian..");
+    pub(crate) fn check_jacobian(&self, perturb_initial: bool) -> Result<(), crate::Error>{
+        log::debug!("Checking Jacobian...");
         use ad::F1 as F;
-        let problem = self.clone_as_autodiff();
+        let mut problem = self.clone_as_autodiff();
         let n = problem.num_variables();
         let mut x0 = problem.initial_point();
         if perturb_initial {
@@ -2158,6 +2214,9 @@ impl<T: Real> NLProblem<T> {
         let mut jac = vec![vec![0.0; n]; n];
         for (&row, &col, &val) in zip!(jac_rows.iter(), jac_cols.iter(), jac_values.iter()) {
             if row < n && col < n {
+                if row == col {
+                    eprintln!("adding ({}, {}): {}", row, col, val);
+                }
                 jac[row][col] += val.value();
             }
         }
@@ -2202,8 +2261,10 @@ impl<T: Real> NLProblem<T> {
         }
         if success {
             log::debug!("No errors during Jacobian check.");
+            Ok(())
+        } else {
+            Err(crate::Error::DerivativeCheckFailure)
         }
-        success
     }
 }
 
@@ -2231,7 +2292,7 @@ mod tests {
             .set_mesh(Mesh::from(make_one_tet_mesh()))
             .set_materials(vec![solid_material().into()]);
         let problem = solver_builder.build_problem::<f64>().unwrap();
-        assert!(problem.check_jacobian(true));
+        assert!(problem.check_jacobian(true).is_ok());
     }
 
     #[test]
@@ -2242,7 +2303,7 @@ mod tests {
             .set_mesh(Mesh::from(make_three_tet_mesh()))
             .set_materials(vec![solid_material().into()]);
         let problem = solver_builder.build_problem::<f64>().unwrap();
-        assert!(problem.check_jacobian(true));
+        assert!(problem.check_jacobian(true).is_ok());
     }
 
     fn solid_material() -> SolidMaterial {

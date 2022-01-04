@@ -123,6 +123,9 @@ where
     fn problem_mut(&mut self) -> &mut P {
         &mut self.solver.problem_mut().problem
     }
+    fn update_jacobian_indices(&mut self) {
+        self.solver.update_jacobian_indices();
+    }
     /// Solves the problem and returns the solution along with the solve result
     /// info.
     fn solve(&mut self) -> (Vec<T>, SolveResult) {

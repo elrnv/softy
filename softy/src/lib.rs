@@ -149,8 +149,10 @@ pub enum Error {
         #[from]
         source: fem::nl::Error,
     },
-    #[error("Specified ID ({id}) for a contact constraint does not match any object ID in the input mesh.")]
+    #[error("Specified ID ({id}) for a contact constraint does not match any object ID in the input mesh")]
     ContactObjectIdError { id: usize },
+    #[error("Derivative check failed")]
+    DerivativeCheckFailure,
 }
 
 pub enum SimResult {

@@ -14,6 +14,7 @@ pub use solver::ContactSolver;
 pub enum ContactType {
     LinearizedPoint,
     Point,
+    PenaltyPoint,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]

@@ -44,7 +44,7 @@ impl VolumeConstraint {
         unique_zones.dedup();
         Ok(unique_zones
             .iter()
-            .map(|&zone| {
+            .filter_map(|&zone| {
                 let zone_cells: Vec<_> = mesh
                     .cell_iter()
                     .zip(mesh.cell_type_iter())
@@ -57,7 +57,7 @@ impl VolumeConstraint {
                             .unwrap_or_else(|_| Box::new(std::iter::repeat(&0))),
                     )
                     .filter_map(|(((cell, cell_type), &cell_zone), &mtl_id)| {
-                        if let Material::Solid(mtl) = materials[mtl_id.max(0) as usize] {
+                        if let Material::Solid(mtl) = materials[mtl_id as usize] {
                             if cell_zone == zone
                                 && mtl.volume_preservation()
                                 && cell.len() == 4
@@ -69,6 +69,11 @@ impl VolumeConstraint {
                         None
                     })
                     .collect();
+
+                if zone_cells.is_empty() {
+                    return None;
+                }
+
                 let rest_volume = zone_cells
                     .iter()
                     .map(|cell| {
@@ -83,10 +88,10 @@ impl VolumeConstraint {
                     .sum();
 
                 let surface_topo = TetMesh::surface_topo_from_tets(zone_cells.iter());
-                VolumeConstraint {
+                Some(VolumeConstraint {
                     surface_topo,
                     rest_volume,
-                }
+                })
             })
             .collect())
     }
@@ -153,6 +158,7 @@ impl VolumeConstraint {
     pub fn constraint_hessian_size(&self) -> usize {
         6 * 3 * self.surface_topo.len()
     }
+    #[inline]
     pub fn num_hessian_diagonal_nnz(&self) -> usize {
         0
     }

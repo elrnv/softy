@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use autodiff as ad;
 use geo::bbox::BBox;
 use geo::mesh::topology::*;
@@ -111,7 +112,7 @@ where
     /// Internal constraint function buffer used to store temporary constraint computations.
     ///
     /// For linearized constraints, this is used to store the initial constraint value.
-    constraint_value: Vec<T>,
+    constraint_value: RefCell<Vec<T>>,
 
     /// Constraint Jacobian in two blocks: first for object Jacobian and second for collider
     /// Jacobian. If one is fixed, it will be `None`. This is used only when the constraint is
@@ -137,11 +138,12 @@ impl<T: Real> PointContactConstraint<T> {
             collider_kind: self.collider_kind,
             contact_offset: self.contact_offset,
             problem_diameter: self.problem_diameter,
-            constraint_value: self
+            constraint_value: RefCell::new(self
                 .constraint_value
+                .borrow()
                 .iter()
                 .map(|&x| S::from(x).unwrap())
-                .collect(),
+                .collect()),
             constraint_jacobian: LazyCell::new(),
             //collider_vertex_topo: self.collider_vertex_topo.clone(),
         }
@@ -229,11 +231,10 @@ impl<T: Real> PointContactConstraint<T> {
                 collider_kind,
                 contact_offset,
                 problem_diameter: bbox.diameter(),
-                constraint_value: vec![T::zero(); query_points.len()],
+                constraint_value: RefCell::new(vec![T::zero(); query_points.len()]),
                 constraint_jacobian: LazyCell::new(),
                 //collider_vertex_topo: Self::build_vertex_topo(collider),
             };
-            dbg!(constraint.constraint_value.len());
 
             if linearized {
                 constraint.linearize_constraint(
@@ -258,6 +259,10 @@ impl<T: Real> PointContactConstraint<T> {
     }
     pub(crate) fn collider_is_fixed(&self) -> bool {
         self.collider_kind == SurfaceKind::Fixed
+    }
+
+    pub fn cached_constraint_value(&self) -> std::cell::Ref<Vec<T>> {
+        self.constraint_value.borrow()
     }
 
     // Construct mass data from a contact surface struct, and convert floats to type `T`.
@@ -321,7 +326,7 @@ impl<T: Real> PointContactConstraint<T> {
                 .map(row_correction);
             Some(
                 DSBlockMatrix1x3::from_block_triplets_iter_uncompressed(iter, num_rows, num_cols)
-                    .pruned(|_, _, block| !block.is_zero()),
+                    .pruned(|_, _, block| !block.is_zero(), |_, _| {}),
             )
         } else {
             None
@@ -338,7 +343,7 @@ impl<T: Real> PointContactConstraint<T> {
                 .map(row_correction);
             Some(
                 DSBlockMatrix1x3::from_block_triplets_iter_uncompressed(iter, num_rows, num_cols)
-                    .pruned(|_, _, block| !block.is_zero()),
+                    .pruned(|_, _, block| !block.is_zero(), |_, _| {}),
             )
         } else {
             None
@@ -491,6 +496,12 @@ impl<T: Real> PointContactConstraint<T> {
 
     pub fn update_collider_vertex_positions(&mut self, x: SubsetView<Chunked3<&[T]>>) {
         x.clone_into_other(&mut self.collider_vertex_positions);
+    }
+
+    /// Update the current state using the given position vector.
+    pub fn update_state(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2]) {
+        self.update_surface_with_mesh_pos(x[0]);
+        self.update_collider_vertex_positions(x[1]);
     }
 
     #[allow(dead_code)]
@@ -1767,7 +1778,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
         //} else {
         c0.iter_mut()
             .for_each(|c| *c -= T::from(self.contact_offset).unwrap());
-        self.constraint_value = c0;
+        self.constraint_value = RefCell::new(c0);
         //}
     }
     fn is_linear(&self) -> bool {
@@ -1788,6 +1799,55 @@ impl<T: Real> PointContactConstraint<T> {
         (vec![0.0; m], vec![2e19; m])
     }
 
+    /// Compute the full nonlinear constraint.
+    ///
+    /// This function uses the current state. So to get an uoto date value, call update state first.
+    pub(crate) fn compute_nonlinear_constraint(&self, value: &mut [T]) {
+        let radius = T::from(self.contact_radius()).unwrap();
+
+        let surf = &self.implicit_surface;
+        let mut constraint_value_buf = self
+            .constraint_value
+            .borrow_mut();
+        for (val, q) in constraint_value_buf
+            .iter_mut()
+            .zip(self.collider_vertex_positions.iter())
+        {
+            // Clear potential value.
+            let closest_sample = surf.nearest_neighbor_lookup(*q).unwrap();
+            if closest_sample
+                .nml
+                .dot(Vector3::new(*q) - closest_sample.pos)
+                > T::zero()
+            {
+                *val = radius;
+            } else {
+                *val = -radius;
+            }
+        }
+
+        surf.potential(
+            self.collider_vertex_positions.view().into(),
+            &mut *constraint_value_buf,
+        );
+
+        //let bg_pts = self.background_points();
+        //let collider_mesh = self.collision_object.borrow();
+        //Self::fill_background_potential(&collider_mesh, &bg_pts, radius, &mut cbuf);
+
+        let neighborhood_sizes = surf.neighborhood_sizes();
+
+        // Because `value` tracks only the values for which the neighborhood is not empty.
+        for ((_, new_v), v) in neighborhood_sizes
+            .iter()
+            .zip(constraint_value_buf.iter())
+            .filter(|&(&nbrhood_size, _)| nbrhood_size != 0)
+            .zip(value.iter_mut())
+        {
+            *v = *new_v - T::from(self.contact_offset).unwrap();
+        }
+    }
+
     pub(crate) fn constraint(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2], value: &mut [T]) {
         debug_assert_eq!(value.len(), self.constraint_size());
         if let Some(jac) = self.constraint_jacobian.borrow() {
@@ -1796,7 +1856,9 @@ impl<T: Real> PointContactConstraint<T> {
             let x0_coll = &self.collider_vertex_positions;
             let x0_obj = self.implicit_surface.surface_vertex_positions();
 
-            value.copy_from_slice(self.constraint_value.as_slice());
+            let constraint_value_buf = self.constraint_value.borrow();
+
+            value.copy_from_slice(constraint_value_buf.as_slice());
 
             let mut dx0: Chunked3<Vec<T>> = x[0].iter().cloned().collect();
             dx0.iter_mut()
@@ -1826,50 +1888,9 @@ impl<T: Real> PointContactConstraint<T> {
         }
 
         // Constraint not linearized, compute the true constraint.
-        self.update_surface_with_mesh_pos(x[0]);
-        self.update_collider_vertex_positions(x[1]);
+        self.update_state(x);
 
-        let radius = T::from(self.contact_radius()).unwrap();
-
-        let surf = &self.implicit_surface;
-        for (val, q) in self
-            .constraint_value
-            .iter_mut()
-            .zip(self.collider_vertex_positions.iter())
-        {
-            // Clear potential value.
-            let closest_sample = surf.nearest_neighbor_lookup(*q).unwrap();
-            if closest_sample
-                .nml
-                .dot(Vector3::new(*q) - closest_sample.pos)
-                > T::zero()
-            {
-                *val = radius;
-            } else {
-                *val = -radius;
-            }
-        }
-
-        surf.potential(
-            self.collider_vertex_positions.view().into(),
-            &mut self.constraint_value,
-        );
-
-        //let bg_pts = self.background_points();
-        //let collider_mesh = self.collision_object.borrow();
-        //Self::fill_background_potential(&collider_mesh, &bg_pts, radius, &mut cbuf);
-
-        let neighborhood_sizes = surf.neighborhood_sizes();
-
-        // Because `value` tracks only the values for which the neighborhood is not empty.
-        for ((_, new_v), v) in neighborhood_sizes
-            .iter()
-            .zip(self.constraint_value.iter())
-            .filter(|&(&nbrhood_size, _)| nbrhood_size != 0)
-            .zip(value.iter_mut())
-        {
-            *v = *new_v - T::from(self.contact_offset).unwrap();
-        }
+        self.compute_nonlinear_constraint(value);
     }
 }
 
@@ -2267,7 +2288,6 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn constraint_hessian_size(&self) -> usize {
         self.object_constraint_hessian_size() + self.collider_constraint_hessian_size()
     }
@@ -2301,6 +2321,7 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     #[allow(dead_code)]
+    #[cfg(feature = "optsolver")]
     pub(crate) fn constraint_hessian_indices_iter<'b>(
         &'b self,
     ) -> impl Iterator<Item = MatrixElementIndex> + 'b {
@@ -2311,7 +2332,6 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     // Assumes surface and contact points are upto date.
-    #[cfg(feature = "optsolver")]
     pub(crate) fn object_constraint_hessian_values_iter<'a>(
         &'a self,
         lambda: &'a [T],
@@ -2331,7 +2351,6 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     // Assumes surface and contact points are upto date.
-    #[cfg(feature = "optsolver")]
     pub(crate) fn collider_constraint_hessian_values_iter<'a>(
         &'a self,
         lambda: &'a [T],
@@ -2385,9 +2404,10 @@ impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
 
         let radius = self.contact_radius();
 
+        let mut constraint_value_buf = self
+            .constraint_value.borrow_mut();
         let surf = &self.implicit_surface;
-        for (val, q) in self
-            .constraint_value
+        for (val, q) in constraint_value_buf
             .iter_mut()
             .zip(self.collider_vertex_positions.iter())
         {
@@ -2406,7 +2426,7 @@ impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
 
         surf.potential(
             self.collider_vertex_positions.view().into(),
-            &mut self.constraint_value,
+            &mut *constraint_value_buf,
         );
 
         //let bg_pts = self.background_points();
@@ -2424,7 +2444,7 @@ impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
         // Because `value` tracks only the values for which the neighborhood is not empty.
         for ((_, new_v), v) in neighborhood_sizes
             .iter()
-            .zip(self.constraint_value.iter())
+            .zip(constraint_value_buf.iter())
             .filter(|&(&nbrhood_size, _)| nbrhood_size != 0)
             .zip(value.iter_mut())
         {

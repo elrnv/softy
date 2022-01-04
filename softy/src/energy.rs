@@ -52,8 +52,75 @@ pub trait EnergyHessianTopology {
         indices: &mut [MatrixElementIndex],
     );
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
+    ///
+    /// The `offset` parameter positions this energy Hessian product
+    /// within a global Hessian matrix specified by the user.
+    ///
+    /// Only rows and columns below `max` are filled, and the total number of entries changed is
+    /// returned if `max` is not `None`.
+    ///
+    /// The default implementation ignores the max argument and fills the entire indices array.
+    fn energy_hessian_indices_offset_with_max(
+        &self,
+        offset: MatrixElementIndex,
+        indices: &mut [MatrixElementIndex],
+        _max: Option<MatrixElementIndex>,
+    ) -> usize {
+        self.energy_hessian_indices_offset(offset, indices);
+        indices.len()
+    }
+
+    /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
     fn energy_hessian_indices(&self, indices: &mut [MatrixElementIndex]) {
         self.energy_hessian_indices_offset((0, 0).into(), indices)
+    }
+
+    /// Compute the Hessian row and column indices of the Hessian matrix non-zero values into two
+    /// separate arrays.
+    ///
+    /// Clamp computations to the maximum row and col given.
+    /// Rows and columns are filtered by the given max values, which means tail portion of `rows`
+    /// and `cols` will not be changed.
+    /// This function returns the actual number of entries changed.
+    fn energy_hessian_rows_cols_with_max<I: FromPrimitive + Send + bytemuck::Pod>(
+        &self,
+        rows: &mut [I],
+        cols: &mut [I],
+        max: Option<MatrixElementIndex>,
+    ) -> usize {
+        self.energy_hessian_rows_cols_offset_with_max((0, 0).into(), rows, cols, max)
+    }
+
+    /// Compute the Hessian row and column indices of the Hessian matrix non-zero values into two
+    /// separate arrays.
+    ///
+    /// The `offset` parameter positions this energy Hessian product
+    /// within a global Hessian matrix specified by the user.
+    ///
+    /// Clamp computations to the maximum row and col given.
+    /// Rows and columns are filtered by the given max values, which means tail portion of `rows`
+    /// and `cols` will not be changed.
+    /// This function returns the actual number of entries changed.
+    fn energy_hessian_rows_cols_offset_with_max<I: FromPrimitive + Send + bytemuck::Pod>(
+        &self,
+        offset: MatrixElementIndex,
+        rows: &mut [I],
+        cols: &mut [I],
+        max: Option<MatrixElementIndex>,
+    ) -> usize {
+        let n = self.energy_hessian_size();
+        let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; n];
+        let num_changed =
+            self.energy_hessian_indices_offset_with_max(offset, indices.as_mut_slice(), max);
+        for (MatrixElementIndex { row, col }, (r, c)) in indices
+            .into_iter()
+            .zip(rows.iter_mut().zip(cols.iter_mut()))
+            .take(num_changed)
+        {
+            *r = I::from_usize(row).unwrap();
+            *c = I::from_usize(col).unwrap();
+        }
+        num_changed
     }
 
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values into two

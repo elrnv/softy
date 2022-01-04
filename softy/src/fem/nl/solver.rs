@@ -133,7 +133,7 @@ impl SolverBuilder {
         // Create a lookup table for object ids.
         let mut id_map = vec![0; num_parts];
         for (&part_index, &obj_id) in partition.iter().zip(object_ids.iter()) {
-            // as cast is safe since Object id is clamped to 0 during initializtion.
+            // As cast is safe since Object id is clamped to 0 during initializtion.
             id_map[part_index] = obj_id as usize;
         }
 
@@ -148,7 +148,10 @@ impl SolverBuilder {
                     TriMesh::merge_iter(part.split_into_typed_meshes().into_iter().map(
                         |typed_mesh| match typed_mesh {
                             TypedMesh::Tet(mesh) => mesh.surface_trimesh(),
-                            TypedMesh::Tri(mesh) => mesh,
+                            TypedMesh::Tri(mut mesh) => {
+                                mesh.reverse();
+                                mesh
+                            },
                         },
                     ));
                 // Sort indices by original vertex so we can use this attribute to make subsets.
@@ -179,6 +182,8 @@ impl SolverBuilder {
             })
         };
 
+        let num_vertices = mesh.num_vertices();
+
         frictional_contacts
             .into_iter()
             .map(|(mut params, (object_id, collider_id))| {
@@ -194,7 +199,7 @@ impl SolverBuilder {
                         obj_id: collider_id,
                         include_fixed: params.use_fixed,
                     },
-                    constraint: build_indexed_contact_constraint(object, collider, params)?,
+                    constraint: build_penalty_contact_constraint(object, collider, params, num_vertices)?,
                 })
             })
             .collect::<Result<Vec<_>, crate::Error>>()
@@ -532,7 +537,6 @@ impl SolverBuilder {
         // This is used when building the simulation elements and constraints of the mesh.
         init_mesh_source_index_attribute(&mut mesh)?;
 
-        Self::init_original_vertex_index_attribute(&mut mesh);
         Self::init_cell_vertex_ref_pos_attribute(&mut mesh)?;
         Self::init_velocity_attribute(&mut mesh)?;
         Self::init_material_id_attribute(&mut mesh, materials.len())?;
@@ -541,8 +545,10 @@ impl SolverBuilder {
 
         let vertex_type = crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
 
+        Self::init_original_vertex_index_attribute(&mut mesh);
+
         // Initialize state (but not constraint multipliers).
-        let mut state = State::<T, autodiff::FT<T>>::try_from_mesh_and_materials(
+        let state = State::<T, autodiff::FT<T>>::try_from_mesh_and_materials(
             &mesh,
             &materials,
             &vertex_type,
@@ -571,20 +577,6 @@ impl SolverBuilder {
             .iter()
             .map(FrictionalContactConstraint::clone_as_autodiff::<T>)
             .collect::<Vec<_>>();
-
-        // Allocate space for constraint multipliers.
-        let mut constraint_sizes = vec![volume_constraints.len()];
-        constraint_sizes.push(
-            frictional_contact_constraints
-                .iter()
-                .map(|fc| fc.constraint.borrow().constraint_size()).sum(),
-        );
-        let num_constraints: usize = constraint_sizes.iter().sum();
-        state.lambda = Chunked::from_sizes(&constraint_sizes, vec![T::zero(); num_constraints]);
-        state.lambda_ad = Chunked::from_sizes(
-            constraint_sizes,
-            vec![num_traits::Zero::zero(); num_constraints],
-        );
 
         let gravity = [
             f64::from(params.gravity[0]),
@@ -949,11 +941,13 @@ where
             ..
         } = self;
 
-        if sim_params.jacobian_test {
-            solver.problem().check_jacobian(true);
-        }
-
+        log::trace!("Updating constraint set...");
         solver.problem_mut().update_constraint_set();
+        solver.update_jacobian_indices();
+
+        if sim_params.jacobian_test {
+            solver.problem().check_jacobian(true)?;
+        }
 
         // Update the current vertex data using the current dof state.
         solver.problem_mut().update_cur_vertices();
@@ -973,6 +967,7 @@ where
         // Loop to resolve all contacts.
         loop {
             /***     Main solve step     ***/
+            log::trace!("Begin main nonlinear solve.");
             let result = solver.solve_with(solution.as_mut_slice());
             /*******************************/
 

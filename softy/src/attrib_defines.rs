@@ -22,6 +22,7 @@ pub(crate) const MASS_ATTRIB: &str = "mass";
 pub(crate) const MASS_INV_ATTRIB: &str = "__softy_internal_mass_inv";
 pub(crate) const ORIGINAL_VERTEX_INDEX_ATTRIB: &str = "__softy_internal_orig_vertex_index";
 pub const RESIDUAL_ATTRIB: &str = "residual";
+pub(crate) const POTENTIAL_ATTRIB: &str = "potential";
 
 #[cfg(feature = "optsolver")]
 mod optsolver_defines {
@@ -29,7 +30,6 @@ mod optsolver_defines {
     pub(crate) const REFERENCE_VOLUME_ATTRIB: &str = "ref_volume";
     pub(crate) const REFERENCE_AREA_ATTRIB: &str = "ref_area";
     pub(crate) const REFERENCE_SHAPE_MATRIX_INV_ATTRIB: &str = "ref_shape_mtx_inv";
-    pub(crate) const POTENTIAL_ATTRIB: &str = "potential";
     pub(crate) const PRESSURE_ATTRIB: &str = "pressure";
 
     pub(crate) const TETMESH_VERTEX_INDEX_ATTRIB: &str = "_i";
@@ -39,7 +39,6 @@ mod optsolver_defines {
     pub(crate) type RefAreaType = f64;
     pub(crate) type RefTetShapeMtxInvType = Matrix3<f64>;
     pub(crate) type RefTriShapeMtxInvType = Matrix2<f64>;
-    pub(crate) type PotentialType = f64;
     pub(crate) type PressureType = f64;
 
     pub(crate) type TetMeshVertexIndexType = usize;
@@ -69,3 +68,4 @@ pub(crate) type ElasticForceType = [f64; 3];
 pub type FrictionImpulseType = [f64; 3];
 pub type ContactImpulseType = [f64; 3];
 pub type ResidualType = [f64; 3];
+pub(crate) type PotentialType = f64;

@@ -247,6 +247,20 @@ impl<T: Real> QueryTopo<T> {
         }, ?))
     }
 
+    /// Returns row-major indexed blocks.
+    ///
+    /// The diagonal blocks are non-truncated full matrices, but otherwise the upper triangular part
+    /// is omitted.
+    pub fn surface_hessian_product_indexed_blocks_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [T],
+    ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error> {
+        Ok(apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.surface_hessian_product_indexed_blocks_iter_impl(query_points, multipliers, kernel)
+        }, ?))
+    }
+
     /// Compute the Hessian of this implicit surface function with respect to surface
     /// points multiplied by a vector of multipliers (one for each query point).
     pub fn surface_hessian_product_scaled_values(
@@ -272,6 +286,20 @@ impl<T: Real> QueryTopo<T> {
     pub fn surface_hessian_product_indices_iter<'a>(
         &'a self,
     ) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
+        Ok(self.surface_hessian_product_block_indices_iter()?
+            .flat_map(move |(row, col)| {
+                    (0..3).flat_map(move |r| (0..3).map(move |c| (3 * row + r, 3 * col + c)))
+                })
+                .filter(move |(row, col)| row >= col))
+    }
+
+    /// Compute the indices for the implicit surface potential Hessian with respect to surface
+    /// points.
+    ///
+    /// This returns an iterator over all the block hessian product indices.
+    pub fn surface_hessian_product_block_indices_iter<'a>(
+        &'a self,
+    ) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
         let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
@@ -290,11 +318,7 @@ impl<T: Real> QueryTopo<T> {
                         surface_topo,
                         bg_field_params.weighted,
                     )
-                })
-                .flat_map(move |(row, col)| {
-                    (0..3).flat_map(move |r| (0..3).map(move |c| (3 * row + r, 3 * col + c)))
-                })
-                .filter(move |(row, col)| row >= col)),
+                }))
         }
     }
 
@@ -343,6 +367,27 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
+        Ok(Box::new(self.surface_hessian_product_indexed_blocks_iter_impl(query_points, multipliers, kernel)?.flat_map(move |(row, col, mtx)| {
+            (0..3).flat_map(move |r| {
+                (0..3)
+                    .filter(move |c| 3 * row + r >= 3 * col + c)
+                    .map(move |c| mtx[r][c])
+            })
+        })))
+    }
+
+    // 3x3 row-major matrix blocks in the lower triangular part.
+    // Blocks on the diagonal are full 3x3 matrices.
+    pub(crate) fn surface_hessian_product_indexed_blocks_iter_impl<'a, K: 'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [T],
+        kernel: K,
+    ) -> Result<impl Iterator<Item = (usize, usize, [[T;3];3])> + 'a, Error>
+        where
+            T: Real,
+            K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
         let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
@@ -370,16 +415,10 @@ impl<T: Real> QueryTopo<T> {
                             surface_vertex_positions,
                             bg_field_params,
                             *lambda,
-                        )
+                        ).map(|(i, j, m)| (i, j, m.into_data()))
                     });
 
-                Ok(Box::new(face_hess.flat_map(move |(row, col, mtx)| {
-                    (0..3).flat_map(move |r| {
-                        (0..3)
-                            .filter(move |c| 3 * row + r >= 3 * col + c)
-                            .map(move |c| mtx[r][c])
-                    })
-                })))
+                Ok(face_hess)
             }
         }
     }
@@ -921,6 +960,10 @@ mod tests {
             query_surf
                 .surface_hessian_product_values(&ad_query_points, &multipliers, &mut hess_values)
                 .expect("Failed to compute hessian product");
+            let hess_values2: Vec<_> = query_surf
+                .surface_hessian_product_values_iter(&ad_query_points, &multipliers)
+                .expect("Failed to compute hessian product using iterators").collect();
+            assert!(hess_values.iter().zip(hess_values2.iter()).all(|(a,b)| a == b));
 
             let mut success = true;
 

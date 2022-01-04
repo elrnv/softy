@@ -338,7 +338,7 @@ impl<T: Real> QueryTopo<T> {
         query_points: &'a [[T; 3]],
         multipliers: &'a [T],
         kernel: K,
-    ) -> Result<impl Iterator<Item = T> + 'a, Error>
+    ) -> Result<Box<dyn Iterator<Item = T> + 'a>, Error>
     where
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
@@ -373,13 +373,13 @@ impl<T: Real> QueryTopo<T> {
                         )
                     });
 
-                Ok(face_hess.flat_map(move |(row, col, mtx)| {
+                Ok(Box::new(face_hess.flat_map(move |(row, col, mtx)| {
                     (0..3).flat_map(move |r| {
                         (0..3)
                             .filter(move |c| 3 * row + r >= 3 * col + c)
                             .map(move |c| mtx[r][c])
                     })
-                }))
+                })))
             }
         }
     }

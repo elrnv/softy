@@ -164,7 +164,7 @@ impl<'a> Into<fem::opt::SimParams> for &'a SimParams {
 
             friction_iterations,
 
-            clear_velocity,
+            velocity_clear_frequency,
             tolerance,
             max_iterations,
             outer_tolerance,
@@ -183,7 +183,7 @@ impl<'a> Into<fem::opt::SimParams> for &'a SimParams {
                 None
             },
             gravity: [0.0, -gravity, 0.0],
-            clear_velocity,
+            clear_velocity: velocity_clear_frequency * time_step > 1.0,
             tolerance,
             max_iterations,
             outer_tolerance,

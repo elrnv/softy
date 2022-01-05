@@ -1,6 +1,5 @@
 mod test_utils;
 
-use std::path::PathBuf;
 use approx::*;
 use geo::algo::{Merge, TypedMesh};
 use geo::attrib::Attrib;
@@ -8,8 +7,9 @@ use geo::mesh::builder::PlatonicSolidBuilder;
 use geo::mesh::topology::*;
 use geo::mesh::VertexPositions;
 use softy::fem::nl::{SimParams, SolverBuilder};
-use softy::*;
 use softy::nl_fem::Status::Success;
+use softy::*;
+use std::path::PathBuf;
 use test_utils::*;
 
 pub fn medium_solid_material() -> SolidMaterial {
@@ -31,7 +31,7 @@ fn compute_distance_potential(
     sample_mesh: &TriMesh,
     surface_trimesh: &TriMesh,
     kernel: KernelType,
-    test_f64: bool
+    test_f64: bool,
 ) -> Vec<f32> {
     use implicits::*;
 
@@ -174,21 +174,30 @@ fn tri_push() -> Result<(), Error> {
     init_logger();
     // A triangle is being pushed on top of a tet.
     let tri_verts = vec![
-        [0.0,       -0.1,   0.0],
-        [0.0866026 ,0.05,  0.0 ],
-        [-0.0866026,0.05,  0.0 ],
-        [0.0,       0.0,   0.001],
-        [0.0866026 ,       0.0,   100.0 ],// far away to avoid being part of the solve
-        [-0.0866026,       0.0,   100.0 ],
+        [0.0, -0.1, 0.0],
+        [0.0866026, 0.05, 0.0],
+        [-0.0866026, 0.05, 0.0],
+        [0.0, 0.0, 0.001],
+        [0.0866026, 0.0, 100.0], // far away to avoid being part of the solve
+        [-0.0866026, 0.0, 100.0],
     ];
-    let tri = vec![[0, 1, 2], [3,4,5]];
+    let tri = vec![[0, 1, 2], [3, 4, 5]];
     let mut trimesh = TriMesh::new(tri_verts.clone(), tri);
-    trimesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1, 1, 1])?;
+    trimesh
+        .insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1, 1, 1])?;
     trimesh.insert_attrib_data::<ObjectIdType, FaceIndex>(OBJECT_ID_ATTRIB, vec![1, 0])?;
 
-    let meshes = trimesh.clone().split_by_face_partition(&vec![0,1], 2);
+    let meshes = trimesh.clone().split_by_face_partition(&vec![0, 1], 2);
 
-    compute_distance_potential(&meshes.0[1], &meshes.0[0], KernelType::Approximate { radius_multiplier: 10000.0, tolerance: 0.01}, true);
+    compute_distance_potential(
+        &meshes.0[1],
+        &meshes.0[0],
+        KernelType::Approximate {
+            radius_multiplier: 10000.0,
+            tolerance: 0.01,
+        },
+        true,
+    );
 
     // Set contact parameters
     let kernel = KernelType::Approximate {
@@ -223,7 +232,12 @@ fn tri_push() -> Result<(), Error> {
     let mesh = solver.mesh();
 
     // Expect no push since the triangle is outside the surface.
-    assert_relative_eq!(mesh.vertex_positions[0][2], tri_verts[0][2], max_relative = 1e-5, epsilon = 1e-6);
+    assert_relative_eq!(
+        mesh.vertex_positions[0][2],
+        tri_verts[0][2],
+        max_relative = 1e-5,
+        epsilon = 1e-6
+    );
 
     // The triangle should be a bit lower due to gravity
     assert!(mesh.vertex_positions[0][1] < -0.1);
@@ -245,7 +259,11 @@ fn tri_push() -> Result<(), Error> {
             .iter()
             .find_map(|mesh| {
                 if let TypedMesh::Tri(mesh) = mesh {
-                    let mut partition = mesh.clone().split_by_face_partition(&vec![0,1], 2).0.into_iter();
+                    let mut partition = mesh
+                        .clone()
+                        .split_by_face_partition(&vec![0, 1], 2)
+                        .0
+                        .into_iter();
                     Some((partition.next().unwrap(), partition.next().unwrap()))
                 } else {
                     None
@@ -256,9 +274,11 @@ fn tri_push() -> Result<(), Error> {
     let (obj, coll) = split_into_parts(solver.mesh());
 
     let constraint = compute_distance_potential(&coll, &obj, kernel, false);
-    assert!(constraint
-                .iter()
-                .all(|&x| x >= -params.contact_tolerance), "Distance potential still negative after push: {:?} ", &constraint);
+    assert!(
+        constraint.iter().all(|&x| x >= -params.contact_tolerance),
+        "Distance potential still negative after push: {:?} ",
+        &constraint
+    );
 
     // Check that the free vertex moved away
     assert!(obj.vertex_positions[0][2] < -offset);
@@ -382,9 +402,11 @@ fn tet_push() -> Result<(), Error> {
 
     // Verify constraint, should be positive after push
     let constraint = compute_distance_potential_tetmesh(&trimesh, &tetmesh, kernel);
-    assert!(constraint
-        .iter()
-        .all(|&x| x >= -params.contact_tolerance), "Distance potential still negative after push: {:?} ", &constraint);
+    assert!(
+        constraint.iter().all(|&x| x >= -params.contact_tolerance),
+        "Distance potential still negative after push: {:?} ",
+        &constraint
+    );
 
     // Expect only the top vertex to be pushed down.
     let pos = mesh.vertex_position(0);
@@ -402,25 +424,48 @@ fn ball_tri_push_tester(
 ) -> Result<(), Error> {
     init_logger();
     let mut tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball_fixed.vtk")).unwrap();
-    tetmesh.insert_attrib_data::<MaterialIdType, CellIndex>(MATERIAL_ID_ATTRIB, vec![1;  tetmesh.num_cells()])?;
-    tetmesh.insert_attrib_data::<ObjectIdType, CellIndex>(OBJECT_ID_ATTRIB, vec![1; tetmesh.num_cells()])?;
+    tetmesh.insert_attrib_data::<MaterialIdType, CellIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![1; tetmesh.num_cells()],
+    )?;
+    tetmesh.insert_attrib_data::<ObjectIdType, CellIndex>(
+        OBJECT_ID_ATTRIB,
+        vec![1; tetmesh.num_cells()],
+    )?;
+
+    geo::io::save_tetmesh(&tetmesh, "./out/tetmesh_before.vtk");
     let params = static_nl_params();
 
     // If material is omitted it is assumed to be material 0 which is a completely fixed/animated mesh.
     let mut polymesh = geo::io::load_polymesh(&PathBuf::from("assets/tri.vtk"))?;
-    polymesh.insert_attrib_data::<MaterialIdType, FaceIndex>(MATERIAL_ID_ATTRIB, vec![0;  polymesh.num_faces()])?;
-    polymesh.insert_attrib_data::<ObjectIdType, FaceIndex>(OBJECT_ID_ATTRIB, vec![0; polymesh.num_faces()])?;
-    polymesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1; polymesh.num_vertices()])?;
+    polymesh.insert_attrib_data::<MaterialIdType, FaceIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; polymesh.num_faces()],
+    )?;
+    polymesh.insert_attrib_data::<ObjectIdType, FaceIndex>(
+        OBJECT_ID_ATTRIB,
+        vec![0; polymesh.num_faces()],
+    )?;
+    polymesh.insert_attrib_data::<FixedIntType, VertexIndex>(
+        FIXED_ATTRIB,
+        vec![1; polymesh.num_vertices()],
+    )?;
     let mut mesh = Mesh::from(TriMesh::from(polymesh));
     mesh.merge(Mesh::from(tetmesh));
 
     let mut solver = SolverBuilder::new(params.clone())
         .set_mesh(mesh)
-        .set_materials(vec![FixedMaterial::new(0).into(), material.with_id(1).into()])
+        .set_materials(vec![
+            FixedMaterial::new(0).into(),
+            material.with_id(1).into(),
+        ])
         .add_frictional_contact(fc_params, (0, 1))
         .build::<f64>()?;
 
     let res = solver.step()?;
+
+    geo::io::save_mesh(&solver.mesh(), "./out/mesh_after.vtk");
+
     //println!("res = {:?}", res);
     assert!(
         res.iterations <= params.max_iterations,
@@ -436,7 +481,7 @@ fn ball_tri_push_plain() -> Result<(), Error> {
     let fc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
         kernel: KernelType::Approximate {
-            radius_multiplier: 1.812,
+            radius_multiplier: 19.812,
             tolerance: 0.07,
         },
         contact_offset: 0.0,

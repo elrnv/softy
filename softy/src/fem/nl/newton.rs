@@ -314,12 +314,11 @@ where
                     j_rows: Vec::new(),
                     j: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
                     j_mapping: Vec::new(),
-                    sparse_solver:  LazyCell::new()
-                }
+                    sparse_solver: LazyCell::new(),
+                },
             }),
         }
     }
-
 }
 
 impl<T, P> NLSolver<P, T> for Newton<P, T>
@@ -361,7 +360,8 @@ where
         sj.j_rows = j_rows;
         sj.j = j;
         sj.j_mapping = j_mapping;
-        sj.sparse_solver.replace(SparseDirectSolver::new(sj.j.view()));
+        sj.sparse_solver
+            .replace(SparseDirectSolver::new(sj.j.view()));
     }
 
     /// Solves the problem and returns the solution along with the solve result
@@ -414,7 +414,9 @@ where
         } = sparse_jacobian;
 
         // Unwrap the sparse solver. In case of panic check update_jacobian_indices function.
-        let sparse_solver = sparse_solver.borrow_mut().expect("Uninitialized sparse solver.");
+        let sparse_solver = sparse_solver
+            .borrow_mut()
+            .expect("Uninitialized sparse solver.");
 
         let mut iterations = 0;
 
@@ -555,7 +557,7 @@ where
                 .for_each(|(p, &r64)| *p = T::from(r64).unwrap());
             //p.copy_from_slice(r.as_slice());
 
-            log::trace!("p = {:?}", &r);
+            //log::trace!("p = {:?}", &r);
 
             linsolve_time += Instant::now() - t_begin_linsolve;
 
@@ -824,7 +826,13 @@ fn eig<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
 
 // Helper function for debugging the jacobian.
 #[allow(dead_code)]
-fn build_dense<T: Real>(mut j_dense: ChunkedN<&mut [T]>, j_rows: &[usize], j_cols: &[usize], j_vals: &[T], num_variables: usize) {
+fn build_dense<T: Real>(
+    mut j_dense: ChunkedN<&mut [T]>,
+    j_rows: &[usize],
+    j_cols: &[usize],
+    j_vals: &[T],
+    num_variables: usize,
+) {
     // Clear j_dense
     for jd in j_dense.storage_mut().iter_mut() {
         *jd = T::zero();
@@ -851,11 +859,19 @@ fn print_dense<T: Real>(j_dense: ChunkedN<&[T]>) {
 }
 
 #[allow(dead_code)]
-fn condition_number<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) -> T{
+fn condition_number<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) -> T {
     let svd = svd_values(mtx);
-    let max_sigma = svd.iter().cloned().max_by(|a,b| a.partial_cmp(b).unwrap()).unwrap();
-    let min_sigma = svd.iter().cloned().min_by(|a,b| a.partial_cmp(b).unwrap()).unwrap();
-    max_sigma/min_sigma
+    let max_sigma = svd
+        .iter()
+        .cloned()
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    let min_sigma = svd
+        .iter()
+        .cloned()
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    max_sigma / min_sigma
 }
 
 #[allow(dead_code)]

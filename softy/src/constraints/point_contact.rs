@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use autodiff as ad;
 use geo::bbox::BBox;
 use geo::mesh::topology::*;
@@ -12,6 +11,7 @@ use rayon::iter::Either;
 use rayon::prelude::*;
 #[cfg(feature = "af")]
 use reinterpret::*;
+use std::cell::RefCell;
 use tensr::*;
 
 use super::*;
@@ -139,12 +139,13 @@ impl<T: Real> PointContactConstraint<T> {
             collider_kind: self.collider_kind,
             contact_offset: self.contact_offset,
             problem_diameter: self.problem_diameter,
-            constraint_value: RefCell::new(self
-                .constraint_value
-                .borrow()
-                .iter()
-                .map(|&x| S::from(x).unwrap())
-                .collect()),
+            constraint_value: RefCell::new(
+                self.constraint_value
+                    .borrow()
+                    .iter()
+                    .map(|&x| S::from(x).unwrap())
+                    .collect(),
+            ),
             constraint_jacobian: LazyCell::new(),
             //collider_vertex_topo: self.collider_vertex_topo.clone(),
         }
@@ -1808,9 +1809,7 @@ impl<T: Real> PointContactConstraint<T> {
         let radius = T::from(self.contact_radius()).unwrap();
 
         let surf = &self.implicit_surface;
-        let mut constraint_value_buf = self
-            .constraint_value
-            .borrow_mut();
+        let mut constraint_value_buf = self.constraint_value.borrow_mut();
         for (val, q) in constraint_value_buf
             .iter_mut()
             .zip(self.collider_vertex_positions.iter())
@@ -2416,8 +2415,7 @@ impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
 
         let radius = self.contact_radius();
 
-        let mut constraint_value_buf = self
-            .constraint_value.borrow_mut();
+        let mut constraint_value_buf = self.constraint_value.borrow_mut();
         let surf = &self.implicit_surface;
         for (val, q) in constraint_value_buf
             .iter_mut()

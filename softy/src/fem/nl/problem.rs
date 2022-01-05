@@ -264,7 +264,9 @@ impl<T: Real64> NLProblem<T> {
         for (i, fc) in self.frictional_contact_constraints.iter().enumerate() {
             let constraint = fc.constraint.borrow();
             let dist = constraint.cached_distance_potential(mesh.num_vertices());
-            orig_order_distance_potential.iter_mut().for_each(|d| *d = 0.0); // zero out.
+            orig_order_distance_potential
+                .iter_mut()
+                .for_each(|d| *d = 0.0); // zero out.
             state
                 .vtx
                 .orig_index
@@ -280,7 +282,7 @@ impl<T: Real64> NLProblem<T> {
                 &potential_attrib_name,
                 orig_order_distance_potential.clone(),
             )
-                .unwrap();
+            .unwrap();
         }
     }
 
@@ -1388,8 +1390,14 @@ impl<T: Real64> NLProblem<T> {
         let num_active_coords = self.num_variables();
         for fc in self.frictional_contact_constraints.iter() {
             //TODO: add frictional contact counts
-            let nh = fc.constraint.borrow().constraint_hessian_size(num_active_coords/3);
-            let ndh = fc.constraint.borrow().num_hessian_diagonal_nnz(num_active_coords/3);
+            let nh = fc
+                .constraint
+                .borrow()
+                .constraint_hessian_size(num_active_coords / 3);
+            let ndh = fc
+                .constraint
+                .borrow()
+                .num_hessian_diagonal_nnz(num_active_coords / 3);
             num += 2 * nh - ndh;
         }
 
@@ -1486,10 +1494,7 @@ impl<T: Real64> NLProblem<T> {
                 let mut fc_constraint = fc.constraint.borrow_mut();
                 fc_constraint.update_state(Chunked3::from_flat(pos));
                 fc_constraint.update_constraint_gradient();
-                fc_constraint.update_multipliers(
-                    self.delta as f32,
-                    self.kappa as f32,
-                );
+                fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
 
                 fc_constraint.subtract_constraint_force(Chunked3::from_flat(r));
             }
@@ -1656,10 +1661,7 @@ impl<T: Real64> NLProblem<T> {
 
         {
             let State {
-                vtx,
-                solid,
-                shell,
-                ..
+                vtx, solid, shell, ..
             } = state;
 
             // Clear residual vector.
@@ -1712,10 +1714,7 @@ impl<T: Real64> NLProblem<T> {
     /// Compute the bE residual on simulated vertices.
     fn compute_vertex_be_residual(&self) {
         let State {
-            vtx,
-            solid,
-            shell,
-            ..
+            vtx, solid, shell, ..
         } = &mut *self.state.borrow_mut();
 
         // Clear residual vector.
@@ -1806,8 +1805,7 @@ impl<T: Real64> NLProblem<T> {
 
         // Add volume constraint indices
         for vc in self.volume_constraints.iter() {
-            for MatrixElementIndex { row, col } in vc.borrow().constraint_hessian_indices_iter()
-            {
+            for MatrixElementIndex { row, col } in vc.borrow().constraint_hessian_indices_iter() {
                 rows[count] = row;
                 cols[count] = col;
                 count += 1;
@@ -1819,8 +1817,8 @@ impl<T: Real64> NLProblem<T> {
             let constraint = fc.constraint.borrow();
             // Indices for constraint hessian first term (multipliers held constant)
             count += constraint
-                .constraint_hessian_indices_iter(num_active_coords/3)
-                .filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
+                .constraint_hessian_indices_iter(num_active_coords / 3)
+                //.filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
                 .zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
                 .map(|(MatrixElementIndex { row, col }, (out_row, out_col))| {
                     *out_row = row;
@@ -1891,10 +1889,7 @@ impl<T: Real64> NLProblem<T> {
         let factor = T::from(self.impulse_inv_scale()).unwrap();
 
         let State {
-            vtx,
-            solid,
-            shell,
-            ..
+            vtx, solid, shell, ..
         } = state;
 
         let ResidualState { cur, next, .. } = vtx.residual_state().into_storage();
@@ -1969,18 +1964,25 @@ impl<T: Real64> NLProblem<T> {
         }
 
         // Duplicate off-diagonal entries.
-        let (vals_begin, vals_end) = vals.split_at_mut(count);
+        let (vals_lower, vals_upper) = vals.split_at_mut(count);
 
-        // Check that there are the same number of off-diagonal elements in vals_begin as there are
-        // total elements in vals_end
-        debug_assert_eq!(rows.iter().zip(cols.iter()).zip(vals_begin.iter()).filter(|((&r, &c), _)| r != c).count(), vals_end.len());
+        // Check that there are the same number of off-diagonal elements in vals_lower  as there are
+        // total elements in vals_upper
+        debug_assert_eq!(
+            rows.iter()
+                .zip(cols.iter())
+                .zip(vals_lower.iter())
+                .filter(|((&r, &c), _)| r != c)
+                .count(),
+            vals_upper.len()
+        );
 
         count += rows
             .iter()
             .zip(cols.iter())
-            .zip(vals_begin.iter())
+            .zip(vals_lower.iter())
             .filter(|((&r, &c), _)| r != c)
-            .zip(vals_end.iter_mut())
+            .zip(vals_upper.iter_mut())
             .map(|((_, &val), out_val)| {
                 *out_val = val;
             })
@@ -2169,7 +2171,7 @@ impl<T: Real> NLProblem<T> {
     }
 
     /// Checks that the given problem has a consistent Jacobian imlementation.
-    pub(crate) fn check_jacobian(&self, perturb_initial: bool) -> Result<(), crate::Error>{
+    pub(crate) fn check_jacobian(&self, perturb_initial: bool) -> Result<(), crate::Error> {
         log::debug!("Checking Jacobian...");
         use ad::F1 as F;
         let problem = self.clone_as_autodiff();

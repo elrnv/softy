@@ -196,7 +196,12 @@ impl SolverBuilder {
                         obj_id: collider_id,
                         include_fixed: params.use_fixed,
                     },
-                    constraint: build_penalty_contact_constraint(object, collider, params, num_vertices)?,
+                    constraint: build_penalty_contact_constraint(
+                        object,
+                        collider,
+                        params,
+                        num_vertices,
+                    )?,
                 })
             })
             .collect::<Result<Vec<_>, crate::Error>>()

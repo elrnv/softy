@@ -226,7 +226,7 @@ mod ffi {
         fn get_solver(solver_id: i64, mesh: Box<Mesh>, sim_params: SimParams) -> SolverResult;
         fn clear_solver_registry();
 
-        fn add_mesh(detail: Pin<&mut GU_Detail>, meshes: Box<Mesh>);
+        fn add_mesh(detail: Pin<&mut GU_Detail>, mesh: Box<Mesh>);
     }
 
     #[namespace = "hdkrs"]
@@ -321,7 +321,8 @@ fn validate_id(id: i64) -> Option<u32> {
 }
 
 fn add_mesh(mut detail: Pin<&mut GU_Detail>, mesh: Box<Mesh>) {
-    if let Some(mesh) = mesh.mesh {
+    if let Some(mut mesh) = mesh.mesh {
+        mesh.0.reverse_if(|_, cell_type| matches!(cell_type, geo::mesh::CellType::Triangle));
         hdkrs::ffi::add_unstructured_mesh(detail.as_mut(), &mesh);
     }
 }

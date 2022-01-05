@@ -512,6 +512,7 @@ impl SolverBuilder for fem::opt::SolverBuilder {
 impl SolverBuilder for fem::nl::SolverBuilder {
     fn set_mesh(&mut self, mut mesh: Mesh, _: &SimParams) -> Result<(), Error> {
         softy::init_mesh_source_index_attribute(&mut mesh)?;
+        mesh.reverse_if(|_, cell_type| matches!(cell_type, geo::mesh::CellType::Triangle));
         fem::nl::SolverBuilder::set_mesh(self, mesh);
         Ok(())
     }

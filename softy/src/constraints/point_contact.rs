@@ -688,7 +688,10 @@ impl<T: Real> PointContactConstraint<T> {
         );
     }
 
-    fn compute_contact_jacobian(&self, active_contact_indices: &[usize]) -> ContactJacobian<T> {
+    pub(crate) fn compute_contact_jacobian(
+        &self,
+        active_contact_indices: &[usize],
+    ) -> ContactJacobian<T> {
         let query_points = &self.collider_vertex_positions;
         let surf = &self.implicit_surface;
         let active_contact_points = Select::new(active_contact_indices, query_points.view());
@@ -839,104 +842,6 @@ impl<T: Real> PointContactConstraint<T> {
 
         // The solve turns our relative velocity into a relative impulse.
         object_velocity.into_data()
-    }
-
-    // Compute `f(x,v) = -μT(x)Λ(x)η(T(x)'v)` and subtract it from `fc`.
-    pub fn compute_friction_impulse(
-        &mut self,
-        // Contact force magnitude
-        lambda: &[T],
-        x: [SubsetView<Chunked3<&[T]>>; 2],
-        v: [SubsetView<Chunked3<&[T]>>; 2],
-        potential_values: &[T],
-    ) -> Option<(Chunked3<Vec<T>>, Sparse<Chunked3<Vec<T>>>)> {
-        if self.friction_impulses.is_none() {
-            return None;
-        }
-
-        self.update_contact_pos(x);
-
-        // Note that there is a distinction between active *contacts* and active
-        // *constraints*. Active *constraints* correspond to to those points
-        // that are in the MLS neighborhood of influence to be part of the
-        // optimization. Active *contacts* are a subset of those that are
-        // considered to be in contact and thus are producing friction.
-        let (active_constraint_subset, active_contact_indices, lambda) =
-            self.in_contact_indices(lambda, potential_values);
-
-        // Construct contact (or "sliding") basis.
-        let normals = self.contact_normals();
-        let normals_subset = Subset::from_unique_ordered_indices(
-            active_constraint_subset.as_slice(),
-            normals.as_slice(),
-        );
-        let mut normals = Chunked3::from_array_vec(vec![[T::zero(); 3]; normals_subset.len()]);
-        normals_subset.clone_into_other(&mut normals);
-
-        self.friction_impulses
-            .as_mut()
-            .unwrap()
-            .contact_basis
-            .update_from_normals(normals.into());
-
-        // Contact jacobian is defined for object vertices only. Contact Jacobian for collider vertices is trivial.
-        let jac = self.compute_contact_jacobian(&active_contact_indices);
-        let collider_v =
-            Subset::from_unique_ordered_indices(active_contact_indices.as_slice(), v[1]);
-
-        // Compute relative velocity in contact space: `vc = T(x)'v`
-        let mut vc = jac.view().into_tensor() * v[0].into_tensor();
-        *&mut vc.expr_mut() -= collider_v.expr();
-
-        let FrictionImpulses {
-            contact_basis,
-            params,
-            object_impulse: _,
-            collider_impulse: _, // for active point contacts
-        } = self.friction_impulses.as_mut().unwrap();
-
-        let mu = T::from(params.dynamic_friction).unwrap();
-
-        // Compute sliding bases velocity product.
-
-        // Define the smoothing function.
-        // This is s(x;eps)/x from the paper. We integrate the division by x
-        // to avoid generating large values near zero.
-        //let smoother = |x, eps| {
-        //    if x < eps {
-        //        T::from(2.0).unwrap() * x / eps - x * x / (eps * eps)
-        //    } else {
-        //        T::one()
-        //    }
-        //};
-        let smoother = |x, eps| T::one() / (x + T::from(0.1).unwrap() * eps);
-
-        vc.as_mut_data()
-            .iter_mut()
-            .zip(lambda)
-            .enumerate()
-            .for_each(|(i, (vc, lambda))| {
-                let [_, v1, v2] = contact_basis.to_contact_coordinates(*vc, i);
-                let vc_t = [v1, v2].into_tensor();
-                let norm_vc_t = vc_t.norm();
-                let vc_t_smoothed = if norm_vc_t > T::zero() {
-                    vc_t * (mu * lambda * smoother(norm_vc_t, T::from(1e-5).unwrap()))
-                } else {
-                    Vector2::zero()
-                }
-                .into_data();
-                *vc = contact_basis
-                    .from_contact_coordinates([T::zero(), vc_t_smoothed[0], vc_t_smoothed[1]], i)
-            });
-
-        // Subtract object force
-        let obj_f = jac.view().into_tensor().transpose() * vc.view();
-        let col_f = Sparse::from_dim(
-            active_contact_indices.clone(),
-            self.collider_vertex_positions.len(),
-            vc.into_data(),
-        );
-        Some((obj_f.into_data(), col_f))
     }
 
     #[cfg(feature = "optsolver")]
@@ -1804,7 +1709,7 @@ impl<T: Real> PointContactConstraint<T> {
 
     /// Compute the full nonlinear constraint.
     ///
-    /// This function uses the current state. So to get an uoto date value, call update state first.
+    /// This function uses the current state. So to get an uoto date value, call update_state first.
     pub(crate) fn compute_nonlinear_constraint(&self, value: &mut [T]) {
         let radius = T::from(self.contact_radius()).unwrap();
 

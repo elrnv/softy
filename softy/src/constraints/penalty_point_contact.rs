@@ -1,10 +1,13 @@
 use super::point_contact::PointContactConstraint;
-use crate::constraints::ContactSurface;
+use crate::constraints::{ContactConstraint, ContactSurface};
 use crate::matrix::MatrixElementIndex;
-use crate::{Error, FrictionParams, Index, Real, TriMesh, ORIGINAL_VERTEX_INDEX_ATTRIB};
+use crate::{
+    Error, FrictionImpulses, FrictionParams, Index, Real, TriMesh, ORIGINAL_VERTEX_INDEX_ATTRIB,
+};
 use autodiff as ad;
 use flatk::{
-    Chunked, Chunked1, Chunked3, Offsets, Sparse, StorageMut, SubsetView, UniChunked, View, U1, U3,
+    Chunked, Chunked1, Chunked3, Offsets, Sparse, StorageMut, Subset, SubsetView, UniChunked, View,
+    U1, U3,
 };
 use geo::attrib::Attrib;
 use geo::mesh::VertexMesh;
@@ -14,8 +17,8 @@ use lazycell::LazyCell;
 use rayon::iter::Either;
 use rayon::prelude::*;
 use tensr::{
-    AsMutTensor, AsTensor, CwiseBinExprImpl, IndexedExpr, IntoData, IntoExpr, MulExpr,
-    Multiplication, Scalar, Tensor,
+    AsMutTensor, AsTensor, CwiseBinExprImpl, Expr, IndexedExpr, IntoData, IntoExpr, IntoTensor,
+    Matrix, MulExpr, Multiplication, Scalar, Tensor, Vector2,
 };
 
 pub type DistanceGradient<T = f64> = Tensor![T; S S 3 1];
@@ -368,7 +371,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         self.point_constraint.constraint_size()
     }
 
-    // Helper function to construct subsets from x using internal intdices.
+    // Helper function to construct subsets from x using internal indices.
     //pub(crate) fn input_and_constraint<'a>(
     //    &mut self,
     //    x: Chunked3<&'a [T]>,
@@ -386,6 +389,132 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .for_each(|(row, col, j)| {
                 *f[col].as_mut_tensor() -= *j.as_tensor() * self.lambda[row];
             });
+    }
+
+    pub fn subtract_friction_force(&mut self, mut f: Chunked3<&mut [T]>, v: Chunked3<&[T]>) {
+        if let Some((obj_f, col_f)) = self.compute_friction_impulse(v) {
+            for (&i, obj_f) in self
+                .implicit_surface_vertex_indices
+                .iter()
+                .zip(obj_f.iter())
+            {
+                *f[i].as_mut_tensor() += obj_f.as_tensor();
+            }
+            for (i, col_f, _) in col_f.iter() {
+                let i = self.collider_vertex_indices[i];
+                *f[i].as_mut_tensor() += col_f.as_tensor();
+            }
+        }
+    }
+
+    // Compute `f(x,v) = -μT(x)H(T(x)'v)λ(x)` and subtract it from `fc`.
+    //
+    // This function uses current state. To get an upto date friction impulse call update_state.
+    pub fn compute_friction_impulse(
+        &mut self,
+        // Contact force magnitude
+        v: Chunked3<&[T]>,
+    ) -> Option<(Chunked3<Vec<T>>, Sparse<Chunked3<Vec<T>>>)> {
+        use flatk::Set;
+        use num_traits::Zero;
+        use tensr::{AsMutData, ExprMut};
+
+        let v0 = SubsetView::from_unique_ordered_indices(&self.implicit_surface_vertex_indices, v);
+        let v1 = SubsetView::from_unique_ordered_indices(&self.collider_vertex_indices, v);
+
+        let lambda = &self.lambda;
+        let potential_values = &self.distance_potential;
+        let pc = &mut self.point_constraint;
+
+        if pc.friction_impulses.is_none() {
+            return None;
+        }
+
+        // Note that there is a distinction between active *contacts* and active
+        // *constraints*. Active *constraints* correspond to to those points
+        // that are in the MLS neighborhood of influence to be part of the
+        // optimization. Active *contacts* are a subset of those that are
+        // considered to be in contact and thus are producing friction.
+        let (active_constraint_subset, active_contact_indices, lambda) =
+            pc.in_contact_indices(lambda, potential_values);
+
+        // Construct contact (or "sliding") basis.
+        let normals = pc.contact_normals();
+        let normals_subset = Subset::from_unique_ordered_indices(
+            active_constraint_subset.as_slice(),
+            normals.as_slice(),
+        );
+        let mut normals = Chunked3::from_array_vec(vec![[T::zero(); 3]; normals_subset.len()]);
+        normals_subset.clone_into_other(&mut normals);
+
+        pc.friction_impulses
+            .as_mut()
+            .unwrap()
+            .contact_basis
+            .update_from_normals(normals.into());
+
+        // Contact Jacobian is defined for object vertices only. Contact Jacobian for collider vertices is trivial.
+        let jac = pc.compute_contact_jacobian(&active_contact_indices);
+        let collider_v = Subset::from_unique_ordered_indices(active_contact_indices.as_slice(), v1);
+
+        // Compute relative velocity in contact space: `vc = J(x)v`
+        let mut vc = jac.view().into_tensor() * v0.into_tensor();
+        *&mut vc.expr_mut() -= collider_v.expr();
+
+        dbg!(vc.len());
+        dbg!(lambda.len());
+        assert_eq!(vc.len(), lambda.len());
+
+        let FrictionImpulses {
+            contact_basis,
+            params,
+            object_impulse: _,
+            collider_impulse: _, // for active point contacts
+        } = pc.friction_impulses.as_mut().unwrap();
+
+        let mu = T::from(params.dynamic_friction).unwrap();
+
+        // Compute sliding bases velocity product.
+
+        // Define the smoothing function.
+        // This is s(x;eps)/x from the paper. We integrate the division by x
+        // to avoid generating large values near zero.
+        //let smoother = |x, eps| {
+        //    if x < eps {
+        //        T::from(2.0).unwrap() * x / eps - x * x / (eps * eps)
+        //    } else {
+        //        T::one()
+        //    }
+        //};
+        let smoother = |x, eps| T::one() / (x + T::from(0.1).unwrap() * eps);
+
+        // Compute `vc <- mu B(x) H(B'(x) vc) λ(x)`.
+        vc.as_mut_data()
+            .iter_mut()
+            .zip(lambda)
+            .enumerate()
+            .for_each(|(i, (vc, lambda))| {
+                let [_, v1, v2] = contact_basis.to_contact_coordinates(*vc, i);
+                let vc_t = [v1, v2].into_tensor();
+                let norm_vc_t = vc_t.norm();
+                let vc_t_smoothed = if norm_vc_t > T::zero() {
+                    vc_t * (mu * lambda * smoother(norm_vc_t, T::from(1e-5).unwrap()))
+                } else {
+                    Vector2::zero()
+                }
+                .into_data();
+                *vc = contact_basis
+                    .from_contact_coordinates([T::zero(), vc_t_smoothed[0], vc_t_smoothed[1]], i)
+            });
+
+        // Subtract object force (compute `f = J'(x)vc`)
+        let obj_f = jac.view().into_tensor().transpose() * vc.view();
+        let col_f = Sparse::from_dim(
+            active_contact_indices.clone(),
+            pc.collider_vertex_positions.len(),
+            vc.into_data(),
+        );
+        Some((obj_f.into_data(), col_f))
     }
 
     fn distance_jacobian_blocks_iter<'a>(

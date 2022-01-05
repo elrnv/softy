@@ -433,7 +433,6 @@ fn ball_tri_push_tester(
         vec![1; tetmesh.num_cells()],
     )?;
 
-    geo::io::save_tetmesh(&tetmesh, "./out/tetmesh_before.vtk");
     let params = static_nl_params();
 
     // If material is omitted it is assumed to be material 0 which is a completely fixed/animated mesh.
@@ -463,8 +462,6 @@ fn ball_tri_push_tester(
         .build::<f64>()?;
 
     let res = solver.step()?;
-
-    geo::io::save_mesh(&solver.mesh(), "./out/mesh_after.vtk");
 
     //println!("res = {:?}", res);
     assert!(

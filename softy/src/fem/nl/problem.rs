@@ -1497,6 +1497,8 @@ impl<T: Real64> NLProblem<T> {
                 fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
 
                 fc_constraint.subtract_constraint_force(Chunked3::from_flat(r));
+                fc_constraint
+                    .subtract_friction_force(Chunked3::from_flat(r), Chunked3::from_flat(vel));
             }
         }
     }

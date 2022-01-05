@@ -141,6 +141,15 @@ impl<T: Real> QueryTopo<T> {
             .query_hessian_product_values_iter_impl(query_points, multipliers, kernel))
     }
 
+    pub fn query_hessian_product_indexed_blocks_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [T],
+    ) -> impl Iterator<Item = (usize, [[T; 3]; 3])> + 'a {
+        apply_kernel_query_fn_impl_iter!(self, |kernel| self
+            .query_hessian_product_indexed_blocks_iter_impl(query_points, multipliers, kernel))
+    }
+
     pub fn query_hessian_product_values(
         &self,
         query_points: &[[T; 3]],

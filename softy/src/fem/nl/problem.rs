@@ -1,18 +1,16 @@
 use std::cell::RefCell;
-use std::ops::{Deref, DerefMut};
 
 use autodiff as ad;
 use flatk::*;
 use geo::attrib::*;
 use geo::mesh::{topology::*, VertexPositions};
 use num_traits::{Float, Zero};
-use rayon::prelude::*;
 use tensr::{AsMutTensor, AsTensor, IntoData, IntoTensor, Matrix, Tensor};
 
 use super::state::*;
 use crate::attrib_defines::*;
 use crate::constraints::{
-    penalty_point_contact::PenaltyPointContactConstraint, volume::VolumeConstraint, ContactPenalty,
+    penalty_point_contact::PenaltyPointContactConstraint, volume::VolumeConstraint,
 };
 use crate::contact::ContactJacobianView;
 use crate::energy::{EnergyGradient, EnergyHessian, EnergyHessianTopology};
@@ -432,6 +430,26 @@ impl<T: Real64> NLProblem<T> {
         for fc in frictional_contact_constraints_ad.iter_mut() {
             changed |= fc.constraint.borrow_mut().update_neighbors(pos_ad.view());
         }
+
+        // TODO: REMOVE THE BELOW DEBUG CODE
+        //for fc in frictional_contact_constraints.iter() {
+        //    let mut fc_constraint = fc.constraint.borrow_mut();
+        //    fc_constraint.update_state(pos.view());
+        //    fc_constraint.update_constraint_gradient();
+        //    fc_constraint.update_multipliers(
+        //        self.delta as f32,
+        //        self.kappa as f32,
+        //    );
+        //}
+        //for fc in frictional_contact_constraints_ad.iter() {
+        //    let mut fc_constraint = fc.constraint.borrow_mut();
+        //    fc_constraint.update_state(pos_ad.view());
+        //    fc_constraint.update_constraint_gradient();
+        //    fc_constraint.update_multipliers(
+        //        self.delta as f32,
+        //        self.kappa as f32,
+        //    );
+        //}
 
         changed
     }
@@ -1367,10 +1385,11 @@ impl<T: Real64> NLProblem<T> {
                 2 * vc.borrow().constraint_hessian_size() - vc.borrow().num_hessian_diagonal_nnz()
         }
 
+        let num_active_coords = self.num_variables();
         for fc in self.frictional_contact_constraints.iter() {
             //TODO: add frictional contact counts
-            let nh = fc.constraint.borrow().constraint_hessian_size();
-            let ndh = fc.constraint.borrow().num_hessian_diagonal_nnz();
+            let nh = fc.constraint.borrow().constraint_hessian_size(num_active_coords/3);
+            let ndh = fc.constraint.borrow().num_hessian_diagonal_nnz(num_active_coords/3);
             num += 2 * nh - ndh;
         }
 
@@ -1460,7 +1479,6 @@ impl<T: Real64> NLProblem<T> {
     ) {
         assert_eq!(pos.len(), vel.len());
         assert_eq!(r.len(), pos.len());
-        let orig_r = r.to_vec();
 
         // Compute contact lambda.
         {
@@ -1741,7 +1759,7 @@ impl<T: Real64> NLProblem<T> {
             .zip(state.vtx.residual.storage().iter())
             .for_each(|(dof_r, vtx_r)| {
                 *dof_r = *vtx_r;
-            })
+            });
     }
 
     fn be_jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {
@@ -1789,7 +1807,6 @@ impl<T: Real64> NLProblem<T> {
         // Add volume constraint indices
         for vc in self.volume_constraints.iter() {
             for MatrixElementIndex { row, col } in vc.borrow().constraint_hessian_indices_iter()
-                .filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
             {
                 rows[count] = row;
                 cols[count] = col;
@@ -1802,7 +1819,7 @@ impl<T: Real64> NLProblem<T> {
             let constraint = fc.constraint.borrow();
             // Indices for constraint hessian first term (multipliers held constant)
             count += constraint
-                .constraint_hessian_indices_iter()
+                .constraint_hessian_indices_iter(num_active_coords/3)
                 .filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
                 .zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
                 .map(|(MatrixElementIndex { row, col }, (out_row, out_col))| {
@@ -1889,26 +1906,12 @@ impl<T: Real64> NLProblem<T> {
             dt * dt * factor,
             &mut vals[count..count + n],
         );
-        for ((&row, &col), v) in rows[count..count+n].iter().zip(cols[count..count+n].iter()).zip(vals[count..count +n].iter()) {
-            if row < num_active_coords && col < num_active_coords {
-                if row == col {
-                    eprintln!("e ({}, {}): {}", row, col, v);
-                }
-            }
-        }
         count += n;
 
         if !self.is_static() {
             let inertia = solid.inertia();
             let n = inertia.energy_hessian_size();
             inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n]);
-            for ((&row, &col), v) in rows[count..count+n].iter().zip(cols[count..count+n].iter()).zip(vals[count..count +n].iter()) {
-                if row < num_active_coords && col < num_active_coords {
-                    if row == col {
-                        eprintln!("i ({}, {}): {}", row, col, v);
-                    }
-                }
-            }
             count += n;
         }
 
@@ -1920,22 +1923,12 @@ impl<T: Real64> NLProblem<T> {
             dt * dt * factor,
             &mut vals[count..count + n],
         );
-        for ((&row, &col), v) in rows[count..count+n].iter().zip(rows[count..count+n].iter()).zip(vals[count..count +n].iter()) {
-            if row < num_active_coords && col < num_active_coords {
-                //eprintln!("se ({}, {}): {}", row, col, v);
-            }
-        }
         count += n;
 
         if !self.is_static() {
             let inertia = shell.inertia();
             let n = inertia.energy_hessian_size();
             inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n]);
-            for ((&row, &col), v) in rows[count..count+n].iter().zip(rows[count..count+n].iter()).zip(vals[count..count +n].iter()) {
-                if row < num_active_coords && col < num_active_coords {
-                    //eprintln!("si ({}, {}): {}", row, col, v);
-                }
-            }
             count += n;
         }
 
@@ -1959,8 +1952,6 @@ impl<T: Real64> NLProblem<T> {
             count += nh;
         }
 
-        dbg!(count);
-
         // Add symmetric contact constraint jacobian entries here.
         for fc in self.frictional_contact_constraints.iter() {
             let mut constraint = fc.constraint.borrow_mut();
@@ -1968,33 +1959,20 @@ impl<T: Real64> NLProblem<T> {
             let kappa = self.kappa as f32;
             constraint.update_multipliers(delta, kappa);
             // Compute constraint hessian first term (multipliers held constant)
-            let num_hess_values =  constraint
-                .constraint_hessian_indexed_values_iter(delta, kappa)
-                .filter_map(|(s, (MatrixElementIndex { row, col }, val))| {
-                    if row < num_active_coords && col < num_active_coords {
-                        if row == col {
-                            eprintln!("{} ({}, {}): {}", s, row, col, -dt * dt * val);
-                        }
-                        Some(val)
-                    } else {
-                        None
-                    }
-                })
+            count += constraint
+                .constraint_hessian_indexed_values_iter(delta, kappa, num_active_coords / 3)
                 .zip(vals[count..].iter_mut())
-                .map(|(val, out_val)| {
+                .map(|((_, val), out_val)| {
                     *out_val = -dt * dt * val;
                 })
                 .count();
-            dbg!(num_hess_values);
-            count += num_hess_values;
         }
 
         // Duplicate off-diagonal entries.
         let (vals_begin, vals_end) = vals.split_at_mut(count);
 
-        dbg!(vals_begin.len());
-        dbg!(vals_end.len());
-
+        // Check that there are the same number of off-diagonal elements in vals_begin as there are
+        // total elements in vals_end
         debug_assert_eq!(rows.iter().zip(cols.iter()).zip(vals_begin.iter()).filter(|((&r, &c), _)| r != c).count(), vals_end.len());
 
         count += rows
@@ -2194,7 +2172,7 @@ impl<T: Real> NLProblem<T> {
     pub(crate) fn check_jacobian(&self, perturb_initial: bool) -> Result<(), crate::Error>{
         log::debug!("Checking Jacobian...");
         use ad::F1 as F;
-        let mut problem = self.clone_as_autodiff();
+        let problem = self.clone_as_autodiff();
         let n = problem.num_variables();
         let mut x0 = problem.initial_point();
         if perturb_initial {
@@ -2214,9 +2192,6 @@ impl<T: Real> NLProblem<T> {
         let mut jac = vec![vec![0.0; n]; n];
         for (&row, &col, &val) in zip!(jac_rows.iter(), jac_cols.iter(), jac_values.iter()) {
             if row < n && col < n {
-                if row == col {
-                    eprintln!("adding ({}, {}): {}", row, col, val);
-                }
                 jac[row][col] += val.value();
             }
         }
@@ -2230,7 +2205,7 @@ impl<T: Real> NLProblem<T> {
                     jac[i][j],
                     r[j].deriv(),
                     max_relative = 1e-6,
-                    epsilon = 1e-10
+                    epsilon = 1e-7
                 );
                 jac_ad[i][j] = r[j].deriv();
                 if !res {

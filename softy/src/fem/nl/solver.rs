@@ -148,10 +148,7 @@ impl SolverBuilder {
                     TriMesh::merge_iter(part.split_into_typed_meshes().into_iter().map(
                         |typed_mesh| match typed_mesh {
                             TypedMesh::Tet(mesh) => mesh.surface_trimesh(),
-                            TypedMesh::Tri(mut mesh) => {
-                                mesh.reverse();
-                                mesh
-                            },
+                            TypedMesh::Tri(mesh) => mesh,
                         },
                     ));
                 // Sort indices by original vertex so we can use this attribute to make subsets.
@@ -545,6 +542,7 @@ impl SolverBuilder {
 
         let vertex_type = crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
 
+        // Keeps track of vertices as they appear in state for meshes used in contact.
         Self::init_original_vertex_index_attribute(&mut mesh);
 
         // Initialize state (but not constraint multipliers).
@@ -665,7 +663,7 @@ impl SolverBuilder {
 
         Ok(NLProblem {
             state: RefCell::new(state),
-            kappa: 1.0 / params.contact_tolerance as f64,
+            kappa: 1.0e8 / params.contact_tolerance as f64,
             delta: params.contact_tolerance as f64,
             frictional_contact_constraints,
             frictional_contact_constraints_ad,

@@ -873,10 +873,6 @@ fn svd_values<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) -> Vec<T> {
 }
 
 #[allow(dead_code)]
-fn print_svd<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
-}
-
-#[allow(dead_code)]
 fn write_jacobian_img<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>, iter: u32) {
     // nalgebra dense prototype using lu.
     let mut dense = na::DMatrix::zeros(mtx.len(), mtx.len());

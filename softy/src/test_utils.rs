@@ -92,6 +92,16 @@ pub fn default_solid() -> SolidMaterial {
         .with_density(1000.0)
 }
 
+pub fn default_shell() -> SoftShellMaterial {
+    SoftShellMaterial::new(0)
+        .with_elasticity(ElasticityParameters {
+            lambda: 93333.33,
+            mu: 10e3,
+            model: ElasticityModel::NeoHookean,
+        })
+        .with_density(1000.0)
+}
+
 /// A flat triangle in the xz plane with vertices at origin, in positive x and positive z
 /// directions with the first two vertices fixed such that there is a unique solution when the
 /// triangle is simulated under gravity.

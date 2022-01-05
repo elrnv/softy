@@ -1,12 +1,11 @@
-use std::cell::RefCell;
-use super::point_contact::{enumerate_nonempty_neighborhoods_inplace, PointContactConstraint};
+use super::point_contact::PointContactConstraint;
 use crate::constraints::ContactSurface;
 use crate::matrix::MatrixElementIndex;
 use crate::{
-    CheckedIndex, Error, FrictionParams, Index, Real, TriMesh, ORIGINAL_VERTEX_INDEX_ATTRIB,
+    Error, FrictionParams, Index, Real, TriMesh, ORIGINAL_VERTEX_INDEX_ATTRIB,
 };
 use autodiff as ad;
-use flatk::{Sparse, UniChunked, Chunked, Chunked1, Chunked3, SparseView, StorageMut, SubsetView, View, U1, U3, Offsets};
+use flatk::{Sparse, UniChunked, Chunked, Chunked1, Chunked3, StorageMut, SubsetView, View, U1, U3, Offsets};
 use geo::attrib::Attrib;
 use geo::mesh::VertexMesh;
 use geo::{NumVertices, VertexIndex};
@@ -14,11 +13,9 @@ use implicits::KernelType;
 use lazycell::LazyCell;
 use rayon::iter::Either;
 use rayon::prelude::*;
-use std::convert::TryInto;
-use tensr::{AsMutTensor, AsData, AsTensor, CwiseBinExprImpl, DSBlockMatrix1x3View, DSMatrix, Expr, IndexedExpr, IntoData, IntoExpr, Matrix, MulExpr, Multiplication, Scalar, Tensor};
+use tensr::{AsMutTensor, AsTensor, CwiseBinExprImpl, IndexedExpr, IntoData, IntoExpr, MulExpr, Multiplication, Scalar, Tensor};
 
 pub type DistanceGradient<T = f64> = Tensor![T; S S 3 1];
-pub type DistanceGradientView<'a, T = f64> = Tensor![T; &'a S S 3 1];
 
 #[derive(Clone, Debug)]
 pub struct MappedDistanceGradient<T: Scalar> {
@@ -30,7 +27,7 @@ pub struct MappedDistanceGradient<T: Scalar> {
 
 impl<T: Real> MappedDistanceGradient<T> {
     fn clone_cast<S: Real>(&self) -> MappedDistanceGradient<S> {
-        use tensr::{Storage, CloneWithStorage, IntoTensor};
+        use tensr::{Storage, CloneWithStorage};
         let MappedDistanceGradient {
             matrix,
             mapping,
@@ -237,8 +234,6 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
     /// Initializes the constraint gradient sparsity pattern.
     pub fn reset_distance_gradient<'a>(&mut self, num_vertices: usize) {
-        use super::ContactConstraint;
-
         let (indices, blocks): (Vec<_>, Chunked3<Vec<_>>) = self.
             distance_jacobian_blocks_iter()
             .map(|(row, col, block)| (MatrixElementIndex { row: col, col: row }, block))
@@ -287,7 +282,6 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     /// initialized.
     pub fn update_constraint_gradient(&mut self) {
         use flatk::{Isolate, ViewMut};
-        use tensr::AsMutTensor;
 
         let MappedDistanceGradient { matrix, mapping } = self.distance_gradient
             .borrow_mut()
@@ -399,8 +393,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         )
     }
 
-    pub(crate) fn constraint_hessian_size(&self) -> usize {
-        self.constraint_hessian_indices_iter().count()
+    pub(crate) fn constraint_hessian_size(&self, max_index: usize) -> usize {
+        self.constraint_hessian_indices_iter(max_index).count()
     }
 
     /// Construct a transpose of the constraint gradinet (constraint jacobian).
@@ -409,8 +403,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     pub(crate) fn constraint_gradient_column_major_transpose<'a>(
         matrix: Tensor![T; &'a S S 3 1],
     ) -> Tensor![T; &'a S S 1 3] {
-        use flatk::{Chunked, Sparse, IntoStorage};
-        use tensr::IntoTensor;
+        use flatk::{IntoStorage};
         // TODO: update Chunked with from_raw, into_raw functions to avoid exposing unsafe construction.
         let Sparse {
             source: Chunked {
@@ -431,48 +424,101 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         }
     }
 
-    pub(crate) fn num_hessian_diagonal_nnz(&self) -> usize {
-        self.constraint_hessian_indices_iter()
+    pub(crate) fn num_hessian_diagonal_nnz(&self, max_index: usize) -> usize {
+        self.constraint_hessian_indices_iter(max_index)
             .filter(|m| m.col == m.row)
             .count()
     }
 
-    pub(crate) fn object_distance_potential_hessian_indices_iter<'a>(
+    // Assumes surface and contact points are upto date.
+    pub(crate) fn object_distance_potential_hessian_indexed_blocks_iter<'a>(
+        &'a self,
+        lambda: &'a [T],
+    ) -> Box<dyn Iterator<Item = (usize, usize, [[T;3];3])> + 'a> {
+        Box::new(if self.point_constraint.object_is_fixed() {
+            None
+        } else {
+            let surf = &self.point_constraint.implicit_surface;
+            surf.surface_hessian_product_indexed_blocks_iter(
+                self.point_constraint.collider_vertex_positions.view().into(),
+                lambda,
+            )
+                .ok()
+        }
+            .into_iter()
+            .flatten()
+            .map(move |(row, col, mtx)| {
+                let row = self.implicit_surface_vertex_indices[row];
+                let col = self.implicit_surface_vertex_indices[col];
+                if col > row {
+                    (col, row, mtx)
+                } else {
+                    (row, col, mtx)
+                }.into()
+            }))
+    }
+
+    // Assumes surface and contact points are upto date.
+    pub(crate) fn collider_distance_potential_hessian_indexed_blocks_iter<'a>(
+        &'a self,
+        lambda: &'a [T],
+    ) -> impl Iterator<Item = (usize, [[T;3];3])> + 'a {
+        if self.point_constraint.collider_is_fixed() {
+            None
+        } else {
+            let surf = &self.point_constraint.implicit_surface;
+            Some(surf.query_hessian_product_indexed_blocks_iter(
+                self.point_constraint.collider_vertex_positions.view().into(),
+                lambda,
+            ).map(move |(idx, mtx)| (self.collider_vertex_indices[idx], mtx)))
+        }
+            .into_iter()
+            .flatten()
+    }
+
+    pub(crate) fn object_distance_potential_hessian_block_indices_iter<'a>(
     &'a self,
-    ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
-        self
-            .point_constraint
-            .object_constraint_hessian_indices_iter()
-            .map(move |mut idx| {
-                idx.row = self.implicit_surface_vertex_indices[idx.row / 3] + idx.row % 3;
-                idx.col = self.implicit_surface_vertex_indices[idx.col / 3] + idx.col % 3;
-                if idx.col > idx.row {
-                    std::mem::swap(&mut idx.col, &mut idx.row);
+    ) -> impl Iterator<Item = (usize, usize)> + 'a {
+        if self.point_constraint.object_is_fixed()  {
+            None
+        } else {
+            self.point_constraint.implicit_surface
+                .surface_hessian_product_block_indices_iter()
+                .ok()
+        }
+            .into_iter()
+            .flatten()
+            .map(move |(row, col)| {
+                let row = self.implicit_surface_vertex_indices[row];
+                let col = self.implicit_surface_vertex_indices[col];
+                if col > row {
+                    (col, row)
+                } else {
+                    (row, col)
                 }
-                idx
             })
     }
-    pub(crate) fn collider_distance_potential_hessian_indices_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
-        self
-            .point_constraint
-            .collider_constraint_hessian_indices_iter()
-            .map(move |mut idx| {
-                idx.row = self.collider_vertex_indices[idx.row / 3] + idx.row % 3;
-                idx.col = self.collider_vertex_indices[idx.col / 3] + idx.col % 3;
-                if idx.col > idx.row {
-                    std::mem::swap(&mut idx.col, &mut idx.row);
-                }
-                idx
-            })
+
+    pub(crate) fn collider_distance_potential_hessian_block_indices_iter<'b>(
+        &'b self,
+    ) -> impl Iterator<Item = usize> + 'b {
+        if self.point_constraint.collider_is_fixed() {
+            None
+        } else {
+            Some(self.point_constraint.implicit_surface.query_hessian_product_block_indices_iter()
+                .map(move |idx| self.collider_vertex_indices[idx])
+            )
+        }
+            .into_iter()
+            .flatten()
     }
 
     pub(crate) fn constraint_hessian_indices_iter<'a>(
         &'a self,
+        max_index: usize,
     ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
-        let obj_indices_iter = self.object_distance_potential_hessian_indices_iter();
-        let coll_indices_iter = self.collider_distance_potential_hessian_indices_iter();
+        let obj_indices_iter = self.object_distance_potential_hessian_block_indices_iter();
+        let coll_indices_iter = self.collider_distance_potential_hessian_block_indices_iter().map(|idx| (idx, idx));
 
         let MappedDistanceGradient { matrix: g, .. } = self
             .distance_gradient
@@ -484,10 +530,12 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let gj_iter =
             g_view
                 .into_iter()
+                .filter(move |(row_idx, _)| *row_idx < max_index)
                 .flat_map(move |(row_idx, lhs_row)| {
                     // Iterate over the columns of transpose g (so rows of g).
                     j_view
                         .into_iter()
+                        .filter(move |(col_idx, _)| *col_idx < max_index)
                         .flat_map(move |(col_idx, rhs_col)| {
                             // Produce an iterator for the row-col block inner product.
                             MulExpr::with_op(
@@ -495,7 +543,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                 rhs_col.into_expr(),
                                 Multiplication,
                             )
-                                .flat_map( move |IndexedExpr { index, expr }| {
+                                .flat_map( move |_| {
                                     (0..3).flat_map(move |r| {
                                         (0..3).filter_map(move |c| {
                                             let row = 3 * row_idx + r;
@@ -510,26 +558,58 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                 })
                         })
                 });
-        obj_indices_iter.chain(coll_indices_iter).chain(gj_iter)
+        obj_indices_iter.chain(coll_indices_iter)
+            .filter(move |(row, col)| *row < max_index && *col < max_index)
+            .chain(gj_iter)
+            .flat_map(move |(row, col)| {
+                if row == col {
+                    // Only lower triangular part
+                    Either::Left(
+                        (0..3).flat_map(move |r| {
+                            (0..=r).map(move |c| (3 * row + r, 3 * col + c).into())
+                        })
+                    )
+                } else {
+                    // Entire matrix
+                    Either::Right(
+                        (0..3).flat_map(move |r| {
+                            (0..3).map(move |c| (3 * row + r, 3 * col + c).into())
+                        })
+                    )
+                }
+            })
     }
 
     pub(crate) fn constraint_hessian_indexed_values_iter<'a>(
         &'a self,
         delta: f32,
         kappa: f32,
-    ) -> impl Iterator<Item = (&'static str, (MatrixElementIndex, T))> + 'a {
+        max_index: usize,
+    ) -> impl Iterator<Item = (MatrixElementIndex, T)> + 'a {
         let lambda = self.lambda.as_slice();
         let dist = self.distance_potential.as_slice();
-        let obj_indices_iter = self.object_distance_potential_hessian_indices_iter();
-        let coll_indices_iter = self.collider_distance_potential_hessian_indices_iter();
 
-        let hessian = obj_indices_iter.zip(self
-            .point_constraint
-            .object_constraint_hessian_values_iter(lambda))
+        let hessian = self
+            .object_distance_potential_hessian_indexed_blocks_iter(lambda)
             .chain(
-                coll_indices_iter.zip(self.point_constraint
-                    .collider_constraint_hessian_values_iter(lambda)),
-            ).map(|v| ("hess", v));
+                self.collider_distance_potential_hessian_indexed_blocks_iter(lambda).map(|(idx, mtx)| (idx, idx, mtx)),
+            )
+            .filter(move |(row, col, _)| *row < max_index && *col < max_index)
+            .flat_map(move |(row, col, mtx)| {
+                if row == col {
+                    Either::Left(
+                        (0..3).flat_map(move |r| {
+                            (0..=r).map(move |c| ((3 * row + r, 3 * col + c).into(), mtx[r][c]))
+                        })
+                    )
+                } else {
+                    Either::Right(
+                        (0..3).flat_map(move |r| {
+                            (0..3).map(move |c| ((3 * row + r, 3 * col + c).into(), mtx[r][c]))
+                        })
+                    )
+                }
+            });
 
         let kappa = T::from(kappa).unwrap();
 
@@ -543,10 +623,12 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let gj =
             g_view
                 .into_iter()
+                .filter(move |(row_idx, _)| *row_idx < max_index)
                 .flat_map(move |(row_idx, lhs_row)| {
                     // Iterate over the columns of transpose g (so rows of g).
                     j_view
                         .into_iter()
+                        .filter(move |(col_idx, _)| *col_idx < max_index)
                         .flat_map(move |(col_idx, rhs_col)| {
                             // Produce an iterator for the row-col block inner product.
                             MulExpr::with_op(
@@ -555,7 +637,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                 Multiplication,
                             )
                                 .flat_map( move |IndexedExpr { index, expr }| {
-                                    let mtx = expr * ContactPenalty::new(delta).ddb(dist[index]) * (-kappa);
+                                    let mtx = expr * (-kappa * ContactPenalty::new(delta).ddb(dist[index]));
                                     (0..3).flat_map(move |r| {
                                         (0..3).filter_map(move |c| {
                                                 let row = 3 * row_idx + r;
@@ -570,9 +652,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                 })
                         })
                 }
-        ).map(|v| ("gj", v));
+        );
 
-            hessian.chain(gj)
+        hessian.chain(gj)
     }
 }
 

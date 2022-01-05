@@ -8,6 +8,7 @@ use implicits::*;
 use lazycell::LazyCell;
 use num_traits::Zero;
 use rayon::iter::Either;
+#[cfg(feature = "optsolver")]
 use rayon::prelude::*;
 #[cfg(feature = "af")]
 use reinterpret::*;
@@ -524,7 +525,7 @@ impl<T: Real> PointContactConstraint<T> {
     /// This function fills the non-local values of the constraint function with a constant signed
     /// value (equal to the contact radius in magnitude) to help the optimization determine
     /// feasible regions. This is done using a flood fill algorithm as follows.
-    /// 1. Identify non-local query poitns with `neighborhood_sizes`.
+    /// 1. Identify non-local query points with `neighborhood_sizes`.
     /// 2. Partition the primitives of the kinematic object (from which the points are from) into
     ///    connected components of non-local points. This means that points with a valid local
     ///    potential serve as boundaries.
@@ -1794,6 +1795,7 @@ impl<T: Real> PointContactConstraint<T> {
         self.implicit_surface.num_neighborhoods()
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
         let m = self.constraint_size();
         (vec![0.0; m], vec![2e19; m])
@@ -1848,6 +1850,7 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn constraint(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2], value: &mut [T]) {
         debug_assert_eq!(value.len(), self.constraint_size());
         if let Some(jac) = self.constraint_jacobian.borrow() {
@@ -2038,6 +2041,7 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn object_constraint_jacobian_blocks_par_iter<'a>(
         &'a self,
     ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
@@ -2122,6 +2126,7 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn collider_constraint_jacobian_blocks_par_iter<'a>(
         &'a self,
     ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
@@ -2270,6 +2275,7 @@ impl<T: Real> PointContactConstraint<T> {
             .chain(self.collider_constraint_jacobian_values_iter())
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn object_constraint_hessian_size(&self) -> usize {
         if self.object_is_fixed() || self.constraint_jacobian.filled() {
             0
@@ -2280,6 +2286,7 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn collider_constraint_hessian_size(&self) -> usize {
         if self.collider_is_fixed() || self.constraint_jacobian.filled() {
             0
@@ -2288,10 +2295,12 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn constraint_hessian_size(&self) -> usize {
         self.object_constraint_hessian_size() + self.collider_constraint_hessian_size()
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn object_constraint_hessian_indices_iter<'b>(
         &'b self,
     ) -> impl Iterator<Item = MatrixElementIndex> + 'b {
@@ -2307,6 +2316,7 @@ impl<T: Real> PointContactConstraint<T> {
         .map(MatrixElementIndex::from)
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn collider_constraint_hessian_indices_iter<'b>(
         &'b self,
     ) -> impl Iterator<Item = MatrixElementIndex> + 'b {
@@ -2332,6 +2342,7 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     // Assumes surface and contact points are upto date.
+    #[cfg(feature = "optsolver")]
     pub(crate) fn object_constraint_hessian_values_iter<'a>(
         &'a self,
         lambda: &'a [T],
@@ -2351,6 +2362,7 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     // Assumes surface and contact points are upto date.
+    #[cfg(feature = "optsolver")]
     pub(crate) fn collider_constraint_hessian_values_iter<'a>(
         &'a self,
         lambda: &'a [T],

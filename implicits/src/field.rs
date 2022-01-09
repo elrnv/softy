@@ -1106,7 +1106,7 @@ where
 }
 
 /// Compute the gradient of the face normal at the given sample with respect to
-/// its vertices. The returned triple of `Matrix3`s corresonds to the block column vector of
+/// its vertices. The returned triple of `Matrix3`s corresponds to the block column vector of
 /// three matrices corresponding to each triangle vertex, which together construct the actual
 /// `9x3` component-wise gradient.
 pub(crate) fn face_unit_normal_gradient_iter<T>(
@@ -1124,7 +1124,6 @@ where
     (0..3).map(move |i| -Matrix3::new(tri.area_normal_gradient(i)) * nml_proj)
 }
 
-/// Parallel version of `face_unit_normal_gradient_iter`.
 #[allow(dead_code)]
 pub(crate) fn face_unit_normal_gradient_product<T>(
     sample: Sample<T>,

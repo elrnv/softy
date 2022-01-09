@@ -36,9 +36,16 @@ pub struct FrictionParams {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct FrictionImpulses<T> {
+pub struct FrictionWorkspace<T> {
     pub params: FrictionParams,
     pub contact_basis: ContactBasis<T>,
+
+    // Forces are used in the NL solve whereas impulses in the original Opt solver.
+
+    /// Friction force on the object.
+    pub object_force: Chunked3<Vec<T>>,
+    /// Friction force on the collider.
+    pub collider_force: Sparse<Chunked3<Vec<T>>, std::ops::RangeTo<usize>>,
     /// The impulse required to correct the velocities from the elasticity solve on the object
     /// along with the true applied friction impulse.
     pub object_impulse: Chunked3<(Vec<T>, Vec<T>)>,
@@ -47,10 +54,10 @@ pub struct FrictionImpulses<T> {
     pub collider_impulse: Sparse<Chunked3<(Vec<T>, Vec<T>)>, std::ops::RangeTo<usize>>,
 }
 
-impl<T: Real> FrictionImpulses<T> {
-    pub fn clone_cast<S: Real>(&self) -> FrictionImpulses<S> {
+impl<T: Real> FrictionWorkspace<T> {
+    pub fn clone_cast<S: Real>(&self) -> FrictionWorkspace<S> {
         use tensr::{AsTensor, Storage};
-        FrictionImpulses {
+        FrictionWorkspace {
             params: self.params,
             contact_basis: self.contact_basis.clone_cast(),
             object_impulse: self
@@ -83,8 +90,8 @@ impl<T: Real> FrictionImpulses<T> {
             ),
         }
     }
-    pub fn new(params: FrictionParams) -> FrictionImpulses<T> {
-        FrictionImpulses {
+    pub fn new(params: FrictionParams) -> FrictionWorkspace<T> {
+        FrictionWorkspace {
             params,
             contact_basis: ContactBasis::new(),
             object_impulse: Chunked3::new(),

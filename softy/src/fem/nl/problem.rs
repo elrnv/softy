@@ -1979,6 +1979,7 @@ impl<T: Real64> NLProblem<T> {
             vals_upper.len()
         );
 
+        // Fill upper trianular part.
         count += rows
             .iter()
             .zip(cols.iter())
@@ -1990,7 +1991,24 @@ impl<T: Real64> NLProblem<T> {
             })
             .count();
 
-        // TODO: Add friction here.
+        // Compute friction derivatives.
+        // Note that friction Jacobian is non-symmetric and so must appear after the symmetrization above.
+
+        // Add Non-symmetric friction Jacobian entries.
+        for fc in self.frictional_contact_constraints.iter() {
+            let mut constraint = fc.constraint.borrow_mut();
+            let delta = self.delta as f32;
+            let kappa = self.kappa as f32;
+            constraint.update_multipliers(delta, kappa);
+            // Compute friction hessian second term (multipliers held constant)
+            count += constraint
+                .friction_jacobian_indexed_values_iter(next.vel, delta, kappa, dt, num_active_coords / 3)
+                .zip(vals[count..].iter_mut())
+                .map(|((_, val), out_val)| {
+                    *out_val = dt * dt * val;
+                })
+                .count();
+        }
 
         //self.print_jacobian_svd(vals);
         *self.iter_counter.borrow_mut() += 1;

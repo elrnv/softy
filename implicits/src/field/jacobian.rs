@@ -877,9 +877,9 @@ where
     let closest_d = bg.closest_sample_dist();
     let weight_sum_inv = bg.weight_sum_inv();
 
-    // For each surface vertex contribution
     let dw_neigh = normalized_neighbor_weight_gradient(q, view, kernel, bg);
 
+    // For each surface vertex contribution
     let main_jac: Vector3<T> = view
         .into_iter()
         .map(

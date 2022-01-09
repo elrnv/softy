@@ -247,9 +247,9 @@ pub trait ContactConstraint<T: Real>:
     /// Total number of contacts that could occur.
     fn num_potential_contacts(&self) -> usize;
     /// Provide the frictional contact data.
-    fn frictional_contact(&self) -> Option<&crate::friction::FrictionImpulses<T>>;
+    fn frictional_contact(&self) -> Option<&crate::friction::FrictionWorkspace<T>>;
     /// Provide the frictional contact mutable data.
-    fn frictional_contact_mut(&mut self) -> Option<&mut crate::friction::FrictionImpulses<T>>;
+    fn frictional_contact_mut(&mut self) -> Option<&mut crate::friction::FrictionWorkspace<T>>;
     /// Return a set of surface vertex indices that could be in contact.
     fn active_surface_vertex_indices(&self) -> utils::aref::ARef<'_, [usize]>;
 

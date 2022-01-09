@@ -86,7 +86,7 @@ where
     pub collider_vertex_positions: Chunked3<Vec<T>>,
 
     /// Friction impulses applied during contact.
-    pub friction_impulses: Option<FrictionImpulses<T>>,
+    pub friction_workspace: Option<FrictionWorkspace<T>>,
     /// A mass inverse matrix data for the object.
     pub object_mass_data: MassData<T>,
     /// A mass inverse matrix data for the collider.
@@ -132,7 +132,7 @@ impl<T: Real> PointContactConstraint<T> {
                 .iter()
                 .map(|x| x.as_tensor().cast::<S>().into())
                 .collect(),
-            friction_impulses: self.friction_impulses.as_ref().map(|x| x.clone_cast()),
+            friction_workspace: self.friction_workspace.as_ref().map(|x| x.clone_cast()),
             object_mass_data: self.object_mass_data.clone_cast(),
             collider_mass_data: self.collider_mass_data.clone_cast(),
             object_kind: self.object_kind,
@@ -220,9 +220,9 @@ impl<T: Real> PointContactConstraint<T> {
             let mut constraint = PointContactConstraint {
                 implicit_surface: surface.query_topo(&query_points),
                 collider_vertex_positions: Chunked3::from_array_vec(query_points.clone()),
-                friction_impulses: friction_params.and_then(|fparams| {
+                friction_workspace: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
-                        Some(FrictionImpulses::new(fparams))
+                        Some(FrictionWorkspace::new(fparams))
                     } else {
                         None
                     }
@@ -691,14 +691,32 @@ impl<T: Real> PointContactConstraint<T> {
     pub(crate) fn compute_contact_jacobian(
         &self,
         active_contact_indices: &[usize],
+        full: bool
     ) -> ContactJacobian<T> {
         let query_points = &self.collider_vertex_positions;
         let surf = &self.implicit_surface;
         let active_contact_points = Select::new(active_contact_indices, query_points.view());
 
         // Compute contact Jacobian
-        let jac_triplets = TripletContactJacobian::from_selection(&surf, active_contact_points);
+        let jac_triplets = TripletContactJacobian::from_selection(&surf, active_contact_points, full);
         let jac: ContactJacobian<T> = jac_triplets.into();
+        jac.into_tensor()
+            .pruned(|_, _, block| !block.is_zero())
+            .into_data()
+    }
+
+    pub(crate) fn compute_contact_gradient(
+        &self,
+        active_contact_indices: &[usize],
+        full: bool
+    ) -> ContactGradient<T> {
+        let query_points = &self.collider_vertex_positions;
+        let surf = &self.implicit_surface;
+        let active_contact_points = Select::new(active_contact_indices, query_points.view());
+
+        // Compute contact Gradient
+        let jac_triplets = TripletContactJacobian::from_selection(&surf, active_contact_points, full);
+        let jac: ContactGradient<T> = jac_triplets.into_gradient();
         jac.into_tensor()
             .pruned(|_, _, block| !block.is_zero())
             .into_data()
@@ -854,7 +872,7 @@ impl<T: Real> PointContactConstraint<T> {
         potential_values: &[T],
         mut friction_steps: u32,
     ) -> u32 {
-        if self.friction_impulses.is_none() || friction_steps == 0 {
+        if self.friction_workspace.is_none() || friction_steps == 0 {
             return 0;
         }
 
@@ -872,14 +890,14 @@ impl<T: Real> PointContactConstraint<T> {
         let mut normals = Chunked3::from_array_vec(vec![[T::zero(); 3]; normals_subset.len()]);
         normals_subset.clone_into_other(&mut normals);
 
-        self.friction_impulses
+        self.friction_workspace
             .as_mut()
             .unwrap()
             .contact_basis
             .update_from_normals(normals.into());
 
         let smoothing_weight = self
-            .friction_impulses
+            .friction_workspace
             .as_ref()
             .unwrap()
             .params
@@ -901,16 +919,16 @@ impl<T: Real> PointContactConstraint<T> {
             orig_contact_impulse_n.to_vec()
         };
 
-        let jac = self.compute_contact_jacobian(&active_contact_indices);
+        let jac = self.compute_contact_jacobian(&active_contact_indices, false);
         let effective_mass_inv =
             self.compute_effective_mass_inv(&active_contact_indices, rigid_motion, jac.view());
 
-        let FrictionImpulses {
+        let FrictionWorkspace {
             contact_basis,
             params,
             object_impulse,
             collider_impulse, // for active point contacts
-        } = self.friction_impulses.as_mut().unwrap();
+        } = self.friction_workspace.as_mut().unwrap();
 
         // A new set of contacts have been determined. We should remap the previous friction
         // impulses to match new impulses.
@@ -1252,11 +1270,11 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
     fn num_potential_contacts(&self) -> usize {
         self.collider_vertex_positions.len()
     }
-    fn frictional_contact(&self) -> Option<&FrictionImpulses<T>> {
-        self.friction_impulses.as_ref()
+    fn frictional_contact(&self) -> Option<&FrictionWorkspace<T>> {
+        self.friction_workspace.as_ref()
     }
-    fn frictional_contact_mut(&mut self) -> Option<&mut FrictionImpulses<T>> {
-        self.friction_impulses.as_mut()
+    fn frictional_contact_mut(&mut self) -> Option<&mut FrictionWorkspace<T>> {
+        self.friction_workspace.as_mut()
     }
     fn active_surface_vertex_indices(&self) -> utils::aref::ARef<'_, [usize]> {
         utils::aref::ARef::Plain(&[])
@@ -1322,15 +1340,15 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
     }
 
     fn collider_contact_normals(&mut self, mut out_normals: Chunked3<&mut [T]>) {
-        if self.friction_impulses.is_none() {
+        if self.friction_workspace.is_none() {
             return;
         }
 
         let normals = self.contact_normals();
-        let FrictionImpulses {
+        let FrictionWorkspace {
             collider_impulse, // for active point contacts
             ..
-        } = self.friction_impulses.as_ref().unwrap();
+        } = self.friction_workspace.as_ref().unwrap();
 
         let query_indices = self.implicit_surface.nonempty_neighborhood_indices();
         assert_eq!(query_indices.len(), normals.len());
@@ -1352,7 +1370,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
     }
 
     fn project_friction_impulses(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2]) {
-        if self.friction_impulses.is_none() {
+        if self.friction_workspace.is_none() {
             return;
         }
         self.update_contact_pos(x);
@@ -1360,11 +1378,11 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
         let normals = self.contact_normals();
         let query_indices = self.active_constraint_indices();
 
-        let FrictionImpulses {
+        let FrictionWorkspace {
             object_impulse,
             collider_impulse, // for active point contacts
             ..
-        } = self.friction_impulses.as_mut().unwrap();
+        } = self.friction_workspace.as_mut().unwrap();
 
         // Only interested in normals at contact points on the collider impulse.
         let remapped_normals_iter = crate::constraints::remap_values_iter(
@@ -1401,7 +1419,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
         &self,
         mut object_vel: SubsetView<Chunked3<&mut [T]>>,
     ) {
-        if let Some(ref frictional_contact) = self.friction_impulses {
+        if let Some(ref frictional_contact) = self.friction_workspace {
             if frictional_contact.object_impulse.is_empty() {
                 return;
             }
@@ -1431,7 +1449,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
         &self,
         collider_vel: SubsetView<Chunked3<&mut [T]>>,
     ) {
-        if let Some(ref frictional_contact) = self.friction_impulses {
+        if let Some(ref frictional_contact) = self.friction_workspace {
             if frictional_contact.collider_impulse.is_empty() {
                 return;
             }
@@ -1517,7 +1535,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
 
     fn frictional_dissipation(&self, v: [SubsetView<Chunked3<&[T]>>; 2]) -> T {
         let mut dissipation = T::zero();
-        if let Some(ref frictional_contact) = self.friction_impulses {
+        if let Some(ref frictional_contact) = self.friction_workspace {
             for (i, (_, f)) in frictional_contact.object_impulse.iter().enumerate() {
                 for j in 0..3 {
                     dissipation += v[0][i][j] * f[j];

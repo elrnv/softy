@@ -672,7 +672,7 @@ impl NonLinearProblem {
             let vtx_next = ws_vtx.view();
             for fc in self.frictional_contacts.iter() {
                 let fc_constraint = fc.constraint.borrow();
-                if let Some(fc_contact) = fc_constraint.friction_impulses.as_ref() {
+                if let Some(fc_contact) = fc_constraint.friction_workspace.as_ref() {
                     if fc_contact.params.friction_forwarding > 0.0 {
                         let dq_next = ws_dof.view().map_storage(|dof| dof.state.dq);
                         let vel_next = vtx_next.map_storage(|vtx| vtx.state.vel);
@@ -2194,7 +2194,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 //});
 
                 let fc_constraint = fc.constraint.borrow();
-                if let Some(fc_contact) = fc_constraint.friction_impulses.as_ref() {
+                if let Some(fc_contact) = fc_constraint.friction_workspace.as_ref() {
                     // ws.grad is a zero initialized memory slice to which we can write the gradient to.
                     // This may be different than `grad.view_mut()` if the object is rigid and has
                     // different degrees of freedom than vertex DoFs.

@@ -1330,6 +1330,40 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     }
 
     // Assumes surface and contact points are upto date.
+    pub(crate) fn object_collider_distance_potential_hessian_indexed_blocks_iter<'a>(
+        &'a self,
+        lambda: &'a [T],
+    ) -> Box<dyn Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a> {
+        Box::new(
+            if self.point_constraint.object_is_fixed() {
+                None
+            } else {
+                let surf = &self.point_constraint.implicit_surface;
+                surf.sample_query_hessian_product_indexed_blocks_iter(
+                    self.point_constraint
+                        .collider_vertex_positions
+                        .view()
+                        .into(),
+                    lambda,
+                )
+                    .ok()
+            }
+                .into_iter()
+                .flatten()
+                .map(move |(row, col, mtx)| {
+                    let row = self.collider_vertex_indices[row];
+                    let col = self.implicit_surface_vertex_indices[col];
+                    if col > row {
+                        (col, row, mtx)
+                    } else {
+                        (row, col, mtx)
+                    }
+                        .into()
+                }),
+        )
+    }
+
+    // Assumes surface and contact points are upto date.
     pub(crate) fn collider_distance_potential_hessian_indexed_blocks_iter<'a>(
         &'a self,
         lambda: &'a [T],
@@ -1418,7 +1452,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 // Iterate over the columns of transpose g (so rows of g).
                 j_view
                     .into_iter()
-                    .filter(move |(col_idx, _)| *col_idx <= row_idx)
+                    .filter(move |(col_idx, _)| *col_idx < max_index)
                     .flat_map(move |(col_idx, rhs_col)| {
                         // Produce an iterator for the row-col block inner product.
                         MulExpr::with_op(lhs_row.into_expr(), rhs_col.into_expr(), Multiplication)
@@ -1431,21 +1465,21 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .filter(move |(row, col)| *row < max_index && *col < max_index)
             .chain(gj_iter)
             .flat_map(move |(row, col)| {
-                if row == col {
-                    // Only lower triangular part
-                    Either::Left(
-                        (0..3).flat_map(move |r| {
-                            (0..=r).map(move |c| (3 * row + r, 3 * col + c).into())
-                        }),
-                    )
-                } else {
+                //if row == col {
+                //    // Only lower triangular part
+                //    Either::Left(
+                //        (0..3).flat_map(move |r| {
+                //            (0..=r).map(move |c| (3 * row + r, 3 * col + c).into())
+                //        }),
+                //    )
+                //} else {
                     // Entire matrix
-                    Either::Right(
+                    //Either::Right(
                         (0..3).flat_map(move |r| {
                             (0..3).map(move |c| (3 * row + r, 3 * col + c).into())
-                        }),
-                    )
-                }
+                        })
+                    //)
+                //}
             })
     }
 
@@ -1460,6 +1494,15 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
         let hessian = self
             .object_distance_potential_hessian_indexed_blocks_iter(lambda)
+            .chain(self.object_collider_distance_potential_hessian_indexed_blocks_iter(lambda))
+            .flat_map(|(row, col, mtx)| {
+                // Fill upper triangular portion.
+                std::iter::once((row, col, mtx)).chain(if row == col {
+                    Either::Left(std::iter::empty())
+                } else {
+                    Either::Right(std::iter::once((col, row, mtx)))
+                })
+            })
             .chain(
                 self.collider_distance_potential_hessian_indexed_blocks_iter(lambda)
                     .map(|(idx, mtx)| (idx, idx, mtx)),
@@ -1481,7 +1524,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 // Iterate over the columns of transpose g (so rows of g).
                 j_view
                     .into_iter()
-                    .filter(move |(col_idx, _)| *col_idx <= row_idx)
+                    .filter(move |(col_idx, _)| *col_idx < max_index)
                     .flat_map(move |(col_idx, rhs_col)| {
                         // Produce an iterator for the row-col block inner product.
                         MulExpr::with_op(lhs_row.into_expr(), rhs_col.into_expr(), Multiplication)
@@ -1497,15 +1540,17 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .filter(move |(row, col, _)| *row < max_index && *col < max_index)
             .chain(gj)
             .flat_map(move |(row, col, mtx)| {
-                if row == col {
-                    Either::Left((0..3).flat_map(move |r| {
-                        (0..=r).map(move |c| ((3 * row + r, 3 * col + c).into(), mtx[r][c]))
-                    }))
-                } else {
-                    Either::Right((0..3).flat_map(move |r| {
+                //if row == col {
+                //    Either::Left((0..3).flat_map(move |r| {
+                //        (0..=r).map(move |c| ((3 * row + r, 3 * col + c).into(), mtx[r][c]))
+                //    }))
+                //} else {
+                    //Either::Right(
+                        (0..3).flat_map(move |r| {
                         (0..3).map(move |c| ((3 * row + r, 3 * col + c).into(), mtx[r][c]))
-                    }))
-                }
+                    })
+                   // )
+                //}
             })
     }
 }

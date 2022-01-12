@@ -59,6 +59,7 @@ fn compute_distance_potential(
         .direct_attrib_clone_into_vec::<f32, VertexIndex>("potential")
         .expect("Potential attribute doesn't exist");
 
+    log::trace!("potential = {:?}", pot_attrib);
     if test_f64 {
         let surf =
             mls_from_trimesh(&surface_trimesh, params).expect("Failed to build implicit surface.");
@@ -69,7 +70,6 @@ fn compute_distance_potential(
         query_surf.potential(sample_mesh.vertex_positions(), &mut pot_attrib64);
 
         // Make sure the two potentials are identical.
-        log::trace!("potential = {:?}", pot_attrib);
         log::trace!("potential64 = {:?}", pot_attrib64);
         for (&x, &y) in pot_attrib.iter().zip(pot_attrib64.iter()) {
             assert_relative_eq!(x, y as f32, max_relative = 1e-5);
@@ -189,11 +189,13 @@ fn single_tri_push() -> Result<(), Error> {
 
     let meshes = trimesh.clone().split_by_face_partition(&vec![0, 1], 2);
 
+    dbg!(meshes.0[0].vertex_positions());
+
     compute_distance_potential(
         &meshes.0[1],
         &meshes.0[0],
         KernelType::Approximate {
-            radius_multiplier: 10000.0,
+            radius_multiplier: 1000000.0,
             tolerance: 0.01,
         },
         true,
@@ -201,13 +203,12 @@ fn single_tri_push() -> Result<(), Error> {
 
     // Set contact parameters
     let kernel = KernelType::Approximate {
-        radius_multiplier: 1.59,
+        radius_multiplier: 10000000.0,
         tolerance: 0.001,
     };
 
     let params = SimParams {
         jacobian_test: true,
-        time_step: Some(0.2),
         ..static_nl_params()
     };
 
@@ -273,6 +274,7 @@ fn single_tri_push() -> Result<(), Error> {
     };
     let (obj, coll) = split_into_parts(solver.mesh());
 
+    dbg!(obj.vertex_positions());
     let constraint = compute_distance_potential(&coll, &obj, kernel, false);
     assert!(
         constraint.iter().all(|&x| x >= -params.contact_tolerance),

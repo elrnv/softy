@@ -1712,21 +1712,6 @@ impl<T: Real64> NLProblem<T> {
             }
         }
 
-        // Add symmetric contact constraint Jacobian
-        for fc in self.frictional_contact_constraints.iter() {
-            let constraint = fc.constraint.borrow();
-            // Indices for constraint hessian first term (multipliers held constant)
-            count += constraint
-                .constraint_hessian_indices_iter(num_active_coords / 3)
-                //.filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
-                .zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
-                .map(|(MatrixElementIndex { row, col }, (out_row, out_col))| {
-                    *out_row = row;
-                    *out_col = col;
-                })
-                .count();
-        }
-
         // Duplicate off-diagonal indices to form a complete matrix.
         let (rows_begin, rows_end) = rows.split_at_mut(count);
         let (cols_begin, cols_end) = cols.split_at_mut(count);
@@ -1758,32 +1743,47 @@ impl<T: Real64> NLProblem<T> {
         // Compute friction derivatives.
         // Note that friction Jacobian is non-symmetric and so must appear after the symmetrization above.
 
+        // Add contact constraint Jacobian
+        for fc in self.frictional_contact_constraints.iter() {
+            let constraint = fc.constraint.borrow();
+            // Indices for constraint hessian first term (multipliers held constant)
+            count += constraint
+                .constraint_hessian_indices_iter(num_active_coords / 3)
+                //.filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
+                .zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
+                .map(|(MatrixElementIndex { row, col }, (out_row, out_col))| {
+                    *out_row = row;
+                    *out_col = col;
+                })
+                .count();
+        }
+
         // Add Non-symmetric friction Jacobian entries.
-        //for fc in self.frictional_contact_constraints.iter() {
-        //    let mut constraint = fc.constraint.borrow_mut();
-        //    let delta = self.delta as f32;
-        //    let kappa = self.kappa as f32;
-        //    constraint.update_multipliers(delta, kappa);
-        //    // Compute friction hessian second term (multipliers held constant)
-        //    let dt = T::from(self.time_step()).unwrap();
-        //    let f_jac_count = constraint
-        //        .friction_jacobian_indexed_value_iter(
-        //            self.state.borrow().vtx.next.vel.view(),
-        //            delta,
-        //            kappa,
-        //            dt,
-        //            num_active_coords / 3,
-        //        ).map(|iter| {
-        //        iter.zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
-        //        .map(|((row, col, _), (out_row, out_col))| {
-        //            *out_col = col;
-        //            *out_row = row;
-        //        })
-        //        .count()
-        //    }).unwrap_or(0);
-        //    dbg!(f_jac_count);
-        //    count += f_jac_count;
-        //}
+        for fc in self.frictional_contact_constraints.iter() {
+            let mut constraint = fc.constraint.borrow_mut();
+            let delta = self.delta as f32;
+            let kappa = self.kappa as f32;
+            constraint.update_multipliers(delta, kappa);
+            // Compute friction hessian second term (multipliers held constant)
+            let dt = T::from(self.time_step()).unwrap();
+            let f_jac_count = constraint
+                .friction_jacobian_indexed_value_iter(
+                    self.state.borrow().vtx.next.vel.view(),
+                    delta,
+                    kappa,
+                    dt,
+                    num_active_coords / 3,
+                ).map(|iter| {
+                iter.zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
+                .map(|((row, col, _), (out_row, out_col))| {
+                    *out_col = col;
+                    *out_row = row;
+                })
+                .count()
+            }).unwrap_or(0);
+            dbg!(f_jac_count);
+            count += f_jac_count;
+        }
 
         //assert_eq!(count, rows.len());
         //assert_eq!(count, cols.len());
@@ -1875,35 +1875,19 @@ impl<T: Real64> NLProblem<T> {
             count += nh;
         }
 
-        // Add symmetric contact constraint jacobian entries here.
-        for fc in self.frictional_contact_constraints.iter() {
-            let mut constraint = fc.constraint.borrow_mut();
-            let delta = self.delta as f32;
-            let kappa = self.kappa as f32;
-            constraint.update_multipliers(delta, kappa);
-            // Compute constraint hessian first term (multipliers held constant)
-            count += constraint
-                .constraint_hessian_indexed_values_iter(delta, kappa, num_active_coords / 3)
-                .zip(vals[count..].iter_mut())
-                .map(|((_, val), out_val)| {
-                    *out_val = -dt * dt * factor * val;
-                })
-                .count();
-        }
-
         // Duplicate off-diagonal entries.
         let (vals_lower, vals_upper) = vals.split_at_mut(count);
 
-        // Check that there are the same number of off-diagonal elements in vals_lower  as there are
+        // Check that there are the same number of off-diagonal elements in vals_lower as there are
         // total elements in vals_upper
-        debug_assert_eq!(
-            rows.iter()
-                .zip(cols.iter())
-                .zip(vals_lower.iter())
-                .filter(|((&r, &c), _)| r != c)
-                .count(),
-            vals_upper.len()
-        );
+        //debug_assert_eq!(
+        //     rows.iter()
+        //         .zip(cols.iter())
+        //         .zip(vals_lower.iter())
+        //         .filter(|((&r, &c), _)| r != c)
+        //         .count(),
+        //     vals_upper.len()
+        // );
 
         // Fill upper trianular part.
         count += rows
@@ -1920,30 +1904,46 @@ impl<T: Real64> NLProblem<T> {
         // Compute friction derivatives.
         // Note that friction Jacobian is non-symmetric and so must appear after the symmetrization above.
 
+        // Add contact constraint jacobian entries here.
+        for fc in self.frictional_contact_constraints.iter() {
+            let mut constraint = fc.constraint.borrow_mut();
+            let delta = self.delta as f32;
+            let kappa = self.kappa as f32;
+            constraint.update_multipliers(delta, kappa);
+            // Compute constraint hessian first term (multipliers held constant)
+            count += constraint
+                .constraint_hessian_indexed_values_iter(delta, kappa, num_active_coords / 3)
+                .zip(vals[count..].iter_mut())
+                .map(|((_, val), out_val)| {
+                    *out_val = -dt * dt * factor * val;
+                })
+                .count();
+        }
+
         // Add Non-symmetric friction Jacobian entries.
-        //for fc in self.frictional_contact_constraints.iter() {
-        //    let mut constraint = fc.constraint.borrow_mut();
-        //    let delta = self.delta as f32;
-        //    let kappa = self.kappa as f32;
-        //    constraint.update_multipliers(delta, kappa);
-        //    // Compute friction hessian second term (multipliers held constant)
-        //    let f_jac_count = constraint
-        //        .friction_jacobian_indexed_value_iter(
-        //            Chunked3::from_flat(next.vel),
-        //            delta,
-        //            kappa,
-        //            dt,
-        //            num_active_coords / 3,
-        //        ).map(|iter| {
-        //        iter.zip(vals.iter_mut())
-        //            .map(|((_, _, val), out_val)| {
-        //                *out_val = dt * dt * factor * val;
-        //            })
-        //            .count()
-        //    }).unwrap_or(0);
-        //    dbg!(f_jac_count);
-        //    count += f_jac_count;
-        //}
+        for fc in self.frictional_contact_constraints.iter() {
+            let mut constraint = fc.constraint.borrow_mut();
+            let delta = self.delta as f32;
+            let kappa = self.kappa as f32;
+            constraint.update_multipliers(delta, kappa);
+            // Compute friction hessian second term (multipliers held constant)
+            let f_jac_count = constraint
+                .friction_jacobian_indexed_value_iter(
+                    Chunked3::from_flat(next.vel),
+                    delta,
+                    kappa,
+                    dt,
+                    num_active_coords / 3,
+                ).map(|iter| {
+                iter.zip(vals.iter_mut())
+                    .map(|((_, _, val), out_val)| {
+                        *out_val = dt * dt * factor * val;
+                    })
+                    .count()
+            }).unwrap_or(0);
+            dbg!(f_jac_count);
+            count += f_jac_count;
+        }
 
         //self.print_jacobian_svd(vals);
         *self.iter_counter.borrow_mut() += 1;
@@ -2157,12 +2157,15 @@ impl<T: Real> NLProblem<T> {
         for i in 0..n {
             x0[i] = F::var(x0[i]);
             problem.residual(&x0, &mut r);
+            use tensr::Norm;
+            let d: Vec<f64> = r.iter().map(|r| r.deriv()).collect();
+            let avg_deriv = d.into_tensor().norm();
             for j in 0..n {
                 let res = approx::relative_eq!(
                     jac[i][j],
                     r[j].deriv(),
                     max_relative = 1e-6,
-                    epsilon = 1e-7
+                    epsilon = 1e-7*avg_deriv
                 );
                 jac_ad[i][j] = r[j].deriv();
                 if !res {

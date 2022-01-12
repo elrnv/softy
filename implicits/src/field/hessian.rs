@@ -7,7 +7,18 @@ use crate::jacobian::{normalized_neighbor_weight_gradient, query_jacobian_at};
 
 /// Symmetric outer product of two vectors: a*b' + b*a'
 pub(crate) fn sym_outer<T: Scalar>(a: Vector3<T>, b: Vector3<T>) -> Matrix3<T> {
-    a * b.transpose() + b * a.transpose()
+    let two = T::from(2.0).unwrap();
+    let m00 = two*a[0]*b[0];
+    let m11 = two*a[1]*b[1];
+    let m22 = two*a[2]*b[2];
+    let m01 = a[0]*b[1] + a[1]*b[0];
+    let m02 = a[0]*b[2] + a[2]*b[0];
+    let m12 = a[1]*b[2] + a[2]*b[1];
+    [
+        [m00, m01, m02],
+        [m01, m11, m12],
+        [m02, m12, m22],
+    ].into_tensor()
 }
 
 impl<T: Scalar> ImplicitSurface<T> {
@@ -593,14 +604,29 @@ impl<T: Real> QueryTopo<T> {
         query_points: &'a [[T; 3]],
     ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error> {
         Ok(apply_kernel_query_fn_impl_iter!(self, |kernel| {
-            self.sample_query_hessian_indexed_blocks_iter_impl(query_points, kernel)
+            self.sample_query_hessian_product_indexed_blocks_iter_impl(query_points, None, kernel)
+        }, ?))
+    }
+
+    /// Computes `d/dq (grad_x Psi(x) b)` where `q` are sample adjacent vertices.
+    ///
+    /// Here `Psi` is the implicit function and `b` are the multipliers.
+    /// Returned blocks are row-major.
+    pub fn sample_query_hessian_product_indexed_blocks_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [T],
+    ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error> {
+        Ok(apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.sample_query_hessian_product_indexed_blocks_iter_impl(query_points, Some(multipliers), kernel)
         }, ?))
     }
 
     // Returns row major blocks
-    pub(crate) fn sample_query_hessian_indexed_blocks_iter_impl<'a, K: 'a>(
+    pub(crate) fn sample_query_hessian_product_indexed_blocks_iter_impl<'a, K: 'a>(
         &'a self,
         query_points: &'a [[T; 3]],
+        multipliers: Option<&'a [T]>,
         kernel: K,
     ) -> Result<impl Iterator<Item = (usize, usize, [[T;3];3])> + 'a, Error>
         where
@@ -618,12 +644,17 @@ impl<T: Real> QueryTopo<T> {
             ..
         } = *self.base();
 
+        let mult_iter = if let Some(mult) = multipliers { Either::Left(mult.iter().cloned()) } else {
+            Either::Right(std::iter::repeat(T::one()))
+        };
+
         match sample_type {
             SampleType::Vertex => Err(Error::UnsupportedSampleType),
             SampleType::Face => {
                 let hess = zip!(query_points.iter(), neigh_points).enumerate()
                     .filter(|(_, (_, nbrs))| !nbrs.is_empty())
-                    .flat_map(move |(query_idx, (&q, nbr_points))| {
+                    .zip(mult_iter)
+                    .flat_map(move |((query_idx, (&q, nbr_points)), mult)| {
                         let view = SamplesView::new(nbr_points, samples);
                         let q = Vector3::new(q);
 
@@ -645,7 +676,7 @@ impl<T: Real> QueryTopo<T> {
                                     dw_neigh, ddw_neigh,
                                     weight_sum_inv, closest_d,
                                 )
-                            }).map(move |m| (query_idx, sample.index, m.into_data()))
+                            }).map(move |m| (query_idx, sample.index, (m * mult).into_data()))
                         })
                     });
 
@@ -812,6 +843,7 @@ where
             bg.weighted,
             samples.indices().iter().cloned(),
         ))
+        .filter(|(_, (j, i))| i <= j)
         .map(|(h, (j, i))| (j, i, h));
 
     let _2 = T::from(2.0).unwrap();

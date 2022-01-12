@@ -366,7 +366,9 @@ impl<T: Real> ContactBasis<T> {
         // A vector of row-major change of basis matrices
         let bases: Chunked3<Vec<_>> = (0..n)
             .map(|contact_idx| {
-                self.contact_basis_matrix(contact_idx).transpose().into_data()
+                self.contact_basis_matrix(contact_idx)
+                    .transpose()
+                    .into_data()
             })
             .collect();
         BlockDiagonalMatrix::new(Chunked3::from_flat(Chunked3::from_array_vec(
@@ -379,9 +381,7 @@ impl<T: Real> ContactBasis<T> {
 
         // A vector of row-major change of basis matrices
         let bases: Chunked3<Vec<_>> = (0..n)
-            .map(|contact_idx| {
-                self.contact_basis_matrix(contact_idx).into_data()
-            })
+            .map(|contact_idx| self.contact_basis_matrix(contact_idx).into_data())
             .collect();
         BlockDiagonalMatrix::new(Chunked3::from_flat(Chunked3::from_array_vec(
             bases.into_storage(),
@@ -526,7 +526,7 @@ impl<T: Real> TripletContactJacobian<T> {
                 .filter_map(|(row, col, matrix)| {
                     active_contact_point_indices[row]
                         .into_option()
-                        .map(|idx| ((row, col), matrix))
+                        .map(|_| ((row, col), matrix))
                 })
                 .unzip()
         } else {
@@ -635,14 +635,22 @@ impl<T: Real> TripletContactJacobian<T> {
             .extend(chunked_matrices.into_storage().into_iter());
     }
 
-    fn into_gradient(self) -> ContactGradient<T> {
+    pub fn into_gradient(self) -> ContactGradient<T> {
+        let vals: Chunked3<Vec<_>> = self
+            .blocks
+            .into_iter()
+            .flat_map(|m| {
+                std::array::IntoIter::new(m.as_arrays().as_tensor().transpose().into_data())
+            })
+            .collect();
+        let blocks = Chunked3::from_flat(vals);
         SSBlockMatrix3::from_index_iter_and_data(
-            self.block_indices.iter().map(|(row,col)| (col, row)), // transpose
+            self.block_indices.iter().map(|&(row, col)| (col, row)), // transpose
             self.num_rows,
             self.num_cols,
-            self.blocks.into_iter().map(|m| m.into_tensor().transpose().into_data()),
+            blocks,
         )
-            .into_data()
+        .into_data()
     }
 }
 

@@ -41,7 +41,6 @@ pub struct FrictionWorkspace<T> {
     pub contact_basis: ContactBasis<T>,
 
     // Forces are used in the NL solve whereas impulses in the original Opt solver.
-
     /// Friction force on the object.
     pub object_force: Chunked3<Vec<T>>,
     /// Friction force on the collider.
@@ -60,6 +59,8 @@ impl<T: Real> FrictionWorkspace<T> {
         FrictionWorkspace {
             params: self.params,
             contact_basis: self.contact_basis.clone_cast(),
+            object_force: Chunked3::default(),
+            collider_force: Sparse::from_dim(vec![], 0, Chunked3::default()),
             object_impulse: self
                 .object_impulse
                 .iter()
@@ -94,6 +95,8 @@ impl<T: Real> FrictionWorkspace<T> {
         FrictionWorkspace {
             params,
             contact_basis: ContactBasis::new(),
+            object_force: Chunked3::new(),
+            collider_force: Sparse::from_dim(vec![], 0, Chunked3::new()),
             object_impulse: Chunked3::new(),
             collider_impulse: Sparse::from_dim(vec![], 0, Chunked3::new()),
         }

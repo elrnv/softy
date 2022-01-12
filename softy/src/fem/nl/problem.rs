@@ -1389,7 +1389,6 @@ impl<T: Real64> NLProblem<T> {
 
         let num_active_coords = self.num_variables();
         for fc in self.frictional_contact_constraints.iter() {
-            //TODO: add frictional contact counts
             let nh = fc
                 .constraint
                 .borrow()
@@ -1399,6 +1398,26 @@ impl<T: Real64> NLProblem<T> {
                 .borrow()
                 .num_hessian_diagonal_nnz(num_active_coords / 3);
             num += 2 * nh - ndh;
+
+            // Add friction jacobian counts
+            //let mut constraint = fc.constraint.borrow_mut();
+            //let delta = self.delta as f32;
+            //let kappa = self.kappa as f32;
+            //constraint.update_multipliers(delta, kappa);
+            //// TODO: Refactor this to just compute the count.
+            //let dt = T::from(self.time_step()).unwrap();
+            //let f_jac_count = constraint
+            //    .friction_jacobian_indexed_value_iter(
+            //        self.state.borrow().vtx.next.vel.view(),
+            //        delta,
+            //        kappa,
+            //        dt,
+            //        num_active_coords / 3,
+            //    )
+            //    .map(|iter| iter.count())
+            //    .unwrap_or(0);
+            //dbg!(f_jac_count);
+            //num += f_jac_count;
         }
 
         num
@@ -1502,127 +1521,6 @@ impl<T: Real64> NLProblem<T> {
             }
         }
     }
-
-    //fn subtract_friction_and_contact_forces<S: Real>(
-    //    &self,
-    //    q: &[S],
-    //    dq: &[S],
-    //    pos: &mut [S],
-    //    vel: &mut [S],
-    //    f: &mut [S],
-    //    vfc: &mut [S],
-    //    frictional_contacts: &[FrictionalContactConstraint<S>],
-    //    local_lambda: &mut Vec<S>,
-    //) {
-    //    let dof = self.state.dof.view();
-    //    let vtx = self.state.vtx.view();
-    //    let mut f = dof.map_storage(|_| f);
-    //    let q = dof.map_storage(|_| q);
-    //    let dq = dof.map_storage(|_| dq);
-    //    let pos = vtx.map_storage(|_| &*pos);
-    //    let vel = vtx.map_storage(|_| &*vel);
-    //    let mut vfc = vtx.map_storage(|_| vfc);
-
-    //    let delta = self.delta as f32;
-    //    let kappa = self.kappa as f32;
-    //    let mut dist = Vec::new();
-
-    //    for fc in frictional_contacts.iter() {
-    //        // Since add_friction_impulse is looking for a valid gradient, this
-    //        // must involve only vertices that can change.
-    //        debug_assert!(match fc.object_index {
-    //            SourceObject::Solid(_, _) => true,
-    //            SourceObject::Shell(i) => match self.state.shells[i].data {
-    //                ShellData::Fixed { .. } => match fc.collider_index {
-    //                    SourceObject::Solid(_, _) => true,
-    //                    SourceObject::Shell(i) => {
-    //                        !matches!(self.state.shells[i].data, ShellData::Fixed { .. })
-    //                    }
-    //                },
-    //                ShellData::Rigid { .. } => true,
-    //                _ => true,
-    //            },
-    //        });
-
-    //        let mut fc_constraint = fc.constraint.borrow_mut();
-
-    //        // Compute Contact forces.
-
-    //        // Compute constraint (i.e. distance).
-    //        let n = fc_constraint.constraint_size();
-    //        local_lambda.clear();
-    //        local_lambda.resize(n, S::zero());
-
-    //        let obj_pos = self.state.mesh_vertex_subset(q, pos, fc.object_index);
-    //        let col_pos = self.state.mesh_vertex_subset(q, pos, fc.collider_index);
-
-    //        fc_constraint.constraint([obj_pos, col_pos], local_lambda);
-
-    //        dist.clear();
-    //        dist.extend_from_slice(&local_lambda);
-
-    //        compute_contact_force_magnitude(local_lambda, delta, kappa);
-
-    //        // Compute Friction forces.
-    //        let obj_vel = self.state.mesh_vertex_subset(dq, vel, fc.object_index);
-    //        let col_vel = self.state.mesh_vertex_subset(dq, vel, fc.collider_index);
-    //        let friction = fc_constraint.compute_friction_impulse(
-    //            local_lambda,
-    //            [obj_pos, col_pos],
-    //            [obj_vel, col_vel],
-    //            &dist,
-    //        );
-
-    //        // Compute lambda * constraint Jacobian (notice the order) and
-    //        // *subtract* it from f (or vfc).
-    //        let obj_j_blocks = fc_constraint
-    //            .object_constraint_jacobian_blocks_par_iter()
-    //            .collect::<Vec<_>>();
-    //        let mut obj_fc =
-    //            self.state
-    //                .mesh_vertex_subset(f.view_mut(), vfc.view_mut(), fc.object_index);
-
-    //        // Subtract contact force on object.
-    //        for &(row, col, j) in obj_j_blocks.iter() {
-    //            *obj_fc[col].as_mut_tensor() -= *j.as_tensor() * local_lambda[row];
-    //        }
-
-    //        // Subtract friction force force on object.
-    //        if let Some((obj_f, _)) = friction.as_ref() {
-    //            for (obj_f, fc) in zip!(obj_f.iter(), obj_fc.iter_mut()) {
-    //                *fc.as_mut_tensor() -= obj_f.as_tensor();
-    //            }
-    //        }
-
-    //        let col_j_blocks = fc_constraint
-    //            .collider_constraint_jacobian_blocks_par_iter()
-    //            .collect::<Vec<_>>();
-    //        let mut col_fc =
-    //            self.state
-    //                .mesh_vertex_subset(f.view_mut(), vfc.view_mut(), fc.collider_index);
-
-    //        // Subtract contact force on collider.
-    //        for &(row, col, j) in col_j_blocks.iter() {
-    //            *col_fc[col].as_mut_tensor() -= *j.as_tensor() * local_lambda[row];
-    //        }
-
-    //        // Subtract friction force force on collider.
-    //        if let Some((_, col_f)) = friction.as_ref() {
-    //            for (i, col_f, _) in col_f.iter() {
-    //                *col_fc[i].as_mut_tensor() -= col_f.as_tensor();
-    //            }
-    //        }
-
-    //        // Update f with results in vfc.
-    //        self.state
-    //            .transfer_velocity_vtx_to_dof(fc.object_index, vfc.view_mut(), f.view_mut());
-    //        self.state.transfer_velocity_vtx_to_dof(
-    //            fc.collider_index,
-    //            vfc.view_mut(),
-    //            f.view_mut(),
-    //        );
-    //    }
-    //}
 
     /// Compute the acting force for the problem.
     ///
@@ -1857,7 +1755,35 @@ impl<T: Real64> NLProblem<T> {
 
         count += num_off_diagonals;
 
-        // TODO: add friction here
+        // Compute friction derivatives.
+        // Note that friction Jacobian is non-symmetric and so must appear after the symmetrization above.
+
+        // Add Non-symmetric friction Jacobian entries.
+        //for fc in self.frictional_contact_constraints.iter() {
+        //    let mut constraint = fc.constraint.borrow_mut();
+        //    let delta = self.delta as f32;
+        //    let kappa = self.kappa as f32;
+        //    constraint.update_multipliers(delta, kappa);
+        //    // Compute friction hessian second term (multipliers held constant)
+        //    let dt = T::from(self.time_step()).unwrap();
+        //    let f_jac_count = constraint
+        //        .friction_jacobian_indexed_value_iter(
+        //            self.state.borrow().vtx.next.vel.view(),
+        //            delta,
+        //            kappa,
+        //            dt,
+        //            num_active_coords / 3,
+        //        ).map(|iter| {
+        //        iter.zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
+        //        .map(|((row, col, _), (out_row, out_col))| {
+        //            *out_col = col;
+        //            *out_row = row;
+        //        })
+        //        .count()
+        //    }).unwrap_or(0);
+        //    dbg!(f_jac_count);
+        //    count += f_jac_count;
+        //}
 
         //assert_eq!(count, rows.len());
         //assert_eq!(count, cols.len());
@@ -1960,7 +1886,7 @@ impl<T: Real64> NLProblem<T> {
                 .constraint_hessian_indexed_values_iter(delta, kappa, num_active_coords / 3)
                 .zip(vals[count..].iter_mut())
                 .map(|((_, val), out_val)| {
-                    *out_val = -dt * dt * val;
+                    *out_val = -dt * dt * factor * val;
                 })
                 .count();
         }
@@ -1995,20 +1921,29 @@ impl<T: Real64> NLProblem<T> {
         // Note that friction Jacobian is non-symmetric and so must appear after the symmetrization above.
 
         // Add Non-symmetric friction Jacobian entries.
-        for fc in self.frictional_contact_constraints.iter() {
-            let mut constraint = fc.constraint.borrow_mut();
-            let delta = self.delta as f32;
-            let kappa = self.kappa as f32;
-            constraint.update_multipliers(delta, kappa);
-            // Compute friction hessian second term (multipliers held constant)
-            count += constraint
-                .friction_jacobian_indexed_values_iter(next.vel, delta, kappa, dt, num_active_coords / 3)
-                .zip(vals[count..].iter_mut())
-                .map(|((_, val), out_val)| {
-                    *out_val = dt * dt * val;
-                })
-                .count();
-        }
+        //for fc in self.frictional_contact_constraints.iter() {
+        //    let mut constraint = fc.constraint.borrow_mut();
+        //    let delta = self.delta as f32;
+        //    let kappa = self.kappa as f32;
+        //    constraint.update_multipliers(delta, kappa);
+        //    // Compute friction hessian second term (multipliers held constant)
+        //    let f_jac_count = constraint
+        //        .friction_jacobian_indexed_value_iter(
+        //            Chunked3::from_flat(next.vel),
+        //            delta,
+        //            kappa,
+        //            dt,
+        //            num_active_coords / 3,
+        //        ).map(|iter| {
+        //        iter.zip(vals.iter_mut())
+        //            .map(|((_, _, val), out_val)| {
+        //                *out_val = dt * dt * factor * val;
+        //            })
+        //            .count()
+        //    }).unwrap_or(0);
+        //    dbg!(f_jac_count);
+        //    count += f_jac_count;
+        //}
 
         //self.print_jacobian_svd(vals);
         *self.iter_counter.borrow_mut() += 1;

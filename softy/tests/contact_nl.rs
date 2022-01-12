@@ -170,7 +170,7 @@ fn compute_distance_potential(
 //
 
 #[test]
-fn tri_push() -> Result<(), Error> {
+fn single_tri_push() -> Result<(), Error> {
     init_logger();
     // A triangle is being pushed on top of a tet.
     let tri_verts = vec![

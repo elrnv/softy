@@ -203,7 +203,9 @@ impl<T: Real> PointContactConstraint<T> {
             let object_mass_data = Self::mass_matrix_data(object)?;
             let collider_mass_data = Self::mass_matrix_data(collider)?;
 
-            assert!(object_mass_data.is_some() || collider_mass_data.is_some());
+            if !object_mass_data.is_some() && !collider_mass_data.is_some() {
+                return Err(Error::MissingMassData);
+            }
 
             let object = object.mesh;
             let collider = collider.mesh;
@@ -623,11 +625,22 @@ impl<T: Real> PointContactConstraint<T> {
 
     /// Prune contacts with zero contact_impulse and contacts without neighboring samples.
     /// This function outputs the indices of contacts as well as a pruned vector of impulses.
+    ///
+    /// In general there are 3 levels of filtered indices:
+    ///     - query : all surface vertices.
+    ///     - constraint : vertices subject to contact constraints
+    ///                            (non-empty query neighbourhoods)
+    ///     - contact : vertices in contact (positive contact force).
+    /// First output active_constraint_subset is a map:
+    ///     contact index -> constraint index
+    ///     contact index -> surface vertex index
+    ///     constraint index -> contact index
+    ///     query index -> contact index
     pub fn in_contact_indices(
         &self,
         contact_impulse: &[T],
         potential: &[T],
-    ) -> (Vec<usize>, Vec<usize>, Vec<T>) {
+    ) -> (Vec<usize>, Vec<usize>, Vec<Index>, Vec<Index>, Vec<T>) {
         let surf = &self.implicit_surface;
         let query_points = &self.collider_vertex_positions;
         let radius = surf.radius() * 0.999;
@@ -635,22 +648,31 @@ impl<T: Real> PointContactConstraint<T> {
         assert_eq!(query_indices.len(), contact_impulse.len());
         assert_eq!(potential.len(), contact_impulse.len());
         let dist_scale = 1.0 / self.problem_diameter;
+        let mut vertices_in_contact = vec![Index::invalid(); query_points.len()];
+        let mut constraints_in_contact = vec![Index::invalid(); query_indices.len()];
+        let mut contact_counter = 0;
         let (active_constraint_subset, contact_impulse): (Vec<_>, Vec<_>) = contact_impulse
             .iter()
             .zip(potential.iter())
+            .zip(query_indices.iter())
+            .zip(constraints_in_contact.iter_mut())
             .enumerate()
-            .filter_map(|(i, (&cf, dist))| {
+            .filter_map(|(i, (((&cf, dist), &query_index), constraint_idx))| {
                 if cf != T::zero()
                     && dist.to_f64().unwrap() * dist_scale < 1e-4
-                    && surf.num_neighbors_within_distance(query_points[query_indices[i]], radius)
+                    && surf.num_neighbors_within_distance(query_points[query_index], radius)
                         > 0
                 {
+                    vertices_in_contact[query_index] = Index::new(contact_counter);
+                    *constraint_idx = Index::new(contact_counter);
+                    contact_counter += 1;
                     Some((i, cf))
                 } else {
                     None
                 }
             })
             .unzip();
+
 
         let active_contact_indices: Vec<_> = active_constraint_subset
             .iter()
@@ -660,6 +682,8 @@ impl<T: Real> PointContactConstraint<T> {
         (
             active_constraint_subset,
             active_contact_indices,
+            constraints_in_contact,
+            vertices_in_contact,
             contact_impulse,
         )
     }
@@ -884,7 +908,7 @@ impl<T: Real> PointContactConstraint<T> {
         // Active *constraints* correspond to to those points that are in the MLS neighborhood of
         // influence to be part of the optimization. Active *contacts* are a subset of those that
         // are considered in contact.
-        let (active_constraint_subset, active_contact_indices, orig_contact_impulse_n) =
+        let (active_constraint_subset, active_contact_indices, _, _, orig_contact_impulse_n) =
             self.in_contact_indices(orig_contact_impulse_n, potential_values);
 
         let normals = self.contact_normals();

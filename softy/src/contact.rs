@@ -9,6 +9,7 @@ use tensr::*;
 use crate::friction::FrictionParams;
 use crate::Index;
 pub use solver::ContactSolver;
+use crate::matrix::MatrixElementIndex;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
@@ -548,7 +549,7 @@ impl<T: Real> TripletContactJacobian<T> {
         TripletContactJacobian {
             block_indices: cj_indices,
             blocks,
-            num_rows: active_contact_points.len(),
+            num_rows: if full { query_points.len() } else { active_contact_points.len() },
             num_cols: surf.surface_vertex_positions().len(),
         }
     }
@@ -636,19 +637,34 @@ impl<T: Real> TripletContactJacobian<T> {
     }
 
     pub fn into_gradient(self) -> ContactGradient<T> {
-        let vals: Chunked3<Vec<_>> = self
+        let vecs: Vec<_> = self
             .blocks
             .into_iter()
             .flat_map(|m| {
                 std::array::IntoIter::new(m.as_arrays().as_tensor().transpose().into_data())
             })
             .collect();
-        let blocks = Chunked3::from_flat(vals);
-        SSBlockMatrix3::from_index_iter_and_data(
-            self.block_indices.iter().map(|&(row, col)| (col, row)), // transpose
-            self.num_rows,
+
+        let blocks = Chunked3::from_flat(vecs.as_slice()).into_arrays();
+        let indices: Vec<_> = self.block_indices.iter().map(|&(row, col)| MatrixElementIndex { row: col, col: row}).collect(); // transpose
+        let mut entries = (0..indices.len()).collect::<Vec<_>>();
+
+        // Sort indices into row major order
+        entries.sort_by(|&a, &b| {
+            indices[a]
+                .row
+                .cmp(&indices[b].row)
+                .then_with(|| indices[a].col.cmp(&indices[b].col))
+        });
+
+        let triplet_iter = entries
+            .iter()
+            .map(|&i| (indices[i].row, indices[i].col, blocks[i]));
+
+        SSBlockMatrix3::from_block_triplets_iter(
+            triplet_iter,
             self.num_cols,
-            blocks,
+            self.num_rows,
         )
         .into_data()
     }

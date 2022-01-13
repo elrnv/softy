@@ -14,6 +14,7 @@ pub const REFERENCE_CELL_VERTEX_POS_ATTRIB: &str = "ref_cv";
 pub const REFERENCE_FACE_VERTEX_POS_ATTRIB: &str = "ref_fv";
 pub const REFERENCE_ANGLE_ATTRIB: &str = "ref_angle";
 pub(crate) const ELASTIC_FORCE_ATTRIB: &str = "elastic_force";
+pub(crate) const CONSTRAINT_FORCE_ATTRIB: &str = "constraint_force";
 pub const FRICTION_ATTRIB: &str = "friction";
 pub const CONTACT_ATTRIB: &str = "contact";
 pub(crate) const VERTEX_TYPE_ATTRIB: &str = "__softy_internal_vertex_type";

@@ -255,6 +255,7 @@ impl<T: Real64> NLProblem<T> {
         // TODO: add additional attributes.
         self.compute_residual(&mut mesh);
         self.compute_distance_potential(&mut mesh);
+        self.compute_constraint_force(&mut mesh);
         mesh
     }
 
@@ -305,6 +306,39 @@ impl<T: Real64> NLProblem<T> {
             orig_order_vertex_residuals,
         )
         .unwrap();
+    }
+
+    fn compute_constraint_force(&self, mesh: &mut Mesh) {
+        let State { vtx, .. } = &mut *self.state.borrow_mut();
+
+        // Clear residual vector.
+        vtx.residual
+            .storage_mut()
+            .iter_mut()
+            .for_each(|x| *x = T::zero());
+
+        {
+            let ResidualState { next, r, .. } = vtx.residual_state().into_storage();
+
+            let frictional_contacts = self.frictional_contact_constraints.as_slice();
+            self.subtract_constraint_forces(next.pos, next.vel, r, frictional_contacts);
+        }
+
+        let vertex_forces = vtx.residual.view();
+        let mut orig_order_vertex_forces = vec![[0.0; 3]; vertex_forces.len()];
+        vtx
+            .orig_index
+            .iter()
+            .zip(vertex_forces.iter())
+            .for_each(|(&i, v)| {
+                orig_order_vertex_forces[i] = (-v.as_tensor().cast::<f64>()).into_data()
+            });
+        // Should not panic since vertex_forces should have the same number of elements as vertices.
+        mesh.set_attrib_data::<ResidualType, VertexIndex>(
+            CONSTRAINT_FORCE_ATTRIB,
+            orig_order_vertex_forces,
+        )
+            .unwrap();
     }
 
     /// Get the minimum contact radius among all contact problems.
@@ -1400,24 +1434,24 @@ impl<T: Real64> NLProblem<T> {
             num += 2 * nh - ndh;
 
             // Add friction jacobian counts
-            //let mut constraint = fc.constraint.borrow_mut();
-            //let delta = self.delta as f32;
-            //let kappa = self.kappa as f32;
-            //constraint.update_multipliers(delta, kappa);
-            //// TODO: Refactor this to just compute the count.
-            //let dt = T::from(self.time_step()).unwrap();
-            //let f_jac_count = constraint
-            //    .friction_jacobian_indexed_value_iter(
-            //        self.state.borrow().vtx.next.vel.view(),
-            //        delta,
-            //        kappa,
-            //        dt,
-            //        num_active_coords / 3,
-            //    )
-            //    .map(|iter| iter.count())
-            //    .unwrap_or(0);
-            //dbg!(f_jac_count);
-            //num += f_jac_count;
+            let mut constraint = fc.constraint.borrow_mut();
+            let delta = self.delta as f32;
+            let kappa = self.kappa as f32;
+            constraint.update_multipliers(delta, kappa);
+            // TODO: Refactor this to just compute the count.
+            let dt = T::from(self.time_step()).unwrap();
+            let f_jac_count = constraint
+               .friction_jacobian_indexed_value_iter(
+                   self.state.borrow().vtx.next.vel.view(),
+                   delta,
+                   kappa,
+                   dt,
+                   num_active_coords / 3,
+               )
+               .map(|iter| iter.count())
+               .unwrap_or(0);
+            dbg!(f_jac_count);
+            num += f_jac_count;
         }
 
         num
@@ -1512,6 +1546,7 @@ impl<T: Real64> NLProblem<T> {
             for fc in frictional_contact_constraints.iter() {
                 let mut fc_constraint = fc.constraint.borrow_mut();
                 fc_constraint.update_state(Chunked3::from_flat(pos));
+                fc_constraint.update_distance_potential();
                 fc_constraint.update_constraint_gradient();
                 fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
 

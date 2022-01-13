@@ -117,6 +117,8 @@ pub enum Error {
     MissingContactParams,
     #[error("Missing contact constraint")]
     MissingContactConstraint,
+    #[error("No finite mass data found. Check that not all vertices are fixed.")]
+    MissingMassData,
     #[error("No simulation mesh found")]
     NoSimulationMesh,
     #[error("No kinematic mesh found")]

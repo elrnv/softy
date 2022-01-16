@@ -668,7 +668,7 @@ impl SolverBuilder {
 
         Ok(NLProblem {
             state: RefCell::new(state),
-            kappa: 1.0e8 / params.contact_tolerance as f64,
+            kappa: 1.0e2 / params.contact_tolerance as f64,
             delta: params.contact_tolerance as f64,
             frictional_contact_constraints,
             frictional_contact_constraints_ad,
@@ -820,7 +820,7 @@ where
     }
 
     /// Get a mutable reference to the underlying problem.
-    fn problem_mut(&mut self) -> &mut NLProblem<T> {
+    pub(crate) fn problem_mut(&mut self) -> &mut NLProblem<T> {
         self.solver.problem_mut()
     }
 
@@ -948,12 +948,12 @@ where
         solver.problem_mut().update_constraint_set();
         solver.update_jacobian_indices();
 
+        // Update the current vertex data using the current dof state.
+        solver.problem_mut().update_cur_vertices();
+
         if sim_params.jacobian_test {
             solver.problem().check_jacobian(true)?;
         }
-
-        // Update the current vertex data using the current dof state.
-        solver.problem_mut().update_cur_vertices();
 
         let mut contact_iterations = 5i32;
 
@@ -1029,13 +1029,13 @@ where
                     }
 
                     if violation > T::zero() {
-                        solver.problem_mut().kappa *= bump_ratio.max(2.0);
+                        //solver.problem_mut().kappa *= bump_ratio.max(2.0);
                         continue;
                     } else {
                         // Relax kappa
-                        if solver.problem().kappa > 1.0 / sim_params.contact_tolerance as f64 {
-                            solver.problem_mut().kappa /= 2.0;
-                        }
+                        //if solver.problem().kappa > 1.0 / sim_params.contact_tolerance as f64 {
+                        //    solver.problem_mut().kappa /= 2.0;
+                        //}
                         self.commit_solution(false);
                         // Kill velocities if needed.
                         if self.iteration_count % velocity_clear_steps == 0 {

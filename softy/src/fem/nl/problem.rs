@@ -234,25 +234,37 @@ impl<T: Real64> NLProblem<T> {
     /// Returns a reference to the original mesh used to create this problem with updated values.
     pub fn mesh(&self) -> Mesh {
         let mut mesh = self.original_mesh.clone();
-        let out = mesh.vertex_positions_mut();
+        let out_pos = mesh.vertex_positions_mut();
+        let mut out_vel = vec![[0.0; 3]; out_pos.len()];
 
         // Update positions
         {
             let State {
-                vtx: VertexWorkspace {
-                    orig_index, next, ..
-                },
+                vtx:
+                    VertexWorkspace {
+                        orig_index,
+                        next,
+                        cur,
+                        ..
+                    },
                 ..
             } = &*self.state.borrow();
-            let pos = next.pos.as_arrays();
+
+            let pos = cur.pos.as_arrays();
+            let vel = next.vel.as_arrays();
             // TODO: add original_order to state so we can iterate (in parallel) over out instead here.
             orig_index
                 .iter()
-                .zip(pos.iter())
-                .for_each(|(&i, pos)| out[i] = pos.as_tensor().cast::<f64>().into_data());
+                .zip(pos.iter().zip(vel.iter()))
+                .for_each(|(&i, (pos, vel))| {
+                    out_pos[i] = pos.as_tensor().cast::<f64>().into_data();
+                    out_vel[i] = vel.as_tensor().cast::<f64>().into_data();
+                });
         }
 
-        // TODO: add additional attributes.
+        mesh.insert_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, out_vel)
+            .unwrap();
+
         self.compute_residual(&mut mesh);
         self.compute_distance_potential(&mut mesh);
         self.compute_constraint_force(&mut mesh);
@@ -326,8 +338,7 @@ impl<T: Real64> NLProblem<T> {
 
         let vertex_forces = vtx.residual.view();
         let mut orig_order_vertex_forces = vec![[0.0; 3]; vertex_forces.len()];
-        vtx
-            .orig_index
+        vtx.orig_index
             .iter()
             .zip(vertex_forces.iter())
             .for_each(|(&i, v)| {
@@ -338,7 +349,7 @@ impl<T: Real64> NLProblem<T> {
             CONSTRAINT_FORCE_ATTRIB,
             orig_order_vertex_forces,
         )
-            .unwrap();
+        .unwrap();
     }
 
     /// Get the minimum contact radius among all contact problems.
@@ -1441,16 +1452,16 @@ impl<T: Real64> NLProblem<T> {
             // TODO: Refactor this to just compute the count.
             let dt = T::from(self.time_step()).unwrap();
             let f_jac_count = constraint
-               .friction_jacobian_indexed_value_iter(
-                   self.state.borrow().vtx.next.vel.view(),
-                   delta,
-                   kappa,
-                   dt,
-                   num_active_coords / 3,
-               )
-               .map(|iter| iter.count())
-               .unwrap_or(0);
-            dbg!(f_jac_count);
+                .friction_jacobian_indexed_value_iter(
+                    self.state.borrow().vtx.next.vel.view(),
+                    delta,
+                    kappa,
+                    dt,
+                    num_active_coords / 3,
+                    true,
+                )
+                .map(|iter| iter.count())
+                .unwrap_or(0);
             num += f_jac_count;
         }
 
@@ -1808,15 +1819,17 @@ impl<T: Real64> NLProblem<T> {
                     kappa,
                     dt,
                     num_active_coords / 3,
-                ).map(|iter| {
-                iter.zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
-                .map(|((row, col, _), (out_row, out_col))| {
-                    *out_col = col;
-                    *out_row = row;
+                    false,
+                )
+                .map(|iter| {
+                    iter.zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
+                        .map(|((row, col, _), (out_row, out_col))| {
+                            *out_col = col;
+                            *out_row = row;
+                        })
+                        .count()
                 })
-                .count()
-            }).unwrap_or(0);
-            dbg!(f_jac_count);
+                .unwrap_or(0);
             count += f_jac_count;
         }
 
@@ -1840,6 +1853,12 @@ impl<T: Real64> NLProblem<T> {
         let state = &mut *self.state.borrow_mut();
         State::be_step(state.step_state(dq), self.time_step());
         state.update_vertices(dq);
+
+        {
+            // Integrate position.
+            State::be_step(state.step_state_ad(), self.time_step());
+            state.update_vertices_ad();
+        }
 
         let mut count = 0; // Values counter
 
@@ -1955,12 +1974,18 @@ impl<T: Real64> NLProblem<T> {
                 .count();
         }
 
+        //let orig_vel = next.vel.to_vec();
+        //let orig_pos = cur.pos.to_vec();
+
         // Add Non-symmetric friction Jacobian entries.
+        //let n = num_active_coords;
         for fc in self.frictional_contact_constraints.iter() {
             let mut constraint = fc.constraint.borrow_mut();
             let delta = self.delta as f32;
             let kappa = self.kappa as f32;
             constraint.update_multipliers(delta, kappa);
+
+            //let mut jac = vec![vec![0.0; n]; n];
             // Compute friction hessian second term (multipliers held constant)
             let f_jac_count = constraint
                 .friction_jacobian_indexed_value_iter(
@@ -1969,16 +1994,82 @@ impl<T: Real64> NLProblem<T> {
                     kappa,
                     dt,
                     num_active_coords / 3,
-                ).map(|iter| {
-                iter.zip(vals.iter_mut())
-                    .map(|((_, _, val), out_val)| {
-                        *out_val = dt * dt * factor * val;
-                    })
-                    .count()
-            }).unwrap_or(0);
-            dbg!(f_jac_count);
+                    false,
+                )
+                .map(|iter| {
+                    iter.zip(vals[count..].iter_mut())
+                        .map(|((_r, _c, val), out_val)| {
+                            //jac[r][c] = val.to_f64().unwrap();
+                            *out_val = dt * factor * val;
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
             count += f_jac_count;
+
+            //eprintln!("FRICTION JACOBIAN:");
+            //for row in 0..n {
+            //    for col in 0..n {
+            //        eprint!("{:10.2e} ", jac[row][col]);
+            //    }
+            //    eprintln!("");
+            //}
         }
+
+        // let ResidualState { next, r, .. } = vtx.residual_state_ad().into_storage();
+        // let mut vel = next.vel.to_vec();
+        // let mut next_pos = next.pos.to_vec();
+        // let mut cur_pos = next_pos.clone();
+        //
+        // // Clear duals
+        // for i in 0..n {
+        //     cur_pos[i].x = orig_pos[i];
+        //     cur_pos[i].dx = T::zero();
+        //     vel[i].x = orig_vel[i];
+        //     vel[i].dx = T::zero();
+        // }
+        //
+        // for fc in self.frictional_contact_constraints_ad.iter() {
+        //     let mut constraint = fc.constraint.borrow_mut();
+        //     let delta = self.delta as f32;
+        //     let kappa = self.kappa as f32;
+        //
+        //     let mut jac = vec![vec![0.0; n]; n];
+        //     for i in 0..n {
+        //         eprintln!("AUTODIFF WRT {}", i);
+        //         vel[i].dx = T::one();
+        //
+        //         for (next_pos, &cur_pos, &vel) in zip!(next_pos.iter_mut(), cur_pos.iter(), vel.iter()) {
+        //             *next_pos = cur_pos + vel * dt;
+        //         }
+        //
+        //         // Clear residual vector
+        //         for j in 0..n {
+        //             r[j] = autodiff::F::zero();
+        //         }
+        //
+        //         constraint.update_state(Chunked3::from_flat(&next_pos));
+        //         constraint.update_distance_potential();
+        //         constraint.update_multipliers(delta, kappa);
+        //         constraint.update_constraint_gradient();
+        //
+        //         constraint
+        //             .subtract_friction_force(Chunked3::from_flat(r), Chunked3::from_flat(vel.view()));
+        //
+        //         for j in 0..n {
+        //             jac[j][i] = r[j].deriv().to_f64().unwrap();
+        //         }
+        //
+        //         vel[i].dx = T::zero();
+        //     }
+        //     eprintln!("FRICTION JACOBIAN AUTODIFF:");
+        //     for row in 0..n {
+        //         for col in 0..n {
+        //             eprint!("{:10.2e} ", jac[row][col]);
+        //         }
+        //         eprintln!("");
+        //     }
+        // }
 
         //self.print_jacobian_svd(vals);
         *self.iter_counter.borrow_mut() += 1;
@@ -2110,7 +2201,7 @@ impl<T: Real64> MixedComplementarityProblem<T> for NLProblem<T> {
     }
 }
 
-impl<T: Real> NLProblem<T> {
+impl<T: Real64> NLProblem<T> {
     /// Constructs a clone of this problem with autodiff variables.
     pub fn clone_as_autodiff(&self) -> NLProblem<ad::F1> {
         let Self {
@@ -2160,10 +2251,39 @@ impl<T: Real> NLProblem<T> {
         }
     }
 
-    /// Checks that the given problem has a consistent Jacobian imlementation.
+    /// Checks that the given problem has a consistent Jacobian implementation.
     pub(crate) fn check_jacobian(&self, perturb_initial: bool) -> Result<(), crate::Error> {
         log::debug!("Checking Jacobian...");
         use ad::F1 as F;
+        // Compute Jacobian
+        let jac = {
+            let problem_clone = self.clone();
+            let n = problem_clone.num_variables();
+            let mut x0 = problem_clone.initial_point();
+            if perturb_initial {
+                perturb(&mut x0);
+            }
+
+            let mut r = vec![T::zero(); n];
+            problem_clone.residual(&x0, &mut r);
+
+            let (jac_rows, jac_cols) = problem_clone.jacobian_indices();
+
+            let mut jac_values = vec![T::zero(); jac_rows.len()];
+            problem_clone.jacobian_values(&x0, &r, &jac_rows, &jac_cols, &mut jac_values);
+
+            // Build a dense Jacobian.
+            let mut jac = vec![vec![0.0; n]; n];
+            for (&row, &col, &val) in zip!(jac_rows.iter(), jac_cols.iter(), jac_values.iter()) {
+                if row < n && col < n {
+                    jac[row][col] += val.to_f64().unwrap();
+                }
+            }
+            jac
+        };
+
+        // Check jacobian and compute autodiff jacobian.
+
         let problem = self.clone_as_autodiff();
         let n = problem.num_variables();
         let mut x0 = problem.initial_point();
@@ -2174,41 +2294,36 @@ impl<T: Real> NLProblem<T> {
         let mut r = vec![F::zero(); n];
         problem.residual(&x0, &mut r);
 
-        let (jac_rows, jac_cols) = problem.jacobian_indices();
-
-        let mut jac_values = vec![F::zero(); jac_rows.len()];
-        problem.jacobian_values(&x0, &r, &jac_rows, &jac_cols, &mut jac_values);
-
-        // Build a dense Jacobian.
         let mut jac_ad = vec![vec![0.0; n]; n];
-        let mut jac = vec![vec![0.0; n]; n];
-        for (&row, &col, &val) in zip!(jac_rows.iter(), jac_cols.iter(), jac_values.iter()) {
-            if row < n && col < n {
-                jac[row][col] += val.value();
-            }
-        }
 
         let mut success = true;
-        for i in 0..n {
-            x0[i] = F::var(x0[i]);
+        for col in 0..n {
+            //eprintln!("CHECK JAC AUTODIFF WRT {}", col);
+            x0[col] = F::var(x0[col]);
             problem.residual(&x0, &mut r);
             use tensr::Norm;
             let d: Vec<f64> = r.iter().map(|r| r.deriv()).collect();
             let avg_deriv = d.into_tensor().norm();
-            for j in 0..n {
+            for row in 0..n {
                 let res = approx::relative_eq!(
-                    jac[i][j],
-                    r[j].deriv(),
+                    jac[row][col],
+                    r[row].deriv(),
                     max_relative = 1e-6,
-                    epsilon = 1e-7*avg_deriv
+                    epsilon = 1e-7 * avg_deriv
                 );
-                jac_ad[i][j] = r[j].deriv();
+                jac_ad[row][col] = r[row].deriv();
                 if !res {
                     success = false;
-                    log::debug!("({}, {}): {} vs. {}", i, j, jac[i][j], r[j].deriv());
+                    log::debug!(
+                        "({}, {}): {} vs. {}",
+                        row,
+                        col,
+                        jac[row][col],
+                        r[row].deriv()
+                    );
                 }
             }
-            x0[i] = F::cst(x0[i]);
+            x0[col] = F::cst(x0[col]);
         }
 
         if !success && n < 15 {
@@ -2228,6 +2343,33 @@ impl<T: Real> NLProblem<T> {
                 }
                 log::debug!("");
             }
+
+            //{
+            //    let vel: Vec<_> = x0.iter().map(|x| T::from(x.value()).unwrap()).collect();
+            //    let state = &mut *self.state.borrow_mut();
+            //    let step_state = state.step_state(&vel);
+            //    // Integrate position.
+            //    State::be_step(step_state, self.time_step());
+
+            //    state.update_vertices(&vel);
+            //}
+            //geo::io::save_mesh(&self.mesh(), "./out/problem.vtk").unwrap();
+
+            //eprintln!("Actual:");
+            //for row in 0..n {
+            //    for col in 0..n {
+            //        eprint!("{:10.2e} ", jac[row][col]);
+            //    }
+            //    eprintln!("");
+            //}
+
+            //eprintln!("Expected:");
+            //for row in 0..n {
+            //    for col in 0..n {
+            //        eprint!("{:10.2e} ", jac_ad[row][col]);
+            //    }
+            //    eprintln!("");
+            //}
         }
         if success {
             log::debug!("No errors during Jacobian check.");
@@ -2238,12 +2380,13 @@ impl<T: Real> NLProblem<T> {
     }
 }
 
-pub(crate) fn perturb(x: &mut [ad::F1]) {
+pub(crate) fn perturb<T: Real>(x: &mut [T]) {
     use rand::distributions::Uniform;
     use rand::prelude::*;
     let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
     let range = Uniform::new(-0.1, 0.1);
-    x.iter_mut().for_each(move |x| *x += rng.sample(range));
+    x.iter_mut()
+        .for_each(move |x| *x += T::from(rng.sample(range)).unwrap());
 }
 
 #[cfg(test)]

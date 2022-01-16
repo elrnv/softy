@@ -660,8 +660,7 @@ impl<T: Real> PointContactConstraint<T> {
             .filter_map(|(i, (((&cf, dist), &query_index), constraint_idx))| {
                 if cf != T::zero()
                     && dist.to_f64().unwrap() * dist_scale < 1e-4
-                    && surf.num_neighbors_within_distance(query_points[query_index], radius)
-                        > 0
+                    && surf.num_neighbors_within_distance(query_points[query_index], radius) > 0
                 {
                     vertices_in_contact[query_index] = Index::new(contact_counter);
                     *constraint_idx = Index::new(contact_counter);
@@ -672,7 +671,6 @@ impl<T: Real> PointContactConstraint<T> {
                 }
             })
             .unzip();
-
 
         let active_contact_indices: Vec<_> = active_constraint_subset
             .iter()
@@ -712,37 +710,18 @@ impl<T: Real> PointContactConstraint<T> {
         );
     }
 
+    #[cfg(feature = "optsolver")]
     pub(crate) fn compute_contact_jacobian(
         &self,
         active_contact_indices: &[usize],
-        full: bool,
     ) -> ContactJacobian<T> {
         let query_points = &self.collider_vertex_positions;
         let surf = &self.implicit_surface;
         let active_contact_points = Select::new(active_contact_indices, query_points.view());
 
         // Compute contact Jacobian
-        let jac_triplets =
-            TripletContactJacobian::from_selection(&surf, active_contact_points, full);
+        let jac_triplets = TripletContactJacobian::from_selection(&surf, active_contact_points);
         let jac: ContactJacobian<T> = jac_triplets.into();
-        jac.into_tensor()
-            .pruned(|_, _, block| !block.is_zero())
-            .into_data()
-    }
-
-    pub(crate) fn compute_contact_gradient(
-        &self,
-        active_contact_indices: &[usize],
-        full: bool,
-    ) -> ContactGradient<T> {
-        let query_points = &self.collider_vertex_positions;
-        let surf = &self.implicit_surface;
-        let active_contact_points = Select::new(active_contact_indices, query_points.view());
-
-        // Compute contact Gradient
-        let jac_triplets =
-            TripletContactJacobian::from_selection(&surf, active_contact_points, full);
-        let jac: ContactGradient<T> = jac_triplets.into_gradient();
         jac.into_tensor()
             .pruned(|_, _, block| !block.is_zero())
             .into_data()
@@ -945,7 +924,7 @@ impl<T: Real> PointContactConstraint<T> {
             orig_contact_impulse_n.to_vec()
         };
 
-        let jac = self.compute_contact_jacobian(&active_contact_indices, false);
+        let jac = self.compute_contact_jacobian(&active_contact_indices);
         let effective_mass_inv =
             self.compute_effective_mass_inv(&active_contact_indices, rigid_motion, jac.view());
 

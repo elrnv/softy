@@ -1,25 +1,21 @@
 use super::*;
+use crate::jacobian::{normalized_neighbor_weight_gradient, query_jacobian_at};
 use crate::Error;
+use geo::Index;
 use rayon::iter::Either;
 use std::cmp::Ordering;
 use tensr::IntoTensor;
-use geo::Index;
-use crate::jacobian::{normalized_neighbor_weight_gradient, query_jacobian_at};
 
 /// Symmetric outer product of two vectors: a*b' + b*a'
 pub(crate) fn sym_outer<T: Scalar>(a: Vector3<T>, b: Vector3<T>) -> Matrix3<T> {
     let two = T::from(2.0).unwrap();
-    let m00 = two*a[0]*b[0];
-    let m11 = two*a[1]*b[1];
-    let m22 = two*a[2]*b[2];
-    let m01 = a[0]*b[1] + a[1]*b[0];
-    let m02 = a[0]*b[2] + a[2]*b[0];
-    let m12 = a[1]*b[2] + a[2]*b[1];
-    [
-        [m00, m01, m02],
-        [m01, m11, m12],
-        [m02, m12, m22],
-    ].into_tensor()
+    let m00 = two * a[0] * b[0];
+    let m11 = two * a[1] * b[1];
+    let m22 = two * a[2] * b[2];
+    let m01 = a[0] * b[1] + a[1] * b[0];
+    let m02 = a[0] * b[2] + a[2] * b[0];
+    let m12 = a[1] * b[2] + a[2] * b[1];
+    [[m00, m01, m02], [m01, m11, m12], [m02, m12, m22]].into_tensor()
 }
 
 impl<T: Scalar> ImplicitSurface<T> {
@@ -141,7 +137,8 @@ impl<T: Real> QueryTopo<T> {
     pub fn query_hessian_product_block_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = usize> + 'a {
-        self.trivial_neighborhood_seq().enumerate()
+        self.trivial_neighborhood_seq()
+            .enumerate()
             .filter(move |(_, nbrs)| !nbrs.is_empty())
             .map(move |(i, _)| i)
     }
@@ -158,7 +155,7 @@ impl<T: Real> QueryTopo<T> {
     pub fn query_hessian_product_indexed_blocks_iter<'a>(
         &'a self,
         query_points: &'a [[T; 3]],
-        multipliers: &'a [T],
+        multipliers: impl IntoIterator<Item = T> + 'a,
     ) -> impl Iterator<Item = (usize, [[T; 3]; 3])> + 'a {
         apply_kernel_query_fn_impl_iter!(self, |kernel| self
             .query_hessian_product_indexed_blocks_iter_impl(query_points, multipliers, kernel))
@@ -203,24 +200,28 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        self.query_hessian_product_indexed_blocks_iter_impl(query_points, multipliers,kernel).flat_map(|(_, mtx)|
-            (0..3).flat_map(move |r| (0..=r).map(move |c| mtx[r][c]))
+        self.query_hessian_product_indexed_blocks_iter_impl(
+            query_points,
+            multipliers.iter().cloned(),
+            kernel,
         )
+        .flat_map(|(_, mtx)| (0..3).flat_map(move |r| (0..=r).map(move |c| mtx[r][c])))
     }
 
     /// This function returns an iterator over the row-major blocks of the hessian product matrix.
     ///
     /// This matrix is diagonal so the returned index represents both row and column index of each
     /// block.
-    pub(crate) fn query_hessian_product_indexed_blocks_iter_impl<'a, K: 'a>(
+    pub(crate) fn query_hessian_product_indexed_blocks_iter_impl<'a, K: 'a, I>(
         &'a self,
         query_points: &'a [[T; 3]],
-        multipliers: &'a [T],
+        multipliers: I,
         kernel: K,
-    ) -> impl Iterator<Item = (usize, [[T; 3];3])> + 'a
-        where
-            T: Real,
-            K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    ) -> impl Iterator<Item = (usize, [[T; 3]; 3])> + 'a
+    where
+        I: IntoIterator<Item = T> + 'a,
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let neigh_points = self.trivial_neighborhood_seq();
 
@@ -231,10 +232,11 @@ impl<T: Real> QueryTopo<T> {
         } = *self.base();
 
         // For each row (query point)
-        zip!(query_points.iter(), neigh_points).enumerate()
+        zip!(query_points.iter(), neigh_points)
+            .enumerate()
             .filter(|(_, (_, nbrs))| !nbrs.is_empty())
-            .zip(multipliers.iter())
-            .map(move |((idx, (q, nbr_points)), &mult)| {
+            .zip(multipliers)
+            .map(move |((idx, (q, nbr_points)), mult)| {
                 let view = SamplesView::new(nbr_points, samples);
                 let mtx = query_hessian_at(Vector3::new(*q), view, kernel, bg_field_params) * mult;
                 (idx, mtx.into_data())
@@ -338,11 +340,12 @@ impl<T: Real> QueryTopo<T> {
     pub fn surface_hessian_product_indices_iter<'a>(
         &'a self,
     ) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
-        Ok(self.surface_hessian_product_block_indices_iter()?
+        Ok(self
+            .surface_hessian_product_block_indices_iter()?
             .flat_map(move |(row, col)| {
-                    (0..3).flat_map(move |r| (0..3).map(move |c| (3 * row + r, 3 * col + c)))
-                })
-                .filter(move |(row, col)| row >= col))
+                (0..3).flat_map(move |r| (0..3).map(move |c| (3 * row + r, 3 * col + c)))
+            })
+            .filter(move |(row, col)| row >= col))
     }
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
@@ -363,14 +366,13 @@ impl<T: Real> QueryTopo<T> {
 
         match sample_type {
             SampleType::Vertex => Err(Error::UnsupportedSampleType),
-            SampleType::Face => Ok(neigh_points
-                .flat_map(move |nbr_points| {
-                    face_hessian_indices_iter(
-                        nbr_points.iter().cloned(),
-                        surface_topo,
-                        bg_field_params.weighted,
-                    )
-                }))
+            SampleType::Face => Ok(neigh_points.flat_map(move |nbr_points| {
+                face_hessian_indices_iter(
+                    nbr_points.iter().cloned(),
+                    surface_topo,
+                    bg_field_params.weighted,
+                )
+            })),
         }
     }
 
@@ -419,13 +421,20 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        Ok(Box::new(self.surface_hessian_product_indexed_blocks_iter_impl(query_points, multipliers, kernel)?.flat_map(move |(row, col, mtx)| {
-            (0..3).flat_map(move |r| {
-                (0..3)
-                    .filter(move |c| 3 * row + r >= 3 * col + c)
-                    .map(move |c| mtx[r][c])
-            })
-        })))
+        Ok(Box::new(
+            self.surface_hessian_product_indexed_blocks_iter_impl(
+                query_points,
+                multipliers,
+                kernel,
+            )?
+            .flat_map(move |(row, col, mtx)| {
+                (0..3).flat_map(move |r| {
+                    (0..3)
+                        .filter(move |c| 3 * row + r >= 3 * col + c)
+                        .map(move |c| mtx[r][c])
+                })
+            }),
+        ))
     }
 
     // 3x3 row-major matrix blocks in the lower triangular part.
@@ -435,10 +444,10 @@ impl<T: Real> QueryTopo<T> {
         query_points: &'a [[T; 3]],
         multipliers: &'a [T],
         kernel: K,
-    ) -> Result<impl Iterator<Item = (usize, usize, [[T;3];3])> + 'a, Error>
-        where
-            T: Real,
-            K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error>
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let neigh_points = self.trivial_neighborhood_seq();
 
@@ -467,7 +476,8 @@ impl<T: Real> QueryTopo<T> {
                             surface_vertex_positions,
                             bg_field_params,
                             *lambda,
-                        ).map(|(i, j, m)| (i, j, m.into_data()))
+                        )
+                        .map(|(i, j, m)| (i, j, m.into_data()))
                     });
 
                 Ok(face_hess)
@@ -496,9 +506,9 @@ impl<T: Real> QueryTopo<T> {
         multipliers: &'a [[T; 3]],
         kernel: K,
     ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error>
-        where
-            T: Real,
-            K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let neigh_points = self.trivial_neighborhood_seq();
 
@@ -514,7 +524,8 @@ impl<T: Real> QueryTopo<T> {
         match sample_type {
             SampleType::Vertex => Err(Error::UnsupportedSampleType),
             SampleType::Face => {
-                let hess = zip!(query_points.iter(), neigh_points).enumerate()
+                let hess = zip!(query_points.iter(), neigh_points)
+                    .enumerate()
                     .filter(|(_, (_, nbrs))| !nbrs.is_empty())
                     .flat_map(move |(row_idx, (q, nbr_points))| {
                         let view = SamplesView::new(nbr_points, samples);
@@ -526,7 +537,8 @@ impl<T: Real> QueryTopo<T> {
                             surface_topo,
                             bg_field_params,
                             multipliers,
-                        ).map(move |(col_idx, m)| (row_idx, col_idx, m.into_data()))
+                        )
+                        .map(move |(col_idx, m)| (row_idx, col_idx, m.into_data()))
                     });
 
                 Ok(hess)
@@ -542,7 +554,7 @@ impl<T: Real> QueryTopo<T> {
         &'a self,
         query_points: &'a [[T; 3]],
         constraints_in_contact: &'a [Index],
-        multipliers: &'a [[T;3]],
+        multipliers: &'a [[T; 3]],
     ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error> {
         Ok(apply_kernel_query_fn_impl_iter!(self, |kernel| {
             self.contact_hessian_product_indexed_blocks_iter_impl(query_points, constraints_in_contact, multipliers, kernel)
@@ -554,12 +566,12 @@ impl<T: Real> QueryTopo<T> {
         &'a self,
         query_points: &'a [[T; 3]],
         constraints_in_contact: &'a [Index],
-        multipliers: &'a [[T;3]],
+        multipliers: &'a [[T; 3]],
         kernel: K,
-    ) -> Result<impl Iterator<Item = (usize, usize, [[T;3];3])> + 'a, Error>
-        where
-            T: Real,
-            K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error>
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let neigh_points = self.trivial_neighborhood_seq();
 
@@ -580,9 +592,9 @@ impl<T: Real> QueryTopo<T> {
                 let hess = zip!(query_points.iter(), neigh_points)
                     .filter(|(_, nbrs)| !nbrs.is_empty())
                     .zip(constraints_in_contact.iter())
-                    .filter_map(|((q, nbrs), contact_idx)| contact_idx.into_option().map(|_| {
-                        (q, nbrs)
-                    }))
+                    .filter_map(|((q, nbrs), contact_idx)| {
+                        contact_idx.into_option().map(|_| (q, nbrs))
+                    })
                     .zip(multipliers.iter())
                     .flat_map(move |((q, nbr_points), lambda)| {
                         let view = SamplesView::new(nbr_points, samples);
@@ -594,7 +606,8 @@ impl<T: Real> QueryTopo<T> {
                             surface_topo,
                             bg_field_params,
                             Vector3::new(*lambda),
-                        ).map(|(i, j, m)| (i, j, m.into_data()))
+                        )
+                        .map(|(i, j, m)| (i, j, m.into_data()))
                     });
 
                 Ok(hess)
@@ -635,10 +648,10 @@ impl<T: Real> QueryTopo<T> {
         query_points: &'a [[T; 3]],
         multipliers: Option<&'a [T]>,
         kernel: K,
-    ) -> Result<impl Iterator<Item = (usize, usize, [[T;3];3])> + 'a, Error>
-        where
-            T: Real,
-            K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error>
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let neigh_points = self.trivial_neighborhood_seq();
 
@@ -651,39 +664,55 @@ impl<T: Real> QueryTopo<T> {
             ..
         } = *self.base();
 
-        let mult_iter = if let Some(mult) = multipliers { Either::Left(mult.iter().cloned()) } else {
+        let mult_iter = if let Some(mult) = multipliers {
+            Either::Left(mult.iter().cloned())
+        } else {
             Either::Right(std::iter::repeat(T::one()))
         };
 
         match sample_type {
             SampleType::Vertex => Err(Error::UnsupportedSampleType),
             SampleType::Face => {
-                let hess = zip!(query_points.iter(), neigh_points).enumerate()
+                let hess = zip!(query_points.iter(), neigh_points)
+                    .enumerate()
                     .filter(|(_, (_, nbrs))| !nbrs.is_empty())
                     .zip(mult_iter)
                     .flat_map(move |((query_idx, (&q, nbr_points)), mult)| {
                         let view = SamplesView::new(nbr_points, samples);
                         let q = Vector3::new(q);
 
-                        let bg: BackgroundField<T, T, K> = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
+                        let bg: BackgroundField<T, T, K> =
+                            BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
 
                         let weight_sum_inv = bg.weight_sum_inv();
                         let closest_d = bg.closest_sample_dist();
 
-                        let dw_neigh = normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
+                        let dw_neigh =
+                            normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
                         let ddw_neigh = normalized_neighbor_weight_hessian(q, view, kernel, bg);
 
                         view.into_iter().flat_map(move |sample| {
-                            face_unit_normal_gradient_iter(sample, surface_vertex_positions, surface_topo).map(move |unit_nml_grad| {
+                            face_unit_normal_gradient_iter(
+                                sample,
+                                surface_vertex_positions,
+                                surface_topo,
+                            )
+                            .map(move |unit_nml_grad| {
                                 sample_query_hessian_at(
                                     q,
                                     sample,
                                     kernel,
                                     unit_nml_grad,
-                                    dw_neigh, ddw_neigh,
-                                    weight_sum_inv, closest_d,
+                                    dw_neigh,
+                                    ddw_neigh,
+                                    weight_sum_inv,
+                                    closest_d,
                                 ) * mult
-                            }).enumerate().map(move |(i, m)| (query_idx, surface_topo[sample.index][i], m.into_data()))
+                            })
+                            .enumerate()
+                            .map(move |(i, m)| {
+                                (query_idx, surface_topo[sample.index][i], m.into_data())
+                            })
                         })
                     });
 
@@ -725,9 +754,6 @@ where
     // For each surface vertex contribution
     let dw_neigh = jacobian::normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
     let ddw_neigh = normalized_neighbor_weight_hessian(q, view, kernel, bg);
-
-    // For vectors a and b, this computes a*b' + b*a'.
-    let sym_outer = |a: Vector3<T>, b: Vector3<T>| a * b.transpose() + b * a.transpose();
 
     view.into_iter()
         .map(
@@ -1149,12 +1175,13 @@ pub(crate) fn contact_jacobian_jacobian_at<'a, T, K: 'a>(
     surface_topo: &'a [[usize; 3]],
     bg_field_params: BackgroundFieldParams,
     multipliers: &'a [[T; 3]],
-) -> impl Iterator<Item = (usize, [[T;3];3])> + 'a
-    where
-        T: Real,
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+) -> impl Iterator<Item = (usize, [[T; 3]; 3])> + 'a
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
-    let bg: BackgroundField<T, T, K> = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
+    let bg: BackgroundField<T, T, K> =
+        BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
 
     let weight_sum_inv = bg.weight_sum_inv();
     let closest_d = bg.closest_sample_dist();
@@ -1175,7 +1202,19 @@ pub(crate) fn contact_jacobian_jacobian_at<'a, T, K: 'a>(
         });
         lambda *= third;
         let hess = sample_contact_jacobian_gradient_product_at(
-            q, sample, surface_vertices, surface_topo, kernel, grad_phi, dw_neigh, ddw_neigh, weight_sum_inv, closest_d, lambda, false);
+            q,
+            sample,
+            surface_vertices,
+            surface_topo,
+            kernel,
+            grad_phi,
+            dw_neigh,
+            ddw_neigh,
+            weight_sum_inv,
+            closest_d,
+            lambda,
+            false,
+        );
         hess.into_iter().enumerate().map(move |(i, hess)| {
             let col_vtx = surface_topo[sample.index][i];
             (col_vtx, (hess * third).into_data())
@@ -1198,12 +1237,13 @@ pub(crate) fn contact_hessian_at<'a, T, K: 'a>(
     surface_topo: &'a [[usize; 3]],
     bg_field_params: BackgroundFieldParams,
     multiplier: Vector3<T>,
-) -> impl Iterator<Item = (usize, usize, [[T;3];3])> + 'a
-    where
-        T: Real,
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+) -> impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
-    let bg: BackgroundField<T, T, K> = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
+    let bg: BackgroundField<T, T, K> =
+        BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
 
     let weight_sum_inv = bg.weight_sum_inv();
     let closest_d = bg.closest_sample_dist();
@@ -1220,7 +1260,19 @@ pub(crate) fn contact_hessian_at<'a, T, K: 'a>(
         // For each triangle vertex
         surface_topo[sample.index].iter().flat_map(move |&row_vtx| {
             let hess = sample_contact_jacobian_gradient_product_at(
-                q, sample, surface_vertices, surface_topo, kernel, grad_phi, dw_neigh, ddw_neigh, weight_sum_inv, closest_d, multiplier, true);
+                q,
+                sample,
+                surface_vertices,
+                surface_topo,
+                kernel,
+                grad_phi,
+                dw_neigh,
+                ddw_neigh,
+                weight_sum_inv,
+                closest_d,
+                multiplier,
+                true,
+            );
             hess.into_iter().enumerate().map(move |(i, hess)| {
                 let col_vtx = surface_topo[sample.index][i];
                 (row_vtx, col_vtx, (hess * third).into_data())
@@ -1256,11 +1308,11 @@ pub(crate) fn sample_contact_jacobian_gradient_product_at<'a, T, K: 'a>(
     weight_sum_inv: T,
     closest_d: T,
     multiplier: Vector3<T>,
-    transpose: bool
+    transpose: bool,
 ) -> impl Iterator<Item = Matrix3<T>> + 'a
-    where
-        T: Real,
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     // Jacobian values
     let kernel = kernel.with_closest_dist(closest_d);
@@ -1280,18 +1332,32 @@ pub(crate) fn sample_contact_jacobian_gradient_product_at<'a, T, K: 'a>(
     // Qs (or Qs^T) matrix in the paper.
     let rot = rodrigues_rotation(ux, nml_dot_grad);
 
-    let third = T::from(1.0/3.0).unwrap();
+    let third = T::from(1.0 / 3.0).unwrap();
 
     // Hessian specific values.
     // Negative in front of kernel grad is because grad is wrt sample pos not q.
     let first_term = (rot * multiplier) * kernel.grad(q, sample.pos).transpose() * (-third);
 
     // Compute Jacobian of the rotation matrix Qs multiplied by multiplier.
-    face_unit_normal_gradient_iter(sample, surface_vertices, surface_topo).map(move |unit_nml_grad| {
-        let rot_jac =
-            rodrigues_rotation_jacobian_product_at(q, sample, kernel, grad_phi, unit_nml_grad, dw_neigh_normalized, ddw_neigh_normalized, weight_sum_inv, closest_d, nml_dot_grad, multiplier, transpose);
-        first_term + rot_jac * w_normalized
-    })
+    face_unit_normal_gradient_iter(sample, surface_vertices, surface_topo).map(
+        move |unit_nml_grad| {
+            let rot_jac = rodrigues_rotation_jacobian_product_at(
+                q,
+                sample,
+                kernel,
+                grad_phi,
+                unit_nml_grad,
+                dw_neigh_normalized,
+                ddw_neigh_normalized,
+                weight_sum_inv,
+                closest_d,
+                nml_dot_grad,
+                multiplier,
+                transpose,
+            );
+            first_term + rot_jac * w_normalized
+        },
+    )
 }
 
 /// Jacobian of `Qs^T b` for some multiplier `b`.
@@ -1311,49 +1377,68 @@ pub(crate) fn rodrigues_rotation_jacobian_product_at<'a, T, K: 'a>(
     multiplier: Vector3<T>,
     transpose: bool,
 ) -> Matrix3<T>
-    where
-        T: Real,
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     // Taking the transpose allows us to take apart the jacobian column by column.
-    let jac_grad_phi_t = sample_query_hessian_at(q, sample, kernel, unit_nml_grad, dw_neigh_normalized, ddw_neigh_normalized, weight_sum_inv, closest_d).transpose();
+    let jac_grad_phi_t = sample_query_hessian_at(
+        q,
+        sample,
+        kernel,
+        unit_nml_grad,
+        dw_neigh_normalized,
+        ddw_neigh_normalized,
+        weight_sum_inv,
+        closest_d,
+    )
+    .transpose();
 
     // First term (-jac n x grad_phi x b)
     let d_n_cross_grad_phi = [
         unit_nml_grad[0].cross(grad_phi) + sample.nml.cross(jac_grad_phi_t[0]),
         unit_nml_grad[1].cross(grad_phi) + sample.nml.cross(jac_grad_phi_t[1]),
-        unit_nml_grad[2].cross(grad_phi) + sample.nml.cross(jac_grad_phi_t[2])
+        unit_nml_grad[2].cross(grad_phi) + sample.nml.cross(jac_grad_phi_t[2]),
     ];
 
     let first = [
         d_n_cross_grad_phi[0].cross(multiplier).into_data(),
         d_n_cross_grad_phi[1].cross(multiplier).into_data(),
         d_n_cross_grad_phi[2].cross(multiplier).into_data(),
-    ].into_tensor();
+    ]
+    .into_tensor();
 
     let n_cross_grad_phi = sample.nml.cross(grad_phi);
 
     let n_cross_grad_phi_cross_b = n_cross_grad_phi.cross(multiplier);
 
     let second = [
-        (d_n_cross_grad_phi[0].cross(n_cross_grad_phi_cross_b) + n_cross_grad_phi.cross(d_n_cross_grad_phi[0].cross(multiplier))).into_data(),
-        (d_n_cross_grad_phi[1].cross(n_cross_grad_phi_cross_b) + n_cross_grad_phi.cross(d_n_cross_grad_phi[1].cross(multiplier))).into_data(),
-        (d_n_cross_grad_phi[2].cross(n_cross_grad_phi_cross_b) + n_cross_grad_phi.cross(d_n_cross_grad_phi[2].cross(multiplier))).into_data(),
-    ].into_tensor();
+        (d_n_cross_grad_phi[0].cross(n_cross_grad_phi_cross_b)
+            + n_cross_grad_phi.cross(d_n_cross_grad_phi[0].cross(multiplier)))
+        .into_data(),
+        (d_n_cross_grad_phi[1].cross(n_cross_grad_phi_cross_b)
+            + n_cross_grad_phi.cross(d_n_cross_grad_phi[1].cross(multiplier)))
+        .into_data(),
+        (d_n_cross_grad_phi[2].cross(n_cross_grad_phi_cross_b)
+            + n_cross_grad_phi.cross(d_n_cross_grad_phi[2].cross(multiplier)))
+        .into_data(),
+    ]
+    .into_tensor();
 
     let denom = T::one() + nml_dot_grad;
-    let factor = if denom == T::zero() { T::zero() } else { T::one()/denom }; // heuristic
+    let factor = if denom == T::zero() {
+        T::zero()
+    } else {
+        T::one() / denom
+    }; // heuristic
 
-    let jac_scalar_factor = (unit_nml_grad * grad_phi + jac_grad_phi_t * sample.nml) * (-factor * factor);
+    let jac_scalar_factor =
+        (unit_nml_grad * grad_phi + jac_grad_phi_t * sample.nml) * (-factor * factor);
 
     // Note that this is a transpose of what is written in the notes since we are returning a column-major matrix here.
     let third = jac_scalar_factor * n_cross_grad_phi.cross(n_cross_grad_phi_cross_b).transpose();
 
-    (if transpose {
-        -first
-    } else {
-        first
-    }) + second * factor + third
+    (if transpose { -first } else { first }) + second * factor + third
 }
 
 /// Computes the off-diagonal elements of the second derivative of the implicit function.
@@ -1370,9 +1455,9 @@ pub(crate) fn sample_query_hessian_at<'a, T, K: 'a>(
     weight_sum_inv: T,
     closest_d: T,
 ) -> Matrix3<T>
-    where
-        T: Real,
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let unit_nml = sample.nml * (T::one() / sample.nml.norm());
 
@@ -1383,7 +1468,7 @@ pub(crate) fn sample_query_hessian_at<'a, T, K: 'a>(
     let dw_normalized = (dw - dw_neigh_normalized * w) * weight_sum_inv;
     let grad_psi = dw_normalized * psi + (unit_nml * w) * weight_sum_inv;
 
-    let third = T::from(1.0/3.0).unwrap();
+    let third = T::from(1.0 / 3.0).unwrap();
 
     // 1
     grad_psi * (kernel.with_closest_dist(closest_d).grad(q, sample.pos).transpose() * (-weight_sum_inv * third))
@@ -1427,6 +1512,183 @@ mod tests {
         consolidate_face_jacobian, make_perturb_fn, make_test_triangle, make_three_test_triangles,
         make_two_test_triangles, new_test_samples,
     };
+
+    /// High level test of the Hessian as the derivative of the Jacobian.
+    fn query_hessian_tester(
+        query_points: &[[f64; 3]],
+        surf_mesh: &TriMesh<f64>,
+        kernel: KernelType,
+        max_step: f64,
+        bg_field_params: BackgroundFieldParams,
+    ) -> Result<(), Error> {
+        let params = crate::Params {
+            kernel,
+            background_field: bg_field_params,
+            sample_type: SampleType::Face,
+            max_step,
+            base_radius: None,
+        };
+
+        let surf = crate::mls_from_trimesh::<F1>(&surf_mesh, params)
+            .expect("Failed to construct an implicit surface.");
+
+        let ad_tri_verts: Vec<_> = surf_mesh
+            .vertex_position_iter()
+            .map(|&x| Vector3::new(x).mapd(|x| F1::cst(x)).into_data())
+            .collect();
+        let mut ad_query_points: Vec<_> = query_points
+            .iter()
+            .map(|&a| Vector3::new(a).mapd(|x| F1::cst(x)).into_data())
+            .collect();
+        let num_query_points = query_points.len();
+
+        let mut query_surf = surf.query_topo(&ad_query_points);
+        let num_hess_entries = query_surf.num_query_hessian_product_entries();
+        let num_jac_entries = query_surf.num_query_jacobian_entries();
+
+        // Compute the complete Hessian.
+        let mut hess_rows = vec![0; num_hess_entries];
+        let mut hess_cols = vec![0; num_hess_entries];
+        let mut hess_values = vec![F1::cst(0.0); num_hess_entries];
+        let mut jac_rows = vec![0; num_jac_entries];
+        let mut jac_cols = vec![0; num_jac_entries];
+        let mut jac_values = vec![F1::cst(0.0); num_jac_entries];
+
+        let num_neighs = query_surf.num_neighborhoods();
+        let mut multipliers = vec![F1::cst(0.0); num_neighs];
+        query_surf
+            .query_hessian_product_indices_iter()
+            .zip(hess_rows.iter_mut().zip(hess_cols.iter_mut()))
+            .for_each(|((r, c), (out_r, out_c))| {
+                *out_r = r;
+                *out_c = c;
+            });
+
+        let mut hess_full = vec![vec![0.0; 3 * num_query_points]; 3 * num_query_points];
+        let mut ad_hess_full = vec![vec![0.0; 3 * num_query_points]; 3 * num_query_points];
+
+        let query_neighborhood_sizes = query_surf.neighborhood_sizes();
+        dbg!(&query_neighborhood_sizes);
+
+        // We use the multipliers to isolate the hessian for each query point.
+        for (mult_idx, q_idx) in (0..num_query_points)
+            .filter(|&q_idx| query_neighborhood_sizes[q_idx] != 0)
+            .enumerate()
+        {
+            multipliers[mult_idx] = F1::cst(1.0);
+
+            query_surf.query_hessian_product_values(
+                &ad_query_points,
+                &multipliers,
+                &mut hess_values,
+            );
+
+            let mut success = true;
+
+            // Test the accuracy of each component of the hessian against an autodiff version of the
+            // second derivative.
+            for vtx in 0..num_query_points {
+                for i in 0..3 {
+                    //eprintln!("DERIVATIVE WRT vtx {}, component {}", vtx, i);
+                    // Set a variable to take the derivative with respect to, using autodiff.
+                    ad_query_points[vtx][i] = F1::var(ad_query_points[vtx][i]);
+                    query_surf.update_surface(ad_tri_verts.iter().cloned());
+
+                    query_surf.query_jacobian_values(&ad_query_points, &mut jac_values);
+                    query_surf
+                        .query_jacobian_indices_iter()
+                        .zip(jac_rows.iter_mut().zip(jac_cols.iter_mut()))
+                        .for_each(|((r, c), (out_r, out_c))| {
+                            *out_r = r;
+                            *out_c = c;
+                        });
+
+                    // Get the jacobian for the specific query point we are interested in.
+                    let mut jac_q = vec![F1::cst(0.0); num_query_points * 3];
+                    for (&r, &c, &jac) in zip!(jac_rows.iter(), jac_cols.iter(), jac_values.iter())
+                    {
+                        if r == q_idx {
+                            jac_q[c] += jac;
+                        }
+                    }
+
+                    // Consolidate the Hessian to the particular vertex and component we are
+                    // interested in.
+                    let mut hess_vtx = vec![F1::cst(0.0); num_query_points * 3];
+                    for (&r, &c, &h) in zip!(hess_rows.iter(), hess_cols.iter(), hess_values.iter())
+                    {
+                        if r == 3 * vtx + i {
+                            hess_vtx[c] += h;
+                        } else if c == 3 * vtx + i {
+                            hess_vtx[r] += h;
+                        }
+                    }
+
+                    for (linear_j, (jac, hes)) in jac_q.iter().zip(hess_vtx).enumerate() {
+                        // Check the derivative of the autodiff with our previously computed Jacobian.
+                        if !relative_eq!(
+                            hes.value(),
+                            jac.deriv(),
+                            max_relative = 1e-6,
+                            epsilon = 1e-12
+                        ) {
+                            println!("{:.5} vs {:.5}", hes.value(), jac.deriv());
+                            success = false;
+                        }
+                        ad_hess_full[3 * vtx + i][linear_j] += jac.deriv();
+                        hess_full[3 * vtx + i][linear_j] += hes.value();
+                    }
+
+                    // Reset the variable back to being a constant.
+                    ad_query_points[vtx][i] = F1::cst(ad_query_points[vtx][i]);
+                }
+
+                if !success {
+                    eprintln!("Multiplier: {}", mult_idx);
+                    print_full_hessian(&hess_full, 3 * num_query_points, "Full Hessian");
+                    print_full_hessian(
+                        &ad_hess_full,
+                        3 * num_query_points,
+                        "Full Autodiff Hessian",
+                    );
+                }
+                assert!(success, "Hessian does not match its AutoDiff counterpart");
+            }
+            multipliers[mult_idx] = F1::cst(0.0); // reset multiplier
+        }
+        Ok(())
+    }
+
+    /// Test the highest level query Hessian functions with a tetrahedron.
+    #[test]
+    fn one_tet_query_hessian_test() -> Result<(), Error> {
+        let qs: Vec<_> = (0..4).map(|i| [0.0, -0.5 + 0.25 * i as f64, 0.0]).collect();
+
+        let trimesh = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
+
+        for i in 9..10 {
+            let radius_multiplier = 1.0 + 0.5 * (i as f64);
+            eprintln!("radius multiplier: {}", radius_multiplier);
+            let bg_params = BackgroundFieldParams {
+                field_type: BackgroundFieldType::Zero,
+                weighted: false,
+            };
+            let run = |kernel| query_hessian_tester(&qs, &trimesh, kernel, 0.0, bg_params);
+
+            eprintln!("Checking Interpolating Kernel");
+            run(KernelType::Interpolating { radius_multiplier })?;
+            eprintln!("Checking Approximate Kernel");
+            run(KernelType::Approximate {
+                tolerance: 0.00001,
+                radius_multiplier,
+            })?;
+            eprintln!("Checking Cubic Kernel");
+            run(KernelType::Cubic { radius_multiplier })?;
+            eprintln!("Checking Global Kernel");
+            run(KernelType::Global { tolerance: 0.00001 })?;
+        }
+        Ok(())
+    }
 
     /// High level test of the Hessian as the derivative of the Jacobian.
     fn surface_hessian_tester(
@@ -1496,8 +1758,12 @@ mod tests {
                 .expect("Failed to compute hessian product");
             let hess_values2: Vec<_> = query_surf
                 .surface_hessian_product_values_iter(&ad_query_points, &multipliers)
-                .expect("Failed to compute hessian product using iterators").collect();
-            assert!(hess_values.iter().zip(hess_values2.iter()).all(|(a,b)| a == b));
+                .expect("Failed to compute hessian product using iterators")
+                .collect();
+            assert!(hess_values
+                .iter()
+                .zip(hess_values2.iter())
+                .all(|(a, b)| a == b));
 
             let mut success = true;
 
@@ -2252,6 +2518,85 @@ mod tests {
 
             print_full_hessian_arr(hess, "Full Hessian");
             print_full_hessian_arr(ad_hess, "Full AutoDiff Hessian");
+        }
+        assert!(success, "Hessian does not match its AutoDiff counterpart");
+    }
+
+    /// Test the second order derivatives of query computation.
+    #[test]
+    fn query_hessian_at_test() {
+        // Simple test with two triangles
+        let (tri_verts, tri_faces) = make_two_test_triangles(0.0, &mut || Vector3::zero());
+        query_hessian_at_tester(&tri_verts, &tri_faces);
+
+        // More complex test with a whole tet
+        let (tet_verts, tet_faces) = make_tet();
+        query_hessian_at_tester(&tet_verts, &tet_faces);
+    }
+
+    fn query_hessian_at_tester(verts: &[[f64; 3]], faces: &[[usize; 3]]) {
+        let samples = Samples::new_triangle_samples(faces, verts, vec![0.0; faces.len()]);
+
+        let neighbors: Vec<usize> = (0..faces.len()).collect(); // look at all the faces
+
+        let bg_params = BackgroundFieldParams {
+            field_type: BackgroundFieldType::Zero,
+            weighted: false,
+        };
+        let kernel = LocalCubic::new(1.5);
+
+        let q = Vector3::new([0.0, 0.01, 0.0]);
+        // Compute the normal hessian product.
+        let view = SamplesView::new(neighbors.as_ref(), &samples);
+        let hess = query_hessian_at(q, view, kernel, bg_params);
+
+        let mut ad_hess = Matrix3::<F1>::zero();
+
+        // Convert tet vertices into varibales because we are taking the derivative with respect to
+        // vertices.
+        let ad_verts: Vec<[F1; 3]> = verts
+            .iter()
+            .cloned()
+            .map(|v| Vector3::new(v).mapd(|x| F1::cst(x)).into())
+            .collect();
+
+        let mut q_ad = q.cast::<F1>();
+
+        let mut success = true;
+        for i in 0..3 {
+            q_ad[i] = F1::var(q_ad[i]);
+
+            let ad_samples = Samples::new_triangle_samples(faces, &ad_verts, vec![F1::cst(0.0); 4]);
+            let ad_view = SamplesView::new(neighbors.as_ref(), &ad_samples);
+
+            // Convert the samples to use autodiff constants.
+            let grad = super::jacobian::query_jacobian_at(q_ad, ad_view, None, kernel, bg_params);
+
+            for j in 0..3 {
+                // Only check lower triangular part.
+                if !relative_eq!(
+                    hess[j][i],
+                    grad[j].deriv(),
+                    max_relative = 1e-5,
+                    epsilon = 1e-10
+                ) {
+                    println!(
+                        "({}, {}); {:11.7} vs {:11.7}",
+                        j,
+                        i,
+                        hess[j][i],
+                        grad[j].deriv(),
+                    );
+                    success = false;
+                }
+                ad_hess[j][i] += grad[j].deriv();
+            }
+
+            q_ad[i] = F1::cst(q_ad[i]);
+        }
+        if !success {
+            dbg!(hess);
+            dbg!(ad_hess);
         }
         assert!(success, "Hessian does not match its AutoDiff counterpart");
     }

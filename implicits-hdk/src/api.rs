@@ -7,7 +7,8 @@ use crate::{Action, Params};
  */
 use geo::{
     self,
-    mesh::{attrib::*, topology::*, VertexPositions},
+    attrib::*, 
+    mesh::{topology::*, VertexPositions},
 };
 use hdkrs::interop::CookResult;
 use implicits::{self, ImplicitSurface};
@@ -94,7 +95,7 @@ where
                         }
                         .ok();
 
-                        query_mesh.add_attrib_data::<_, VertexIndex>("potential", potential)?;
+                        query_mesh.insert_attrib_data::<_, VertexIndex>("potential", potential)?;
                         Ok(())
                     },
                 );

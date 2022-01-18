@@ -250,7 +250,7 @@ impl SparseIterativeSolver {
             &self.mtx,
             &mut self.b64,
             &mut self.r64,
-            SparsePreconditioner::DiagScaling,
+            SparsePreconditioner::Diagonal,
         );
         SparseIterativeSolveError::result_from_status(&self.r64, status)
     }
@@ -359,7 +359,7 @@ impl SparseDirectSolver {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn solve<T: Real>(&mut self) -> Result<&[f64], SparseDirectSolveError> {
+    pub fn solve(&mut self) -> Result<&[f64], SparseDirectSolveError> {
         self.factorization.solve_in_place(&mut self.r64)
     }
 
@@ -402,7 +402,7 @@ impl SparseDirectSolver {
         let t_update = Instant::now();
         self.refactor();
         let t_factor = Instant::now();
-        let result = self.solve(r);
+        let result = self.solve();
         let t_end = Instant::now();
         log::debug!("update time: {}ms", (t_update - t_begin).as_millis());
         log::debug!("factor time: {}ms", (t_factor - t_update).as_millis());
@@ -640,12 +640,12 @@ where
         // Unwrap the sparse solver. In case of panic check update_jacobian_indices function.
         let sparse_solver = sparse_solver
             .borrow_mut()
-            .expect("Uninitialized sparse solver.");
+            .expect("Uninitialized direct sparse solver.");
 
         #[cfg(target_os = "macos")]
         let sparse_iterative_solver = sparse_iterative_solver
             .borrow_mut()
-            .expect("Uninitialized sparse solver.");
+            .expect("Uninitialized iterative sparse solver.");
 
         let mut iterations = 0;
 

@@ -37,8 +37,6 @@ fn equilibrium() {
     mesh.attrib_as_mut_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
         .unwrap()[2] = 1;
 
-    //geo::io::save_polymesh(&geo::mesh::PolyMesh::from(mesh.clone()), "out/four_tri.vtk");
-
     let mut solver = SolverBuilder::new(params)
         .set_mesh(Mesh::from(mesh.clone()))
         .set_materials(vec![soft_shell_material().into(); 1])
@@ -48,12 +46,10 @@ fn equilibrium() {
     assert!(result.is_ok());
 
     // Expect the triangles to remain in original configuration
-    let shell = &solver.shell();
-    let solution_mesh = TriMesh::new(
+    let solution_verts  = PointCloud::new(
         solver.vertex_positions(),
-        shell.triangle_elements.triangles.clone(),
     );
-    compare_meshes(&solution_mesh, &mesh, 1e-6);
+    compare_meshes(&solution_verts, &mesh, 1e-6);
 }
 
 #[test]
@@ -78,13 +74,7 @@ fn simple_quasi_static_undeformed() -> Result<(), Error> {
         solver.step()?;
     }
 
-    let shell = &solver.shell();
-    let solution = TriMesh::new(
-        solver.vertex_positions(),
-        shell.triangle_elements.triangles.clone(),
-    );
-
-    let verts = solution.vertex_positions();
+    let verts = solver.vertex_positions();
 
     // Check that all the vertices are in x-y plane
     for i in 0..3 {
@@ -105,7 +95,7 @@ fn quasi_static_deformed() -> Result<(), Error> {
     dbg!(mesh.vertex_positions());
     let mut solver = SolverBuilder::new(SimParams {
         velocity_clear_frequency: 20.0,
-        time_step: Some(0.05),
+        time_step: Some(0.1),
         ..static_nl_params()
     })
     .set_mesh(Mesh::from(mesh.clone()))
@@ -114,17 +104,11 @@ fn quasi_static_deformed() -> Result<(), Error> {
     .expect("Failed to build a solver for a three triangle test.");
 
     // Simulate for 1 second.
-    for _ in 0..20 {
+    for _ in 0..40 {
         solver.step()?;
     }
 
-    let shell = &solver.shell();
-    let solution = TriMesh::new(
-        solver.vertex_positions(),
-        shell.triangle_elements.triangles.clone(),
-    );
-
-    let verts = solution.vertex_positions();
+    let verts = solver.vertex_positions();
 
     // Check that the bottom vert is somewhat close to 0.0 on z axis.
     assert!(verts[3][2] < 0.4 && verts[3][2] > -0.4);

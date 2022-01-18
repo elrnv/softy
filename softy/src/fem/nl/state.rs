@@ -671,6 +671,16 @@ impl<T: Real> State<T, ad::FT<T>> {
         }
     }
 
+    /// Copies entries from the vertex residual to the dof residual for vertex degrees of freedom.
+    pub fn dof_residual_from_vertices(&self, r: &mut [T]) {
+        r.iter_mut()
+            .take(self.dof.view().isolate(VERTEX_DOFS).len())
+            .zip(self.vtx.residual.storage().iter())
+            .for_each(|(dof_r, vtx_r)| {
+                *dof_r = *vtx_r;
+            });
+    }
+
     /// Transfer state from degrees of freedom to vertex state.
     pub fn update_cur_vertices(&mut self) {
         let Self { dof, vtx, .. } = self;
@@ -918,6 +928,11 @@ impl<T: Real> State<T, ad::FT<T>> {
         //}
     }
 
+    /// Take a trapezoidal rule step computed in `q_next`.
+    pub fn tr_step<F: Real>(state: ChunkedView<StepState<&[T], &[F], &mut [F]>>, dt: f64) {
+        Self::lerp_step(state, dt, 0.5);
+    }
+
     /// Take a blended step in `q` between current and previous `v` values.
     ///
     /// This type of step is used in trapezoidal rule, implicit Newmark
@@ -1043,7 +1058,7 @@ impl<T: Real> State<T, ad::FT<T>> {
         //}
     }
 
-    /// Updates fixed vertices(
+    /// Updates fixed vertices.
     pub fn update_fixed_vertices(
         &mut self,
         new_pos: Chunked3<&[f64]>,

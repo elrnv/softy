@@ -1,4 +1,4 @@
-use num_traits::ToPrimitive;
+use num_traits::{ToPrimitive, One, Zero};
 use std::cell::RefCell;
 
 use geo::attrib::Attrib;
@@ -341,7 +341,6 @@ impl SolverBuilder {
     }
     /// A helper function to initialize the fixed attribute if one doesn't already exist.
     pub(crate) fn init_fixed_attribute(mesh: &mut Mesh) -> Result<(), Error> {
-        use num_traits::{One, Zero};
         use std::convert::TryFrom;
         let normalize_id = move |id: FixedIntType| {
             if id != FixedIntType::zero() {
@@ -557,6 +556,12 @@ impl SolverBuilder {
             &vertex_type,
         )?;
 
+        if state.dof.storage().len() == 0 {
+            return Err(Error::NothingToSolve);
+        }
+
+        let num_verts = state.vtx.len();
+
         // Initialize constraints.
 
         let volume_constraints = Self::build_volume_constraints(&mesh, &materials)?;
@@ -682,6 +687,11 @@ impl SolverBuilder {
             max_element_force_scale: max_scale,
             min_element_force_scale: min_scale,
             original_mesh: orig_mesh,
+            candidate_force: RefCell::new(vec![T::zero(); num_verts*3]),
+            prev_force: vec![T::zero(); num_verts*3],
+            candidate_force_ad: RefCell::new(vec![autodiff::FT::<T>::zero(); num_verts*3]),
+            prev_force_ad: vec![autodiff::FT::<T>::zero(); num_verts*3],
+            time_integration: params.time_integration,
         })
     }
 

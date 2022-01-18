@@ -155,6 +155,8 @@ pub enum Error {
     ContactObjectIdError { id: usize },
     #[error("Derivative check failed")]
     DerivativeCheckFailure,
+    #[error("Nothing to solve: no mesh or all vertices are fixed")]
+    NothingToSolve,
 }
 
 pub enum SimResult {

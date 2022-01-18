@@ -679,6 +679,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         assert_eq!(jac.view().into_tensor().num_cols(), v.len());
         let mut vc = (jac.view().into_tensor() * v.into_tensor()).into_data();
 
+        //dbg!(&vc);
+
         //dbg!(self.collider_vertex_indices.len());
         //dbg!(active_contact_indices.len());
         //dbg!(v0.len());
@@ -699,8 +701,10 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .zip(lambda.iter())
             .enumerate()
             .for_each(|(i, (vc, lambda))| {
-                let [_, v1, v2] = contact_basis.to_contact_coordinates(*vc, i);
+                let [_v0, v1, v2] = contact_basis.to_contact_coordinates(*vc, i);
+                //dbg!(i, [v0, v1, v2]);
                 let vc_t = [v1, v2].into_tensor();
+                //dbg!(&lambda);
                 let vc_t_smoothed = eta(vc_t, *lambda, T::from(1e-5).unwrap()).into_data();
                 *vc = [T::zero(), vc_t_smoothed[0], vc_t_smoothed[1]];
             });
@@ -722,6 +726,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let (active_constraint_subset, active_contact_indices, _, query_points_in_contact, lambda) =
             self.point_constraint.in_contact_indices(lambda, dist);
 
+        //dbg!(&v);
+
         // Computes `b(x,v) = H(T(x)'v)λ(x)`.
         let mut vc = self.compute_contact_friction_force(
             v,
@@ -731,6 +737,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             &query_points_in_contact,
             true,
         )?;
+
+        //dbg!(&vc);
 
         let jac = Self::contact_jacobian(
             &mut self.contact_jacobian,
@@ -757,8 +765,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             *v = contact_basis.from_contact_coordinates(*vc * (-mu), i);
         });
 
+        //dbg!(&vc);
+
         // Compute object force (compute `f = J'(x)vc`)
         let f = jac.view().into_tensor().transpose() * vc.view().into_tensor();
+        //dbg!(&f.view().storage());
         Some(f.into_data())
     }
 
@@ -820,7 +831,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
                 // Compute the Jacobian of the normalized negative grad psi. (see compute_normals for reference on why).
                 let nml_jac =
-                    (Matrix3::identity() - n * n.transpose()) * nml_jac.into_tensor() * norm_n_inv;
+                    (Matrix3::identity() - n * n.transpose()) * nml_jac.into_tensor() * (-norm_n_inv);
 
                 // Find the axis that is most aligned with the normal, then use the next axis for the
                 // tangent.
@@ -904,7 +915,10 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             transpose,
         )?
         .filter(|((_, col), _)| col < &num_vertices)
-        .map(|((row, col), mtx)| (MatrixElementIndex { row: col, col: row }, mtx.transpose()))
+        .map(|((row, col), mtx)| {
+            //eprintln!("dBm({},{}): {:?}", col, row, mtx.transpose().into_data());
+            (MatrixElementIndex { row: col, col: row }, mtx.transpose())
+        })
         .unzip(); // transpose to produce gradient
 
         let nnz = indices.len();
@@ -1031,6 +1045,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             let [_, v1, v2] = contact_basis.to_contact_coordinates(*vc, i);
             let vc_t = [v1, v2].into_tensor();
             let vc_t_smoothed = eta(vc_t, mu, T::from(1e-5).unwrap()).into_data();
+            //dbg!(eta(vc_t, T::one(), T::from(1e-5).unwrap()).into_data());
             *vc = contact_basis
                 .from_contact_coordinates([T::zero(), vc_t_smoothed[0], vc_t_smoothed[1]], i)
         });
@@ -1075,12 +1090,17 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                         let lhs_block = *lhs_block.into_arrays().as_tensor();
                                         let rhs_block = *rhs_block.into_arrays().as_tensor();
                                         let index = lhs_contact_idx; // = rhs_contact_idx
+                                        //dbg!(rhs_block* (-dqdv
+                                        //    * kappa
+                                        //    * ContactPenalty::new(delta)
+                                        //    .ddb(dist[rhs_constraint_idx])));
                                         let rhs = *vc[index].as_tensor()
                                             * (rhs_block
                                                 * (-dqdv
                                                     * kappa
                                                     * ContactPenalty::new(delta)
                                                         .ddb(dist[rhs_constraint_idx])));
+                                        //dbg!(&rhs.into_data());
                                         return Some((row_idx, col_idx, lhs_block * rhs));
                                     }
                                 }
@@ -1144,6 +1164,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             &query_points_in_contact,
             recompute_contact_jacobian,
         )?;
+        // dbg!(&c);
         assert_eq!(c.len(), num_contacts);
 
         //dbg!(&self.point_constraint.implicit_surface.surface_vertex_positions());
@@ -1322,6 +1343,12 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .into_tensor()
             .transpose();
 
+            // for (row_idx, row) in jac_basis.0.view().into_data().into_iter() {
+            //     for (col_idx, block) in row.into_iter() {
+            //         eprintln!("jb({},{}): {:?}", row_idx, col_idx, block);
+            //     }
+            // }
+
             self.friction_jacobian_workspace.contact_gradient_jac_basis =
                 (contact_gradient.view().into_tensor() * jac_basis.view()).into_data(); // (B)
 
@@ -1379,8 +1406,26 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .into_tensor()
             .transpose();
 
+            // for (row_idx, row) in jac_basis_t.0.view().into_data().into_iter() {
+            //     for (col_idx, block) in row.into_iter() {
+            //         eprintln!("jbt({},{}): {:?}", row_idx, col_idx, block);
+            //     }
+            // }
+
             jac_basis_t.premultiply_block_diagonal_mtx(dh.view());
+
+            // for (row_idx, row) in jac_basis_t.0.view().into_data().into_iter() {
+            //     for (col_idx, block) in row.into_iter() {
+            //         eprintln!("dh-jbt({},{}): {:?}", row_idx, col_idx, block);
+            //     }
+            // }
+
             jac_basis_t.premultiply_block_diagonal_mtx(b.view());
+            // for (row_idx, row) in jac_basis_t.0.view().into_data().into_iter() {
+            //     for (col_idx, block) in row.into_iter() {
+            //         eprintln!("b-dh-jbt({},{}): {:?}", row_idx, col_idx, block);
+            //     }
+            // }
             self.friction_jacobian_workspace
                 .contact_gradient_basis_eta_jac_basis_jac =
                 (contact_gradient.view().into_tensor() * jac_basis_t.view()).into_data(); // (C)
@@ -1415,8 +1460,23 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
             let mut contact_gradient_t = contact_gradient.clone().into_tensor().transpose(); // Make mut
             contact_gradient_t.premultiply_block_diagonal_mtx(bt.view());
+            //for (row_idx, row) in contact_gradient_t.0.view().into_data().into_iter() {
+            //    for (col_idx, block) in row.into_iter() {
+            //        eprintln!("jbt2({},{}): {:?}", row_idx, col_idx, block);
+            //    }
+            //}
             contact_gradient_t.premultiply_block_diagonal_mtx(dh.view());
+            //for (row_idx, row) in contact_gradient_t.0.view().into_data().into_iter() {
+            //    for (col_idx, block) in row.into_iter() {
+            //        eprintln!("dh-jbt2({},{}): {:?}", row_idx, col_idx, block);
+            //    }
+            //}
             contact_gradient_t.premultiply_block_diagonal_mtx(b.view());
+            //for (row_idx, row) in contact_gradient_t.0.view().into_data().into_iter() {
+            //    for (col_idx, block) in row.into_iter() {
+            //        eprintln!("b-dh-jbt2({},{}): {:?}", row_idx, col_idx, block);
+            //    }
+            //}
             self.friction_jacobian_workspace
                 .contact_gradient_basis_eta_jac_basis_contact_jac =
                 (contact_gradient.view().into_tensor() * contact_gradient_t.view()).into_data(); // (E)
@@ -1428,10 +1488,10 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
         Some(
             f_lambda_jac
-                //.inspect(|(_,_,m)| log::trace!("dL: {:?}", m))
-                .chain(
-                    jac_contact_gradient, //.inspect(|(_,_,m)| log::trace!("A: {:?}", m)) ,
-                ) // (A)
+                //.inspect(|(i,j,m)| log::trace!("dL: ({},{}):{:?}", i, j, (*m).into_data()))
+                //.chain(
+                //    jac_contact_gradient, //.inspect(|(_,_,m)| log::trace!("A: {:?}", m)) ,
+                //) // (A)
                 .chain(
                     self.friction_jacobian_workspace
                         .contact_gradient_jac_basis
@@ -1446,7 +1506,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                     *block.into_arrays().as_tensor() * (mu * dqdv),
                                 )
                             })
-                        }), //        .inspect(|(_,_,m)| log::trace!("B: {:?}", m)) ,
+                        })//        .inspect(|(i,j,m)| log::trace!("B:({},{}): {:?}", i,j,(*m).into_data())) ,
                 )
                 .chain(
                     self.friction_jacobian_workspace
@@ -1462,24 +1522,24 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                     *block.into_arrays().as_tensor() * (mu * dqdv),
                                 )
                             })
-                        }), //.inspect(|(_,_,m)| log::trace!("C: {:?}", m)) ,
+                        })//.inspect(|(i,j,m)| log::trace!("C:({},{}): {:?}", i,j,(*m).into_data())) ,
                 )
-                .chain(
-                    self.friction_jacobian_workspace
-                        .contact_gradient_basis_eta_jac_basis_jac_contact_jac
-                        .view()
-                        .into_iter()
-                        .flat_map(move |(row_idx, row)| {
-                            // (D)
-                            row.into_iter().map(move |(col_idx, block)| {
-                                (
-                                    row_idx,
-                                    col_idx,
-                                    *block.into_arrays().as_tensor() * (mu * dqdv),
-                                )
-                            })
-                        }),
-                )
+                //.chain(
+                //    self.friction_jacobian_workspace
+                //        .contact_gradient_basis_eta_jac_basis_jac_contact_jac
+                //        .view()
+                //        .into_iter()
+                //        .flat_map(move |(row_idx, row)| {
+                //            // (D)
+                //            row.into_iter().map(move |(col_idx, block)| {
+                //                (
+                //                    row_idx,
+                //                    col_idx,
+                //                    *block.into_arrays().as_tensor() * (mu * dqdv),
+                //                )
+                //            })
+                //        }),
+                //)
                 .chain(
                     self.friction_jacobian_workspace
                         .contact_gradient_basis_eta_jac_basis_contact_jac
@@ -1490,7 +1550,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                             row.into_iter().map(move |(col_idx, block)| {
                                 (row_idx, col_idx, *block.into_arrays().as_tensor() * mu)
                             })
-                        }), //.inspect(|(_,_,m)| log::trace!("E: {:?}", m))
+                        })//.inspect(|(i,j,m)| log::trace!("E:({},{}): {:?}", i,j,(*m).into_data()))
                 )
                 .filter(move |&(row, col, _)| row < max_index && col < max_index)
                 .flat_map(move |(row, col, block)| {
@@ -1995,8 +2055,8 @@ mod tests {
             jacobian_test: true,
             residual_tolerance: 1e-8.into(),
             velocity_tolerance: 1e-5.into(),
-            contact_tolerance: 0.001,
-            friction_tolerance: 0.001,
+            contact_tolerance: 0.0001,
+            friction_tolerance: 0.0001,
             ..static_nl_params()
         };
 
@@ -2027,7 +2087,7 @@ mod tests {
         let fc_params = FrictionalContactParams {
             contact_type: ContactType::Point,
             kernel: KernelType::Approximate {
-                radius_multiplier: 1000000.5,
+                radius_multiplier: 1.5,
                 tolerance: 1e-5,
             },
             contact_offset: 0.0,
@@ -2035,14 +2095,14 @@ mod tests {
             friction_params: Some(FrictionParams {
                 smoothing_weight: 0.0,
                 friction_forwarding: 1.0,
-                dynamic_friction: 0.2,
+                dynamic_friction: 0.18,
                 inner_iterations: 50,
                 tolerance: 1e-10,
                 print_level: 0,
             }),
         };
 
-        //let mesh: Mesh<f64> = geo::io::load_mesh("./out/problem.vtk")?;
+        let mesh: Mesh<f64> = geo::io::load_mesh("./out/problem.vtk")?;
 
         let mut solver = SolverBuilder::new(params.clone())
             .set_mesh(mesh)
@@ -2099,20 +2159,20 @@ mod tests {
                 fc.update_multipliers(delta, kappa);
 
                 // TODO: temp debug code to remove sliding basis derivative.
-                //let lambda = fc.lambda.as_slice();
-                //let dist = fc.distance_potential.as_slice();
-                //let (active_constraint_subset, _, _, _, _) =
-                //    fc.point_constraint.in_contact_indices(lambda, dist);
-                //let normals = fc.point_constraint.contact_normals();
-                //let normals_subset =
-                //    Subset::from_unique_ordered_indices(active_constraint_subset, normals.as_slice());
-                //let mut normals = Chunked3::from_array_vec(vec![[0.0; 3]; normals_subset.len()]);
-                //normals_subset.clone_into_other(&mut normals);
-                //let FrictionWorkspace {
-                //    contact_basis,
-                //    ..
-                //} = fc.point_constraint.friction_workspace.as_mut().unwrap();
-                //contact_basis.update_from_normals(normals.into());
+                let lambda = fc.lambda.as_slice();
+                let dist = fc.distance_potential.as_slice();
+                let (active_constraint_subset, _, _, _, _) =
+                    fc.point_constraint.in_contact_indices(lambda, dist);
+                let normals = fc.point_constraint.contact_normals();
+                let normals_subset =
+                    Subset::from_unique_ordered_indices(active_constraint_subset, normals.as_slice());
+                let mut normals = Chunked3::from_array_vec(vec![[0.0; 3]; normals_subset.len()]);
+                normals_subset.clone_into_other(&mut normals);
+                let FrictionWorkspace {
+                    contact_basis,
+                    ..
+                } = fc.point_constraint.friction_workspace.as_mut().unwrap();
+                contact_basis.update_from_normals(normals.into());
             }
 
             for fc in fc.iter() {
@@ -2142,6 +2202,10 @@ mod tests {
         {
             *next_pos = cur_pos + vel * dt;
         }
+
+        dbg!(&cur_pos);
+        dbg!(&next_pos);
+        dbg!(&vel);
 
         // Update constraint state.
         for fc in fc_ad.iter() {
@@ -2191,8 +2255,8 @@ mod tests {
                 let res = approx::relative_eq!(
                     jac[row][col],
                     r[row].deriv(),
-                    max_relative = 1e-6,
-                    epsilon = 1e-7
+                    max_relative = 1e-4,
+                    epsilon = 1e-5
                 );
                 jac_ad[row][col] = r[row].deriv();
                 if !res {

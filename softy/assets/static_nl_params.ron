@@ -11,5 +11,6 @@ SimParams(
     jacobian_test: false,
     friction_tolerance: 1e-5,
     contact_tolerance: 1e-5,
+    time_integration: BE
 )
 

@@ -223,6 +223,10 @@ pub trait EnergyHessian<T: Real>: EnergyHessianTopology {
     }
 }
 
+pub trait EnergyHessianProduct<T: Real> {
+    fn energy_hessian_product(&self, x: &[T], dx: &[T], scale: T, prod: &mut [T]);
+}
+
 /// Construct an ArrayFire matrix.
 #[cfg(feature = "af")]
 fn energy_hessian_af<E: EnergyHessian<f64>>(

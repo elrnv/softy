@@ -2,7 +2,7 @@ mod test_utils;
 
 use softy::fem::nl::SimParams as NLParams;
 use softy::fem::nl::*;
-use softy::{ElasticityParameters, Error, Mesh, SolidMaterial, TetMesh};
+use softy::{ElasticityParameters, Error, Mesh, PointCloud, SolidMaterial, TetMesh};
 use std::path::PathBuf;
 pub use test_utils::*;
 
@@ -37,12 +37,8 @@ fn equilibrium() -> Result<(), Error> {
     solver.step()?;
 
     // Expect the box to remain in original configuration
-    let solid = &solver.solid();
-    let solution = TetMesh::new(
-        solver.vertex_positions(),
-        solid.nh_tet_elements.tets.clone(),
-    );
-    compare_meshes(&solution, &mesh, 1e-6);
+    let solution_verts = PointCloud::new(solver.vertex_positions());
+    compare_meshes(&solution_verts, &mesh, 1e-6);
     Ok(())
 }
 
@@ -52,19 +48,36 @@ fn stretch_plain() -> Result<(), Error> {
     let mesh = make_stretched_box(4);
     let mut solver = SolverBuilder::new(NLParams {
         gravity: [0.0f32, 0.0, 0.0],
+        time_step: Some(0.1),
         ..static_nl_params()
     })
     .set_mesh(Mesh::from(mesh))
     .set_materials(vec![medium_solid_material().into()])
     .build::<f64>()?;
-    solver.step()?;
+    for _ in 0..30 {
+        solver.step()?;
+    }
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
-    let solid = &solver.solid();
-    let solution = TetMesh::new(
-        solver.vertex_positions(),
-        solid.nh_tet_elements.tets.clone(),
-    );
-    compare_meshes(&solution, &expected, 1e-2);
+    let solution_verts = PointCloud::new(solver.vertex_positions());
+    compare_meshes(&solution_verts, &expected, 1e-2);
+    Ok(())
+}
+
+#[test]
+fn stretch_plain_large() -> Result<(), Error> {
+    init_logger();
+    let mesh = make_stretched_box(20);
+    let mut solver = SolverBuilder::new(NLParams {
+        gravity: [0.0f32, 0.0, 0.0],
+        time_step: Some(0.1),
+        ..static_nl_params()
+    })
+        .set_mesh(Mesh::from(mesh))
+        .set_materials(vec![medium_solid_material().into()])
+        .build::<f64>()?;
+    for _ in 0..30 {
+        solver.step()?;
+    }
     Ok(())
 }
 
@@ -96,20 +109,19 @@ fn twist_plain() -> Result<(), Error> {
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
     let params = NLParams {
         gravity: [0.0f32, 0.0, 0.0],
+        time_step: Some(0.1),
         ..static_nl_params()
     };
     let mut solver = SolverBuilder::new(params)
         .set_mesh(Mesh::from(mesh))
         .set_materials(vec![material.into()])
         .build::<f64>()?;
-    solver.step()?;
+    for _ in 0..40 {
+        solver.step()?;
+    }
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk"))?;
-    let solid = &solver.solid();
-    let solution = TetMesh::new(
-        solver.vertex_positions(),
-        solid.nh_tet_elements.tets.clone(),
-    );
-    compare_meshes(&solution, &expected, 1e-3);
+    let solution_verts = PointCloud::new(solver.vertex_positions());
+    compare_meshes(&solution_verts, &expected, 1e-3);
     Ok(())
 }
 

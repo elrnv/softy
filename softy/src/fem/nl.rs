@@ -18,6 +18,19 @@ pub use problem::*;
 pub use solver::*;
 pub use trust_region::*;
 
+/// Time integration method.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum TimeIntegration {
+    /// Backward Euler integration.
+    BE,
+    /// Trapezoid Rule integration.
+    TR,
+    /// Second order Backward Differentiation Formula.
+    BDF2,
+    /// TR and BDF2 mixed method.
+    TRBDF2
+}
+
 /// Simulation parameters.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SimParams {
@@ -42,6 +55,7 @@ pub struct SimParams {
     pub friction_tolerance: f32,
     /// The distance tolerance between objects in contact.
     pub contact_tolerance: f32,
+    pub time_integration: TimeIntegration,
 }
 
 #[derive(Debug, Error)]
@@ -75,7 +89,7 @@ pub enum Status {
     /// A problem with the linear solve occurred.
     ///
     /// This is typically a conditioning or invertibility issue.
-    LinearSolveError(SparseDirectSolveError),
+    LinearSolveError(SparseSolveError),
     Diverged,
     StepTooLarge,
     NothingToSolve,

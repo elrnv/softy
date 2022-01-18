@@ -183,7 +183,7 @@ impl<X: Real, T: Real, E: TetEnergy<T>> EnergyGradient<X, T> for TetSolidElastic
                 let dF = tet_energy.deformation_gradient_differential(&tet_dx);
 
                 // Note: damping is already scaled by dt
-                let damp = DX_inv.transpose() * dF * vol * density * damping;
+                let damp = DX_inv.transpose() * dF * (vol * density * damping);
                 for i in 0..3 {
                     grad[i] += damp[i];
                     grad[3] -= damp[i];

@@ -223,7 +223,10 @@ impl<T: Real> ContactBasis<T> {
     where
         V3: Into<[T; 3]>,
     {
-        (self.contact_basis_matrix(contact_index) * Vector3::new(v.into())).into()
+        //dbg!(self.contact_basis_matrix(contact_index).into_data());
+        let v = v.into();
+        //dbg!(&v);
+        (self.contact_basis_matrix(contact_index) * Vector3::new(v)).into()
     }
 
     pub fn from_cylindrical_contact_coordinates(

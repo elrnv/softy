@@ -47,6 +47,7 @@ use std::sync::{Arc, Mutex};
 
 #[cxx::bridge(namespace = "softy")]
 mod ffi {
+
     #[namespace = ""]
     extern "C++" {
         include!("hdkrs/src/lib.rs.h");
@@ -92,6 +93,14 @@ mod ffi {
     pub enum MuStrategy {
         Monotone,
         Adaptive,
+    }
+
+    #[derive(Debug)]
+    pub enum TimeIntegration {
+        BE,
+        TR,
+        BDF2,
+        TRBDF2,
     }
 
     #[derive(Debug)]
@@ -153,6 +162,7 @@ mod ffi {
         pub acceleration_criterion: bool,
         pub acceleration_tolerance: f32,
         pub max_outer_iterations: u32,
+        pub time_integration: TimeIntegration,
 
         // Ipopt
         pub mu_strategy: MuStrategy,

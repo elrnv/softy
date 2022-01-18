@@ -80,6 +80,20 @@ static const char *theDsFile = R"THEDSFILE(
         default { "" }
     }
 
+    parm {
+        name "solvertype"
+        cppname "SolverType"
+        label "Solver Type"
+        type ordinal
+        default { "0" }
+        menu {
+            "ipopt" "IPOPT (Optimization)"
+            "newton" "Newton"
+            "newtonbt" "Newton with Backtracking"
+            "trustregion" "Trust Region"
+        }
+    }
+
     group {
         name "material"
         label "Material"
@@ -365,17 +379,18 @@ static const char *theDsFile = R"THEDSFILE(
         label "Solver"
 
         parm {
-            name "solvertype"
-            cppname "SolverType"
-            label "Solver Type"
+            name "timeintegration"
+            cppname "TimeIntegration"
+            label "Time Integration"
             type ordinal
             default { "0" }
             menu {
-                "ipopt" "IPOPT (Optimization)"
-                "newton" "Newton"
-                "newtonbt" "Newton with Backtracking"
-                "trustregion" "Trust Region"
+                "be" "Backward Euler (BE)"
+                "tr" "Trapezoidal Rule (TR)"
+                "bdf2" "BDF2"
+                "trbdf2" "TR-BDF2"
             }
+            hidewhen "{ solvertype == ipopt }"
         }
         parm {
             name "velocityclearfrequency"
@@ -679,6 +694,21 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
         break;
     case SOP_SoftyEnums::SolverType::IPOPT:
         sim_params.solver_type = softy::SolverType::Ipopt;
+        break;
+    }
+    switch (static_cast<SOP_SoftyEnums::TimeIntegration>(sopparms.getTimeIntegration()))
+    {
+        case SOP_SoftyEnums::TimeIntegration::BE:
+            sim_params.time_integration = softy::TimeIntegration::BE;
+        break;
+        case SOP_SoftyEnums::TimeIntegration::TR:
+            sim_params.time_integration = softy::TimeIntegration::TR;
+        break;
+        case SOP_SoftyEnums::TimeIntegration::BDF2:
+            sim_params.time_integration = softy::TimeIntegration::BDF2;
+        break;
+        case SOP_SoftyEnums::TimeIntegration::TRBDF2:
+            sim_params.time_integration = softy::TimeIntegration::TRBDF2;
         break;
     }
     sim_params.velocity_clear_frequency = sopparms.getVelocityClearFrequency();

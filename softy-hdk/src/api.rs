@@ -93,6 +93,17 @@ pub(crate) fn get_solver(
     }
 }
 
+impl From<TimeIntegration > for softy::nl_fem::TimeIntegration {
+    fn from(ti: TimeIntegration) -> softy::nl_fem::TimeIntegration {
+        match ti {
+            TimeIntegration::TR => softy::nl_fem::TimeIntegration::TR,
+            TimeIntegration::BDF2 => softy::nl_fem::TimeIntegration::BDF2,
+            TimeIntegration::TRBDF2=> softy::nl_fem::TimeIntegration::TRBDF2,
+            _ => softy::nl_fem::TimeIntegration::BE,
+        }
+    }
+}
+
 impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
     fn into(self) -> softy::nl_fem::SimParams {
         let SimParams {
@@ -112,6 +123,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             derivative_test,
             friction_tolerance,
             contact_tolerance,
+            time_integration,
             ..
         } = *self;
         let line_search = match solver_type {
@@ -150,6 +162,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             jacobian_test: derivative_test > 0,
             friction_tolerance,
             contact_tolerance,
+            time_integration: time_integration.into()
         }
     }
 }

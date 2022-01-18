@@ -16,12 +16,12 @@ use crate::contact::ContactJacobianView;
 use crate::energy::{EnergyGradient, EnergyHessian, EnergyHessianTopology};
 use crate::energy_models::{gravity::*, inertia::*};
 use crate::matrix::*;
+use crate::nl_fem::TimeIntegration;
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
 use crate::Mesh;
 use crate::PointCloud;
 use crate::{Real, Real64};
-use crate::nl_fem::TimeIntegration;
 
 #[derive(Clone)]
 pub struct Solution {
@@ -543,7 +543,8 @@ impl<T: Real64> NLProblem<T> {
         self.state.borrow_mut().advance(v);
         // Commit candidate forces.
         self.prev_force.clone_from(&*self.candidate_force.borrow());
-        self.prev_force_ad.clone_from(&*self.candidate_force_ad.borrow());
+        self.prev_force_ad
+            .clone_from(&*self.candidate_force_ad.borrow());
     }
 
     //    /// Advance object data one step back.
@@ -1421,8 +1422,7 @@ impl<T: Real64> NLProblem<T> {
             let solid = &self.state.borrow().solid;
             num += 2 * solid.elasticity::<T>().energy_hessian_size()
                 - solid.elasticity::<T>().num_hessian_diagonal_nnz()
-                +
-                if !self.is_static() {
+                + if !self.is_static() {
                     2 * solid.inertia().energy_hessian_size()
                         - solid.inertia().num_hessian_diagonal_nnz()
                 } else {
@@ -1684,14 +1684,20 @@ impl<T: Real64> NLProblem<T> {
             self.frictional_contact_constraints_ad.as_slice(),
         );
 
-        self.candidate_force_ad.borrow_mut().clone_from(vtx.residual_ad.storage());
+        self.candidate_force_ad
+            .borrow_mut()
+            .clone_from(vtx.residual_ad.storage());
 
         // add prev force
-        vtx.residual_ad.storage_mut().iter_mut().zip(self.prev_force_ad.iter()).for_each(|(residual, &force)| *residual += force);
+        vtx.residual_ad
+            .storage_mut()
+            .iter_mut()
+            .zip(self.prev_force_ad.iter())
+            .for_each(|(residual, &force)| *residual += force);
 
         let mut res_state = state.vtx.residual_state_ad();
         let r = &mut res_state.storage_mut().r;
-        *r.as_mut_tensor() *= ad::FT::cst(T::from(0.5*self.time_step()).unwrap());
+        *r.as_mut_tensor() *= ad::FT::cst(T::from(0.5 * self.time_step()).unwrap());
 
         if !self.is_static() {
             self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
@@ -1768,13 +1774,19 @@ impl<T: Real64> NLProblem<T> {
             self.frictional_contact_constraints.as_slice(),
         );
 
-        self.candidate_force.borrow_mut().clone_from(vtx.residual.storage());
+        self.candidate_force
+            .borrow_mut()
+            .clone_from(vtx.residual.storage());
 
         // add prev force
-        vtx.residual.storage_mut().iter_mut().zip(self.prev_force.iter()).for_each(|(residual, &force)| *residual += force);
+        vtx.residual
+            .storage_mut()
+            .iter_mut()
+            .zip(self.prev_force.iter())
+            .for_each(|(residual, &force)| *residual += force);
 
         let mut res_state = vtx.residual_state();
-        *res_state.storage_mut().r.as_mut_tensor() *= T::from(0.5*self.time_step()).unwrap();
+        *res_state.storage_mut().r.as_mut_tensor() *= T::from(0.5 * self.time_step()).unwrap();
 
         if !self.is_static() {
             self.add_momentum_diff(res_state.into_storage(), &solid, &shell);
@@ -1800,13 +1812,20 @@ impl<T: Real64> NLProblem<T> {
             self.frictional_contact_constraints.as_slice(),
         );
 
-        self.candidate_force.borrow_mut().clone_from(vtx.residual.storage());
+        self.candidate_force
+            .borrow_mut()
+            .clone_from(vtx.residual.storage());
 
         // add prev force
-        vtx.residual.storage_mut().iter_mut().zip(self.prev_force.iter()).for_each(|(residual, &force)| *residual += force);
+        vtx.residual
+            .storage_mut()
+            .iter_mut()
+            .zip(self.prev_force.iter())
+            .for_each(|(residual, &force)| *residual += force);
 
         let mut res_state = vtx.residual_state();
-        *res_state.storage_mut().r.as_mut_tensor() *= T::from((2.0/3.0)*self.time_step()).unwrap();
+        *res_state.storage_mut().r.as_mut_tensor() *=
+            T::from((2.0 / 3.0) * self.time_step()).unwrap();
 
         if !self.is_static() {
             self.add_momentum_diff(res_state.into_storage(), &solid, &shell);
@@ -1967,7 +1986,7 @@ impl<T: Real64> NLProblem<T> {
         cols: &[usize],
         vals: &mut [T],
     ) {
-        let half_dt = T::from(0.5*self.time_step()).unwrap();
+        let half_dt = T::from(0.5 * self.time_step()).unwrap();
         self.jacobian_values(dq, r, rows, cols, vals, half_dt, half_dt, State::tr_step);
     }
 
@@ -1983,7 +2002,9 @@ impl<T: Real64> NLProblem<T> {
         // Multiplier for force Jacobians
         force_multiplier: T,
         step: F,
-    ) where F: FnOnce(ChunkedView<StepState<&[T], &'v [T], &mut [T]>>, f64) {
+    ) where
+        F: FnOnce(ChunkedView<StepState<&[T], &'v [T], &mut [T]>>, f64),
+    {
         let num_active_coords = self.num_variables();
         let state = &mut *self.state.borrow_mut();
         step(state.step_state(dq), self.time_step());
@@ -2150,67 +2171,66 @@ impl<T: Real64> NLProblem<T> {
             // }
         }
 
-         // let ResidualState { next, r, .. } = vtx.residual_state_ad().into_storage();
-         // let mut vel = next.vel.to_vec();
-         // let mut next_pos = next.pos.to_vec();
-         // let mut cur_pos = next_pos.clone();
-         //
-         // // Clear duals
-         // for i in 0..n {
-         //     cur_pos[i].x = orig_pos[i];
-         //     cur_pos[i].dx = T::zero();
-         //     vel[i].x = orig_vel[i];
-         //     vel[i].dx = T::zero();
-         // }
-         //
-         // for fc in self.frictional_contact_constraints_ad.iter() {
-         //     let mut constraint = fc.constraint.borrow_mut();
-         //     let delta = self.delta as f32;
-         //     let kappa = self.kappa as f32;
-         //
-         //     let mut jac = vec![vec![0.0; n]; n];
-         //     for i in 0..n {
-         //         eprintln!("FD AUTODIFF WRT {}", i);
-         //         vel[i].dx = T::one();
-         //
-         //         for (next_pos, &cur_pos, &vel) in zip!(next_pos.iter_mut(), cur_pos.iter(), vel.iter()) {
-         //             *next_pos = cur_pos + vel * dt;
-         //         }
-         //
-         //         // Clear residual vector
-         //         for j in 0..n {
-         //             r[j] = autodiff::F::zero();
-         //         }
-         //
-         //         constraint.update_state(Chunked3::from_flat(&next_pos));
-         //         constraint.update_distance_potential();
-         //         constraint.update_multipliers(delta, kappa);
-         //         constraint.update_constraint_gradient();
-         //
-         //         constraint
-         //             .subtract_friction_force(Chunked3::from_flat(r), Chunked3::from_flat(vel.view()));
-         //
-         //         for j in 0..n {
-         //             jac[j][i] = r[j].deriv().to_f64().unwrap();
-         //         }
-         //
-         //         vel[i].dx = T::zero();
-         //     }
-         //     eprintln!("FRICTION JACOBIAN AUTODIFF:");
-         //     for row in 0..n {
-         //         for col in 0..n {
-         //             eprint!("{:10.2e} ", jac[row][col]);
-         //         }
-         //         eprintln!("");
-         //     }
-         // }
+        // let ResidualState { next, r, .. } = vtx.residual_state_ad().into_storage();
+        // let mut vel = next.vel.to_vec();
+        // let mut next_pos = next.pos.to_vec();
+        // let mut cur_pos = next_pos.clone();
+        //
+        // // Clear duals
+        // for i in 0..n {
+        //     cur_pos[i].x = orig_pos[i];
+        //     cur_pos[i].dx = T::zero();
+        //     vel[i].x = orig_vel[i];
+        //     vel[i].dx = T::zero();
+        // }
+        //
+        // for fc in self.frictional_contact_constraints_ad.iter() {
+        //     let mut constraint = fc.constraint.borrow_mut();
+        //     let delta = self.delta as f32;
+        //     let kappa = self.kappa as f32;
+        //
+        //     let mut jac = vec![vec![0.0; n]; n];
+        //     for i in 0..n {
+        //         eprintln!("FD AUTODIFF WRT {}", i);
+        //         vel[i].dx = T::one();
+        //
+        //         for (next_pos, &cur_pos, &vel) in zip!(next_pos.iter_mut(), cur_pos.iter(), vel.iter()) {
+        //             *next_pos = cur_pos + vel * dt;
+        //         }
+        //
+        //         // Clear residual vector
+        //         for j in 0..n {
+        //             r[j] = autodiff::F::zero();
+        //         }
+        //
+        //         constraint.update_state(Chunked3::from_flat(&next_pos));
+        //         constraint.update_distance_potential();
+        //         constraint.update_multipliers(delta, kappa);
+        //         constraint.update_constraint_gradient();
+        //
+        //         constraint
+        //             .subtract_friction_force(Chunked3::from_flat(r), Chunked3::from_flat(vel.view()));
+        //
+        //         for j in 0..n {
+        //             jac[j][i] = r[j].deriv().to_f64().unwrap();
+        //         }
+        //
+        //         vel[i].dx = T::zero();
+        //     }
+        //     eprintln!("FRICTION JACOBIAN AUTODIFF:");
+        //     for row in 0..n {
+        //         for col in 0..n {
+        //             eprint!("{:10.2e} ", jac[row][col]);
+        //         }
+        //         eprintln!("");
+        //     }
+        // }
 
         //self.print_jacobian_svd(vals);
         *self.iter_counter.borrow_mut() += 1;
 
         debug_assert!(vals.iter().take(count).all(|x| x.is_finite()));
     }
-
 
     fn jacobian_product_autodiff(&self, v: &[T], p: &[T], jp: &mut [T]) {
         {
@@ -2433,10 +2453,18 @@ impl<T: Real64> NLProblem<T> {
             max_element_force_scale,
             min_element_force_scale,
             original_mesh,
-            candidate_force: RefCell::new(candidate_force.iter().map(|&x| ad::F1::cst(x.to_f64().unwrap())).collect()),
-            prev_force:prev_force.iter().map(|&x| ad::F1::cst(x.to_f64().unwrap())).collect(),
+            candidate_force: RefCell::new(
+                candidate_force
+                    .iter()
+                    .map(|&x| ad::F1::cst(x.to_f64().unwrap()))
+                    .collect(),
+            ),
+            prev_force: prev_force
+                .iter()
+                .map(|&x| ad::F1::cst(x.to_f64().unwrap()))
+                .collect(),
             candidate_force_ad: RefCell::new(convert_ad(&candidate_force_ad)),
-            prev_force_ad:convert_ad(&prev_force_ad),
+            prev_force_ad: convert_ad(&prev_force_ad),
             time_integration,
         }
     }
@@ -2460,7 +2488,14 @@ impl<T: Real64> NLProblem<T> {
             let (jac_rows, jac_cols) = problem_clone.jacobian_indices();
 
             let mut jac_values = vec![T::zero(); jac_rows.len()];
-            NonLinearProblem::jacobian_values(&problem_clone, &x0, &r, &jac_rows, &jac_cols, &mut jac_values);
+            NonLinearProblem::jacobian_values(
+                &problem_clone,
+                &x0,
+                &r,
+                &jac_rows,
+                &jac_cols,
+                &mut jac_values,
+            );
 
             // Build a dense Jacobian.
             let mut jac = vec![vec![0.0; n]; n];

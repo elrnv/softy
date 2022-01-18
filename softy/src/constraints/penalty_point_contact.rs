@@ -830,8 +830,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 let norm_n_inv = T::one() / grad_psi[query_vtx_idx].into_tensor().norm();
 
                 // Compute the Jacobian of the normalized negative grad psi. (see compute_normals for reference on why).
-                let nml_jac =
-                    (Matrix3::identity() - n * n.transpose()) * nml_jac.into_tensor() * (-norm_n_inv);
+                let nml_jac = (Matrix3::identity() - n * n.transpose())
+                    * nml_jac.into_tensor()
+                    * (-norm_n_inv);
 
                 // Find the axis that is most aligned with the normal, then use the next axis for the
                 // tangent.
@@ -1090,10 +1091,10 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                         let lhs_block = *lhs_block.into_arrays().as_tensor();
                                         let rhs_block = *rhs_block.into_arrays().as_tensor();
                                         let index = lhs_contact_idx; // = rhs_contact_idx
-                                        //dbg!(rhs_block* (-dqdv
-                                        //    * kappa
-                                        //    * ContactPenalty::new(delta)
-                                        //    .ddb(dist[rhs_constraint_idx])));
+                                                                     //dbg!(rhs_block* (-dqdv
+                                                                     //    * kappa
+                                                                     //    * ContactPenalty::new(delta)
+                                                                     //    .ddb(dist[rhs_constraint_idx])));
                                         let rhs = *vc[index].as_tensor()
                                             * (rhs_block
                                                 * (-dqdv
@@ -1506,7 +1507,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                     *block.into_arrays().as_tensor() * (mu * dqdv),
                                 )
                             })
-                        })//        .inspect(|(i,j,m)| log::trace!("B:({},{}): {:?}", i,j,(*m).into_data())) ,
+                        }), //        .inspect(|(i,j,m)| log::trace!("B:({},{}): {:?}", i,j,(*m).into_data())) ,
                 )
                 .chain(
                     self.friction_jacobian_workspace
@@ -1522,7 +1523,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                     *block.into_arrays().as_tensor() * (mu * dqdv),
                                 )
                             })
-                        })//.inspect(|(i,j,m)| log::trace!("C:({},{}): {:?}", i,j,(*m).into_data())) ,
+                        }), //.inspect(|(i,j,m)| log::trace!("C:({},{}): {:?}", i,j,(*m).into_data())) ,
                 )
                 //.chain(
                 //    self.friction_jacobian_workspace
@@ -1550,7 +1551,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                             row.into_iter().map(move |(col_idx, block)| {
                                 (row_idx, col_idx, *block.into_arrays().as_tensor() * mu)
                             })
-                        })//.inspect(|(i,j,m)| log::trace!("E:({},{}): {:?}", i,j,(*m).into_data()))
+                        }), //.inspect(|(i,j,m)| log::trace!("E:({},{}): {:?}", i,j,(*m).into_data()))
                 )
                 .filter(move |&(row, col, _)| row < max_index && col < max_index)
                 .flat_map(move |(row, col, block)| {
@@ -2034,7 +2035,7 @@ mod tests {
         let mut tetmesh = PlatonicSolidBuilder::build_tetrahedron();
         tetmesh.translate([0.0, 1.0 / 3.0, 0.0]);
         tetmesh.rotate([0.0, 0.0, 1.0], std::f64::consts::PI / 16.0);
-        geo::io::save_tetmesh(&tetmesh, "./out/tetmesh.vtk")?;
+        //geo::io::save_tetmesh(&tetmesh, "./out/tetmesh.vtk")?;
 
         let mut surface = GridBuilder {
             rows: 1,
@@ -2046,7 +2047,7 @@ mod tests {
         surface.vertex_positions_mut()[0][1] += 0.1;
         surface.rotate([0.0, 0.0, 1.0], std::f64::consts::PI / 16.0);
         surface.uniform_scale(2.0);
-        geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
+        //geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
 
         let params = SimParams {
             max_iterations: 50,
@@ -2102,7 +2103,7 @@ mod tests {
             }),
         };
 
-        let mesh: Mesh<f64> = geo::io::load_mesh("./out/problem.vtk")?;
+        //let mesh: Mesh<f64> = geo::io::load_mesh("./out/problem.vtk")?;
 
         let mut solver = SolverBuilder::new(params.clone())
             .set_mesh(mesh)
@@ -2164,14 +2165,14 @@ mod tests {
                 let (active_constraint_subset, _, _, _, _) =
                     fc.point_constraint.in_contact_indices(lambda, dist);
                 let normals = fc.point_constraint.contact_normals();
-                let normals_subset =
-                    Subset::from_unique_ordered_indices(active_constraint_subset, normals.as_slice());
+                let normals_subset = Subset::from_unique_ordered_indices(
+                    active_constraint_subset,
+                    normals.as_slice(),
+                );
                 let mut normals = Chunked3::from_array_vec(vec![[0.0; 3]; normals_subset.len()]);
                 normals_subset.clone_into_other(&mut normals);
-                let FrictionWorkspace {
-                    contact_basis,
-                    ..
-                } = fc.point_constraint.friction_workspace.as_mut().unwrap();
+                let FrictionWorkspace { contact_basis, .. } =
+                    fc.point_constraint.friction_workspace.as_mut().unwrap();
                 contact_basis.update_from_normals(normals.into());
             }
 

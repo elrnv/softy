@@ -46,9 +46,7 @@ fn equilibrium() {
     assert!(result.is_ok());
 
     // Expect the triangles to remain in original configuration
-    let solution_verts  = PointCloud::new(
-        solver.vertex_positions(),
-    );
+    let solution_verts = PointCloud::new(solver.vertex_positions());
     compare_meshes(&solution_verts, &mesh, 1e-6);
 }
 

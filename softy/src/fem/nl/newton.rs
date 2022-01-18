@@ -46,7 +46,7 @@ pub enum SparseSolveError {
     #[error("Iterative solve error")]
     Iteartive(#[from] SparseIterativeSolveError),
     #[error("Direct solve error")]
-    Direct(#[from] SparseDirectSolveError)
+    Direct(#[from] SparseDirectSolveError),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Error)]
@@ -62,6 +62,7 @@ pub enum SparseIterativeSolveError {
 }
 
 impl SparseIterativeSolveError {
+    #[cfg(target_os = "macos")]
     pub fn result_from_status<T>(
         val: T,
         status: SparseIterativeStatus,
@@ -74,12 +75,13 @@ impl SparseIterativeSolveError {
             SparseIterativeStatus::InternalError => Err(SparseIterativeSolveError::InternalError),
         }
     }
+    #[cfg(target_os = "macos")]
     pub fn status(self) -> SparseIterativeStatus {
         match self {
-            SparseIterativeSolveError::MaxIterations  => SparseIterativeStatus::MaxIterations,
+            SparseIterativeSolveError::MaxIterations => SparseIterativeStatus::MaxIterations,
             SparseIterativeSolveError::ParameterError => SparseIterativeStatus::ParameterError,
             SparseIterativeSolveError::IllConditioned => SparseIterativeStatus::IllConditioned,
-            SparseIterativeSolveError::InternalError  => SparseIterativeStatus::InternalError,
+            SparseIterativeSolveError::InternalError => SparseIterativeStatus::InternalError,
         }
     }
 }
@@ -96,9 +98,13 @@ pub enum SparseDirectSolveError {
     ParameterError,
     #[error("Matrix released")]
     Released,
+    #[cfg(not(target_os = "macos"))]
+    #[error("MKL error")]
+    MKLError(#[from] mkl::dss::Error),
 }
 
 impl SparseDirectSolveError {
+    #[cfg(target_os = "macos")]
     pub fn result_from_status<T>(
         val: T,
         status: SparseStatus,
@@ -112,6 +118,7 @@ impl SparseDirectSolveError {
             SparseStatus::Released => Err(SparseDirectSolveError::Released),
         }
     }
+    #[cfg(target_os = "macos")]
     pub fn status(self) -> SparseStatus {
         match self {
             SparseDirectSolveError::FactorizationFailed => SparseStatus::FactorizationFailed,
@@ -179,13 +186,14 @@ impl Factorization {
 ///
 /// This is done via third party libraries like MKL or Accelerate.
 /// This struct also helps isolate conditionally compiled code from the rest of the solver.
+#[cfg(target_os = "macos")]
 pub struct SparseIterativeSolver {
     b64: Vec<f64>,
     r64: Vec<f64>,
-    #[cfg(target_os = "macos")]
     mtx: SparseMatrixF64<'static>,
 }
 
+#[cfg(target_os = "macos")]
 impl SparseIterativeSolver {
     pub fn new<T: Real>(m: DSMatrixView<T>) -> SparseIterativeSolver {
         use std::convert::TryFrom;
@@ -238,7 +246,12 @@ impl SparseIterativeSolver {
     pub fn solve<T: Real>(&mut self, b: &[T]) -> Result<&[f64], SparseIterativeSolveError> {
         self.update_rhs(&b);
         let method = SparseIterativeMethod::lsmr();
-        let status = method.solve_precond(&self.mtx, &mut self.b64, &mut self.r64, SparsePreconditioner::DiagScaling);
+        let status = method.solve_precond(
+            &self.mtx,
+            &mut self.b64,
+            &mut self.r64,
+            SparsePreconditioner::DiagScaling,
+        );
         SparseIterativeSolveError::result_from_status(&self.r64, status)
     }
 }
@@ -254,13 +267,16 @@ pub struct SparseDirectSolver {
     #[cfg(target_os = "macos")]
     factorization: Factorization,
     #[cfg(not(target_os = "macos"))]
-    mtx: mkl::SparseMatrix<f64>,
+    solver: mkl::dss::Solver<f64>,
     #[cfg(not(target_os = "macos"))]
-    solver: mkl::Solver<T>,
+    buf: Vec<f64>,
+    #[cfg(not(target_os = "macos"))]
+    sol: Vec<f64>,
 }
 
 impl SparseDirectSolver {
-    pub fn new<T: Real>(m: DSMatrixView<T>) -> SparseDirectSolver {
+    #[cfg(target_os = "macos")]
+    pub fn new<T: Real>(m: DSMatrixView<T>) -> Option<Self> {
         use std::convert::TryFrom;
         let num_variables = m.num_rows();
         let mut values = Vec::new();
@@ -287,17 +303,47 @@ impl SparseDirectSolver {
             values.as_slice(),
         );
         let t_begin_symbolic = Instant::now();
-        let symbolic_factorization = mtx.structure()
-            .symbolic_factor(SparseFactorizationType::QR);
+        let symbolic_factorization = mtx.structure().symbolic_factor(SparseFactorizationType::QR);
         let t_end_symbolic = Instant::now();
-        log::debug!("Symbolic time: {}ms", (t_end_symbolic - t_begin_symbolic).as_millis());
-        SparseDirectSolver {
+        log::debug!(
+            "Symbolic time: {}ms",
+            (t_end_symbolic - t_begin_symbolic).as_millis()
+        );
+        Some(SparseDirectSolver {
             r64: vec![0.0; num_variables],
             mtx,
             factorization: Factorization::from(symbolic_factorization),
-        }
+        })
     }
 
+    #[cfg(not(target_os = "macos"))]
+    pub fn new<T: Real>(m: DSMatrixView<T>) -> Option<Self> {
+        let num_variables = m.num_rows();
+        let m = m.into_data();
+        let values: Vec<_> = m.storage().iter().map(|x| x.to_f64().unwrap()).collect();
+        let row_offsets = m.chunks.as_ref();
+        let col_indices = m.data.indices().storage();
+
+        let mtx = mkl::dss::SparseMatrix::try_convert_from_csr(
+            row_offsets,
+            col_indices,
+            values.as_slice(),
+            mkl::dss::MatrixStructure::NonSymmetric,
+        )
+        .ok()?;
+        let t_begin = Instant::now();
+        let solver = mkl::dss::Solver::try_factor(&mtx, mkl::dss::Definiteness::Indefinite).ok()?;
+        let t_end = Instant::now();
+        log::debug!("First factor time: {}ms", (t_end - t_begin).as_millis());
+        Some(SparseDirectSolver {
+            r64: vec![0.0; num_variables],
+            solver,
+            buf: vec![0.0; num_variables],
+            sol: vec![0.0; num_variables],
+        })
+    }
+
+    #[cfg(target_os = "macos")]
     pub fn update_values<T: Real>(&mut self, data: &[T]) {
         assert_eq!(data.len(), self.mtx.data().len());
         self.mtx
@@ -307,8 +353,14 @@ impl SparseDirectSolver {
             .for_each(|(output, input)| *output = input.to_f64().unwrap());
     }
 
+    #[cfg(target_os = "macos")]
     pub fn refactor(&mut self) -> Result<(), SparseDirectSolveError> {
         self.factorization.factor(&self.mtx)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn solve<T: Real>(&mut self) -> Result<&[f64], SparseDirectSolveError> {
+        self.factorization.solve_in_place(&mut self.r64)
     }
 
     pub fn update_rhs<T: Real>(&mut self, r: &[T]) {
@@ -318,18 +370,44 @@ impl SparseDirectSolver {
             .for_each(|(out_f64, in_t)| *out_f64 = in_t.to_f64().unwrap());
     }
 
-    pub fn solve<T: Real>(&mut self, r: &[T]) -> Result<&[f64], SparseDirectSolveError> {
+    #[cfg(not(target_os = "macos"))]
+    pub fn solve_with_values<T: Real>(
+        &mut self,
+        r: &[T],
+        values: &[T],
+    ) -> Result<&[f64], SparseDirectSolveError> {
         let t_begin = Instant::now();
+        // Update values and refactor
         self.update_rhs(&r);
         let t_update = Instant::now();
-        self.factorization.factor(&self.mtx)?;
+        let values: Vec<_> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
+        self.solver
+            .refactor(values.as_slice(), mkl::dss::Definiteness::Indefinite);
         let t_factor = Instant::now();
-        let res = self.factorization.solve_in_place(&mut self.r64);
+        self.solver
+            .solve_into(&mut self.sol, &mut self.buf, &mut self.r64)?;
+        let t_end = Instant::now();
+        Ok(&self.sol)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn solve_with_values<T: Real>(
+        &mut self,
+        r: &[T],
+        values: &[T],
+    ) -> Result<&[f64], SparseDirectSolveError> {
+        let t_begin = Instant::now();
+        self.update_values(values);
+        self.update_rhs(&r);
+        let t_update = Instant::now();
+        self.refactor();
+        let t_factor = Instant::now();
+        let result = self.solve(r);
         let t_end = Instant::now();
         log::debug!("update time: {}ms", (t_update - t_begin).as_millis());
         log::debug!("factor time: {}ms", (t_factor - t_update).as_millis());
         log::debug!("solve in place time: {}ms", (t_end - t_factor).as_millis());
-        res
+        result
     }
 }
 
@@ -342,6 +420,7 @@ pub struct SparseJacobian<T: Real> {
     j_mapping: Vec<Index>,
     j: DSMatrix<T>,
     sparse_solver: LazyCell<SparseDirectSolver>,
+    #[cfg(target_os = "macos")]
     sparse_iterative_solver: LazyCell<SparseIterativeSolver>,
 }
 
@@ -355,6 +434,8 @@ pub struct NewtonWorkspace<T: Real> {
     r_next: Vec<T>,
     sparse_jacobian: SparseJacobian<T>,
 }
+
+unsafe impl<T: Real> Send for NewtonWorkspace<T> {}
 
 pub struct Newton<P, T: Real> {
     pub problem: P,
@@ -451,6 +532,7 @@ where
                     j: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
                     j_mapping: Vec::new(),
                     sparse_solver: LazyCell::new(),
+                    #[cfg(target_os = "macos")]
                     sparse_iterative_solver: LazyCell::new(),
                 },
             }),
@@ -498,7 +580,8 @@ where
         sj.j = j;
         sj.j_mapping = j_mapping;
         sj.sparse_solver
-            .replace(SparseDirectSolver::new(sj.j.view()));
+            .replace(SparseDirectSolver::new(sj.j.view()).unwrap());
+        #[cfg(target_os = "macos")]
         sj.sparse_iterative_solver
             .replace(SparseIterativeSolver::new(sj.j.view()));
     }
@@ -550,6 +633,7 @@ where
             j_mapping,
             j,
             sparse_solver,
+            #[cfg(target_os = "macos")]
             sparse_iterative_solver,
         } = sparse_jacobian;
 
@@ -558,6 +642,7 @@ where
             .borrow_mut()
             .expect("Uninitialized sparse solver.");
 
+        #[cfg(target_os = "macos")]
         let sparse_iterative_solver = sparse_iterative_solver
             .borrow_mut()
             .expect("Uninitialized sparse solver.");
@@ -644,8 +729,6 @@ where
                     //j_sprs.data_mut()[pos] += j_val;
                 }
             }
-            sparse_solver.update_values(j.storage());
-            sparse_iterative_solver.update_values(j.storage());
 
             //log::trace!("r = {:?}", &r);
 
@@ -686,8 +769,8 @@ where
 
             //log::trace!("linsolve result: {:?}", linsolve_result);
 
-            let result = sparse_solver.solve(&r);
             //let result = sparse_iterative_solver.solve(&r);
+            let result = sparse_solver.solve_with_values(&r, j.storage());
             let r64 = match result {
                 Err(err) => {
                     break SolveResult {
@@ -706,7 +789,10 @@ where
 
             //log::trace!("p = {:?}", &r);
 
-            log::debug!("Linsolve time: {}ms", (Instant::now() - t_begin_linsolve).as_millis());
+            log::debug!(
+                "Linsolve time: {}ms",
+                (Instant::now() - t_begin_linsolve).as_millis()
+            );
             linsolve_time += Instant::now() - t_begin_linsolve;
 
             // Check solution:

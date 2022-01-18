@@ -72,9 +72,9 @@ fn stretch_plain_large() -> Result<(), Error> {
         time_step: Some(0.1),
         ..static_nl_params()
     })
-        .set_mesh(Mesh::from(mesh))
-        .set_materials(vec![medium_solid_material().into()])
-        .build::<f64>()?;
+    .set_mesh(Mesh::from(mesh))
+    .set_materials(vec![medium_solid_material().into()])
+    .build::<f64>()?;
     for _ in 0..30 {
         solver.step()?;
     }

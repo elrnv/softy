@@ -28,7 +28,7 @@ pub enum TimeIntegration {
     /// Second order Backward Differentiation Formula.
     BDF2,
     /// TR and BDF2 mixed method.
-    TRBDF2
+    TRBDF2,
 }
 
 /// Simulation parameters.

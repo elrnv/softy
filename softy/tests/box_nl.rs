@@ -64,6 +64,7 @@ fn stretch_plain() -> Result<(), Error> {
 }
 
 #[test]
+#[ignore]
 fn stretch_plain_large() -> Result<(), Error> {
     init_logger();
     let mesh = make_stretched_box(20);

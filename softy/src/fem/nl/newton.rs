@@ -1,3 +1,4 @@
+use std::convert::TryFrom;
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
@@ -146,20 +147,22 @@ impl From<SparseSymbolicFactorization> for Factorization {
 #[cfg(target_os = "macos")]
 impl Factorization {
     fn factor(&mut self, mtx: &SparseMatrixF64) -> Result<(), SparseDirectSolveError> {
-        let nfopts = SparseNumericFactorOptions {
-            pivot_tolerance: 0.001,
-            zero_tolerance: 0.001,
-            ..Default::default()
-        };
+        //let nfopts = SparseNumericFactorOptions {
+        //    pivot_tolerance: 0.001,
+        //    zero_tolerance: 0.001,
+        //    ..Default::default()
+        //};
         match self {
             Factorization::Symbolic(sym) => {
-                let f = mtx.factor_with_options(sym, nfopts);
+                //let f = mtx.factor_with_options(sym, nfopts);
+                let f = mtx.factor_with(sym);
                 let status = f.status();
                 *self = Factorization::Numeric(f);
                 SparseDirectSolveError::result_from_status((), status)
             }
             Factorization::Numeric(num) => {
-                let status = num.refactor_with_options(mtx, nfopts);
+                //let status = num.refactor_with_options(mtx, nfopts);
+                let status = num.refactor(mtx);
                 SparseDirectSolveError::result_from_status((), status)
             }
         }
@@ -195,31 +198,9 @@ pub struct SparseIterativeSolver {
 
 #[cfg(target_os = "macos")]
 impl SparseIterativeSolver {
-    pub fn new<T: Real>(m: DSMatrixView<T>) -> SparseIterativeSolver {
-        use std::convert::TryFrom;
-        let num_variables = m.num_rows();
-        let mut values = Vec::new();
-        let mut row_indices = Vec::new();
-        let mut col_indices = Vec::new();
-        values.reserve(m.storage().len());
-        row_indices.reserve(m.storage().len());
-        col_indices.reserve(m.storage().len());
-        for (row_idx, row) in m.into_data().iter().enumerate() {
-            for (col_idx, val) in row.into_iter() {
-                values.push(val.to_f64().unwrap());
-                row_indices.push(i32::try_from(row_idx).unwrap());
-                col_indices.push(i32::try_from(col_idx).unwrap());
-            }
-        }
-        let mtx = SparseMatrixF64::from_coordinate(
-            i32::try_from(m.num_rows()).unwrap(),
-            i32::try_from(m.num_cols()).unwrap(),
-            1,
-            SparseAttributes::new().transposed(),
-            col_indices.as_slice(),
-            row_indices.as_slice(),
-            values.as_slice(),
-        );
+    pub fn new<T: Real>(m_t: DSMatrixView<T>) -> SparseIterativeSolver {
+        let num_variables = m_t.num_cols();
+        let mtx = new_sparse(m_t, true);
         SparseIterativeSolver {
             b64: vec![0.0; num_variables],
             r64: vec![0.0; num_variables],
@@ -243,8 +224,17 @@ impl SparseIterativeSolver {
             .for_each(|(out_f64, in_t)| *out_f64 = in_t.to_f64().unwrap());
     }
 
-    pub fn solve<T: Real>(&mut self, b: &[T]) -> Result<&[f64], SparseIterativeSolveError> {
+    pub fn solve_with_values<T: Real>(
+        &mut self,
+        b: &[T],
+        values: &[T],
+    ) -> Result<&[f64], SparseIterativeSolveError> {
         self.update_rhs(&b);
+        self.update_values(values);
+        self.solve()
+    }
+
+    pub fn solve(&mut self) -> Result<&[f64], SparseIterativeSolveError> {
         let method = SparseIterativeMethod::lsmr();
         let status = method.solve_precond(
             &self.mtx,
@@ -274,34 +264,64 @@ pub struct SparseDirectSolver {
     sol: Vec<f64>,
 }
 
+#[cfg(target_os = "macos")]
+// Given a transpose matrix in CSR, returns a new CSC sparse matrix with the same sparsity pattern.
+fn new_sparse<T: Real>(m: DSMatrixView<T>, transposed: bool) -> SparseMatrixF64<'static> {
+    let (num_rows, num_cols) = if transposed {
+        (m.num_cols(), m.num_rows())
+    } else {
+        (m.num_rows(), m.num_cols())
+    };
+    let m = m.into_data();
+    let mut values = Vec::new();
+    let mut row_indices = Vec::new();
+    let mut col_indices = Vec::new();
+    values.reserve(m.storage().len());
+    row_indices.reserve(m.storage().len());
+    col_indices.reserve(m.storage().len());
+    for (row_idx, row) in m.into_data().iter().enumerate() {
+        for (col_idx, val) in row.into_iter() {
+            values.push(val.to_f64().unwrap());
+            let (row_idx, col_idx) = if transposed {
+                (col_idx, row_idx)
+            } else {
+                (row_idx, col_idx)
+            };
+            row_indices.push(i32::try_from(row_idx).unwrap());
+            col_indices.push(i32::try_from(col_idx).unwrap());
+        }
+    }
+
+    SparseMatrixF64::from_coordinate(
+        i32::try_from(num_rows).unwrap(),
+        i32::try_from(num_cols).unwrap(),
+        1,
+        // Since the output is CSC whereas the input is CSR, the transpose roles are reversed:
+        if transposed {
+            SparseAttributes::new()
+        } else {
+            SparseAttributes::new().transposed()
+        },
+        col_indices.as_slice(),
+        row_indices.as_slice(),
+        values.as_slice(),
+    )
+}
+
+// Assumes values are in csc order.
+fn update_sparse_values<T: Real>(m: &mut SparseMatrixF64, values: &[T]) {
+    m
+        .data_mut()
+        .iter_mut()
+        .zip(values.iter())
+        .for_each(|(output, input)| *output = input.to_f64().unwrap());
+}
+
 impl SparseDirectSolver {
     #[cfg(target_os = "macos")]
-    pub fn new<T: Real>(m: DSMatrixView<T>) -> Option<Self> {
-        use std::convert::TryFrom;
-        let num_variables = m.num_rows();
-        let mut values = Vec::new();
-        let mut row_indices = Vec::new();
-        let mut col_indices = Vec::new();
-        values.reserve(m.storage().len());
-        row_indices.reserve(m.storage().len());
-        col_indices.reserve(m.storage().len());
-        for (row_idx, row) in m.into_data().iter().enumerate() {
-            for (col_idx, val) in row.into_iter() {
-                values.push(val.to_f64().unwrap());
-                row_indices.push(i32::try_from(row_idx).unwrap());
-                col_indices.push(i32::try_from(col_idx).unwrap());
-            }
-        }
-
-        let mtx = SparseMatrixF64::from_coordinate(
-            i32::try_from(m.num_rows()).unwrap(),
-            i32::try_from(m.num_cols()).unwrap(),
-            1,
-            SparseAttributes::new().transposed(),
-            col_indices.as_slice(),
-            row_indices.as_slice(),
-            values.as_slice(),
-        );
+    pub fn new<T: Real>(m_t: DSMatrixView<T>) -> Option<Self> {
+        let num_variables = m_t.num_cols();
+        let mtx = new_sparse(m_t, true);
         let t_begin_symbolic = Instant::now();
         let symbolic_factorization = mtx.structure().symbolic_factor(SparseFactorizationType::QR);
         let t_end_symbolic = Instant::now();
@@ -346,11 +366,7 @@ impl SparseDirectSolver {
     #[cfg(target_os = "macos")]
     pub fn update_values<T: Real>(&mut self, data: &[T]) {
         assert_eq!(data.len(), self.mtx.data().len());
-        self.mtx
-            .data_mut()
-            .iter_mut()
-            .zip(data.iter())
-            .for_each(|(output, input)| *output = input.to_f64().unwrap());
+        update_sparse_values(&mut self.mtx, data);
     }
 
     #[cfg(target_os = "macos")]
@@ -396,18 +412,10 @@ impl SparseDirectSolver {
         r: &[T],
         values: &[T],
     ) -> Result<&[f64], SparseDirectSolveError> {
-        let t_begin = Instant::now();
         self.update_values(values);
         self.update_rhs(&r);
-        let t_update = Instant::now();
-        self.refactor();
-        let t_factor = Instant::now();
-        let result = self.solve();
-        let t_end = Instant::now();
-        log::debug!("update time: {}ms", (t_update - t_begin).as_millis());
-        log::debug!("factor time: {}ms", (t_factor - t_update).as_millis());
-        log::debug!("solve in place time: {}ms", (t_end - t_factor).as_millis());
-        result
+        self.refactor()?;
+        self.solve()
     }
 }
 
@@ -418,10 +426,16 @@ pub struct SparseJacobian<T: Real> {
     /// Mapping from original triplets given by the `j_*` members to the final
     /// compressed sparse matrix.
     j_mapping: Vec<Index>,
+    j_t_mapping: Vec<Index>,
     j: DSMatrix<T>,
+    j_t: DSMatrix<T>,
+    #[cfg(target_os = "macos")]
+    j_sparse: LazyCell<SparseMatrixF64<'static>>,
     sparse_solver: LazyCell<SparseDirectSolver>,
     #[cfg(target_os = "macos")]
     sparse_iterative_solver: LazyCell<SparseIterativeSolver>,
+    p64: Vec<f64>,
+    out64: Vec<f64>,
 }
 
 pub struct NewtonWorkspace<T: Real> {
@@ -530,10 +544,15 @@ where
                     j_cols: Vec::new(),
                     j_rows: Vec::new(),
                     j: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
+                    j_t: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
+                    j_sparse: LazyCell::new(),
                     j_mapping: Vec::new(),
+                    j_t_mapping: Vec::new(),
                     sparse_solver: LazyCell::new(),
                     #[cfg(target_os = "macos")]
                     sparse_iterative_solver: LazyCell::new(),
+                    p64: Vec::new(),
+                    out64: Vec::new(),
                 },
             }),
         }
@@ -575,15 +594,26 @@ where
         let sj = &mut ws.sparse_jacobian;
         sj.j_vals.resize(j_nnz, T::zero());
         let (j, j_mapping) = sparse_matrix_and_mapping(&j_rows, &j_cols, &sj.j_vals, n);
+        let (j_t, j_t_mapping) = sparse_matrix_and_mapping(&j_cols, &j_rows, &sj.j_vals, n);
         sj.j_cols = j_cols;
         sj.j_rows = j_rows;
         sj.j = j;
+        #[cfg(target_os = "macos")]
+        sj.j_sparse.replace(new_sparse(j_t.view(), true));
+        sj.j_t = j_t;
         sj.j_mapping = j_mapping;
+        sj.j_t_mapping = j_t_mapping;
+        #[cfg(target_os = "macos")]
         sj.sparse_solver
+            .replace(SparseDirectSolver::new(sj.j_t.view()).unwrap());
+        #[cfg(not(target_os = "macos"))]
+            sj.sparse_solver
             .replace(SparseDirectSolver::new(sj.j.view()).unwrap());
         #[cfg(target_os = "macos")]
         sj.sparse_iterative_solver
-            .replace(SparseIterativeSolver::new(sj.j.view()));
+            .replace(SparseIterativeSolver::new(sj.j_t.view()));
+        sj.p64.resize(n, 0.0);
+        sj.out64.resize(n, 0.0);
     }
 
     /// Solves the problem and returns the solution along with the solve result
@@ -631,10 +661,16 @@ where
             j_cols,
             j_vals,
             j_mapping,
+            j_t_mapping,
             j,
+            j_t,
+            #[cfg(target_os = "macos")]
+            j_sparse,
             sparse_solver,
             #[cfg(target_os = "macos")]
             sparse_iterative_solver,
+            p64,
+            out64: _,
         } = sparse_jacobian;
 
         // Unwrap the sparse solver. In case of panic check update_jacobian_indices function.
@@ -652,9 +688,6 @@ where
         // Initialize the residual.
         problem.residual(x, r.as_mut_slice());
 
-        // Convert to sprs format for debugging. The CSR structure is preserved.
-        //let mut j_sprs: sprs::CsMat<T> = j.clone().into();
-
         let a_tol = T::from(params.a_tol).unwrap();
         let r_tol = T::from(params.r_tol).unwrap();
         let x_tol = T::from(params.x_tol).unwrap();
@@ -662,7 +695,7 @@ where
         let mut linsolve_result = super::linsolve::SolveResult::default();
 
         log_debug_stats_header();
-        log_debug_stats(0, 0, linsolve_result, linsolve.tol, &r, x, &x_prev);
+        log_debug_stats(0, 0, linsolve_result, linsolve.tol, std::f64::INFINITY, &r, x, &x_prev);
 
         // Remember original tolerance so we can reset it later.
         let orig_linsolve_tol = linsolve.tol;
@@ -674,13 +707,16 @@ where
         let mut jprod_ls_time = Duration::new(0, 0);
         let mut residual_time = Duration::new(0, 0);
 
-        // Keep track of norms to avoid having to recompute them
-        let mut r_prev_norm = r.as_tensor().norm().to_f64().unwrap();
-        let mut r_cur_norm = r_prev_norm;
-        let mut r_next_norm;
+        //let merit = |r: &[T]| 0.5 * r.as_tensor().norm_squared().to_f64().unwrap();
+        let merit = |_: &[T]| problem.objective(x).to_f64().unwrap();
 
-        //let mut j_dense =
-        //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
+        // Keep track of merit function to avoid having to recompute it
+        let mut merit_cur = merit(r);
+        //let mut merit_prev = merit_cur;
+        let mut merit_next;
+
+        let mut j_dense =
+            ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
         //let mut identity =
         //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
         //for (i, id) in identity.iter_mut().enumerate() {
@@ -709,10 +745,10 @@ where
             //for (jp, p) in j_dense.iter_mut().zip(identity.iter()) {
             //    problem.jacobian_product(x, &p, &r, jp)
             //}
-            //build_dense(j_dense.view_mut(), &j_rows, &j_cols, &j_vals, x.len());
+            build_dense(j_dense.view_mut(), &j_rows, &j_cols, &j_vals, x.len());
             //print_dense(j_dense.view());
             //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
-            //log::debug!("Condition number: {:?}", condition_number(j_dense.view()));
+            log::debug!("Condition number: {:?}", condition_number(j_dense.view()));
             //write_jacobian_img(j_dense.view(), iterations);
             //jprod_time += Instant::now() - before_j;
 
@@ -720,41 +756,48 @@ where
 
             //// Zero out Jacobian.
             j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
-            //j_sprs.data_mut().iter_mut().for_each(|x| *x = T::zero());
+            j_t.storage_mut().iter_mut().for_each(|x| *x = T::zero());
 
             // Update the Jacobian matrix.
             for (&pos, &j_val) in j_mapping.iter().zip(j_vals.iter()) {
                 if let Some(pos) = pos.into_option() {
                     j.storage_mut()[pos] += j_val;
-                    //j_sprs.data_mut()[pos] += j_val;
+                }
+            }
+            for (&pos, &j_val) in j_t_mapping.iter().zip(j_vals.iter()) {
+                if let Some(pos) = pos.into_option() {
+                    j_t.storage_mut()[pos] += j_val;
                 }
             }
 
             //log::trace!("r = {:?}", &r);
 
-            if !r_cur_norm.is_finite() {
+            if !merit_cur.is_finite() {
                 break SolveResult {
                     iterations,
                     status: Status::Diverged,
                 };
             }
 
-            //print_sprs(&j_sprs.view());
-
             let t_begin_linsolve = Instant::now();
 
             // Update tolerance (forcing term)
-            linsolve.tol = orig_linsolve_tol
-                .min(((r_cur_norm - linsolve_result.residual).abs() / r_prev_norm) as f32);
+            //linsolve.tol = orig_linsolve_tol
+            //    .min(((merit_cur - linsolve_result.residual).abs() / merit_prev) as f32);
 
             r_cur.copy_from_slice(&r);
+
+            #[cfg(target_os = "macos")]
+            update_sparse_values(j_sparse.borrow_mut().unwrap(), j_t.storage());
+
             //linsolve_result = linsolve.solve(
             //    |p, out| {
             //        let t_begin_jprod = Instant::now();
-            //        problem.jacobian_product(x, p, r_cur, out);
-            //        //out.iter_mut().for_each(|x| *x = T::zero());
-            //        //j.view()
-            //        //    .add_mul_in_place_par(p.as_tensor(), out.as_mut_tensor());
+            //        //problem.jacobian_product(x, p, r_cur, out);
+            //        p.iter().zip(p64.iter_mut()).for_each(|(&x,p64)| *p64 = x.to_f64().unwrap());
+            //        out64.iter_mut().for_each(|x| *x = 0.0);
+            //        j_sparse.borrow().unwrap().add_mul_vec(p64, out64);
+            //        out.iter_mut().zip(out64.iter()).for_each(|(out, &out64)| *out = T::from(out64).unwrap());
             //        jprod_linsolve_time += Instant::now() - t_begin_jprod;
             //        inner_callback.borrow_mut()(CallbackArgs {
             //            residual: r_cur.as_slice(),
@@ -769,8 +812,8 @@ where
 
             //log::trace!("linsolve result: {:?}", linsolve_result);
 
-            //let result = sparse_iterative_solver.solve(&r);
-            let result = sparse_solver.solve_with_values(&r, j.storage());
+            //let result = sparse_iterative_solver.solve_with_values(&r, j_t.storage());
+            let result = sparse_solver.solve_with_values(&r, j_t.storage());
             let r64 = match result {
                 Err(err) => {
                     break SolveResult {
@@ -785,14 +828,9 @@ where
             p.iter_mut()
                 .zip(r64.iter())
                 .for_each(|(p, &r64)| *p = T::from(r64).unwrap());
-            //p.copy_from_slice(r.as_slice());
 
             //log::trace!("p = {:?}", &r);
 
-            log::debug!(
-                "Linsolve time: {}ms",
-                (Instant::now() - t_begin_linsolve).as_millis()
-            );
             linsolve_time += Instant::now() - t_begin_linsolve;
 
             // Check solution:
@@ -854,13 +892,13 @@ where
             residual_time += Instant::now() - t_begin_residual;
 
             let ls_count = if rho >= 1.0 {
-                r_next_norm = r_next.as_tensor().norm().to_f64().unwrap();
+                merit_next = problem.objective(x).to_f64().unwrap();//merit(r_next);
                 1
             } else {
                 // Line search.
                 let mut alpha = 1.0;
                 let mut ls_count = 1;
-                let mut sigma = linsolve.tol as f64;
+                //let mut sigma = linsolve.tol as f64;
 
                 loop {
                     // Compute gradient of the merit function 0.5 r'r  multiplied by p, which is r' dr/dx p.
@@ -876,27 +914,27 @@ where
                     problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
                     jprod_ls_time += Instant::now() - t_begin_jprod;
 
-                    // TRADITIONAL BACKTRACKING:
-                    //let rjp = jp
-                    //    .iter()
-                    //    .zip(r_cur.iter())
-                    //    .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap());
-                    //if (&r_next).as_tensor().norm_squared().to_f64().unwrap()
-                    //    <= (&r_cur).as_tensor().norm_squared().to_f64().unwrap()
-                    //        - 2.0 * params.line_search.armijo_coeff() * alpha * rjp
-                    //{
-                    //    break;
-                    //}
+                    // Compute the merit function
+                    merit_next = problem.objective(x).to_f64().unwrap();//merit(r_next);
 
-                    r_next_norm = r_next.as_tensor().norm().to_f64().unwrap();
-                    //log::trace!("Next     r norm: {}", r_next_norm);
-                    if r_next_norm <= r_cur_norm * (1.0 - rho * (1.0 - sigma)) {
+                    // TRADITIONAL BACKTRACKING:
+                    let rjp = jp
+                        .iter()
+                        .zip(r_cur.iter())
+                        .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap());
+                    if merit_next <= merit_cur - params.line_search.armijo_coeff() * alpha * rjp {
                         break;
                     }
 
+                    // INEXACT NEWTON:
+                    // if merit_next <= merit_cur * (1.0 - rho * (1.0 - sigma)) {
+                    //     break;
+                    // }
+                    //
                     alpha *= rho;
-                    sigma = 1.0 - alpha * (1.0 - sigma);
+                    // sigma = 1.0 - alpha * (1.0 - sigma);
 
+                    // Break if alpha becomes too small. This is usually a bad sign.
                     if alpha < 1e-3 {
                         break;
                     }
@@ -925,6 +963,7 @@ where
                 ls_count,
                 linsolve_result,
                 linsolve.tol,
+                merit_next,
                 &r_next,
                 x,
                 &x_prev,
@@ -941,9 +980,9 @@ where
             );
 
             // Check the convergence condition.
-            if (r_tol > T::zero() && r_next_norm < r_tol.to_f64().unwrap())
+            if (r_tol > T::zero() && merit_next < r_tol.to_f64().unwrap())
                 || (x_tol > T::zero() && dx_norm < x_tol * denom)
-                || (a_tol > T::zero() && r_next_norm < a_tol.to_f64().unwrap())
+                //|| (a_tol > T::zero() && merit_next < a_tol.to_f64().unwrap())
             {
                 break SolveResult {
                     iterations,
@@ -962,9 +1001,9 @@ where
             // Reset r to be a valid residual for the next iteration.
             r.copy_from_slice(&r_next);
 
-            // Update norms
-            r_prev_norm = r_cur_norm;
-            r_cur_norm = r_next_norm;
+            // Update merit function
+            //merit_prev = merit_cur;
+            merit_cur = merit_next;
         };
 
         // Reset tolerance for future solves.
@@ -997,7 +1036,7 @@ where
  */
 fn log_debug_stats_header() {
     log::debug!(
-        "    i |   res-2    |    d-2     |    x-2     | lin # |  lin err   |   sigma    | ls # "
+        "    i |   merit    |    d-2     |    x-2     | lin # |  lin err   |   sigma    | ls # "
     );
     log::debug!(
         "------+------------+------------+------------+-------+------------+------------+------"
@@ -1008,14 +1047,15 @@ fn log_debug_stats<T: Real>(
     ls_steps: u32,
     linsolve_result: super::linsolve::SolveResult,
     sigma: f32,
+    merit: f64,
     r: &[T],
     x: &[T],
     x_prev: &[T],
 ) {
     log::debug!(
-        "{i:>5} |  {res2:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {sigma:10.3e} | {ls:>4} ",
+        "{i:>5} |  {merit:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {sigma:10.3e} | {ls:>4} ",
         i = iterations,
-        res2 = r.as_tensor().norm().to_f64().unwrap(),
+        merit = merit,
         di = x_prev.iter().zip(x.iter()).map(|(&a, &b)| (a - b)*(a-b)).sum::<T>()
             .to_f64()
             .unwrap().sqrt(),
@@ -1133,21 +1173,6 @@ fn write_jacobian_img<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>, iter: u32
         }
     }
     super::problem::write_jacobian_img(&dense, iter);
-}
-
-#[allow(dead_code)]
-fn print_sprs<T: Real>(mat: &sprs::CsMatView<T>) {
-    eprintln!("mat = [");
-    for r in 0..mat.rows() {
-        for c in 0..mat.cols() {
-            eprint!(
-                "{} ",
-                mat.get(r, c).map(|&x| x.to_f64().unwrap()).unwrap_or(0.0)
-            );
-        }
-        eprintln!(";");
-    }
-    eprintln!("]");
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]

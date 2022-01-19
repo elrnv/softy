@@ -110,14 +110,14 @@ fn twist_plain() -> Result<(), Error> {
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
     let params = NLParams {
         gravity: [0.0f32, 0.0, 0.0],
-        time_step: Some(0.1),
+        //time_step: Some(0.1),
         ..static_nl_params()
     };
     let mut solver = SolverBuilder::new(params)
         .set_mesh(Mesh::from(mesh))
         .set_materials(vec![material.into()])
         .build::<f64>()?;
-    for _ in 0..40 {
+    for _ in 0..2 {
         solver.step()?;
     }
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk"))?;

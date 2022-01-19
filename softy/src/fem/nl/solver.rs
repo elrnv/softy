@@ -971,7 +971,7 @@ where
             (1.0 / (f64::from(sim_params.velocity_clear_frequency) * dt))
                 .round()
                 .to_u32()
-                .unwrap()
+                .unwrap_or(u32::MAX)
         } else {
             u32::MAX
         }
@@ -984,7 +984,7 @@ where
             let result = solver.solve_with(solution.as_mut_slice());
             /*******************************/
 
-            log::trace!("Solve Result: {}", &result);
+            log::debug!("Solve Result: {}", &result);
             match result.status {
                 Status::Success | Status::MaximumIterationsExceeded => {
                     // Compute contact violation.

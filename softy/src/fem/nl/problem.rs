@@ -5,7 +5,7 @@ use flatk::*;
 use geo::attrib::*;
 use geo::mesh::{topology::*, VertexPositions};
 use num_traits::{Float, Zero};
-use tensr::{AsMutTensor, AsTensor, IntoData, IntoTensor, Matrix, Tensor};
+use tensr::{AsMutTensor, AsTensor, IntoData, IntoTensor, Matrix, Norm, Tensor};
 
 use super::state::*;
 use crate::attrib_defines::*;
@@ -13,7 +13,7 @@ use crate::constraints::{
     penalty_point_contact::PenaltyPointContactConstraint, volume::VolumeConstraint,
 };
 use crate::contact::ContactJacobianView;
-use crate::energy::{EnergyGradient, EnergyHessian, EnergyHessianTopology};
+use crate::energy::{Energy, EnergyGradient, EnergyHessian, EnergyHessianTopology};
 use crate::energy_models::{gravity::*, inertia::*};
 use crate::matrix::*;
 use crate::nl_fem::TimeIntegration;
@@ -253,13 +253,12 @@ impl<T: Real64> NLProblem<T> {
                     VertexWorkspace {
                         orig_index,
                         next,
-                        cur,
                         ..
                     },
                 ..
             } = &*self.state.borrow();
 
-            let pos = cur.pos.as_arrays();
+            let pos = next.pos.as_arrays();
             let vel = next.vel.as_arrays();
             // TODO: add original_order to state so we can iterate (in parallel) over out instead here.
             orig_index
@@ -1550,6 +1549,40 @@ impl<T: Real64> NLProblem<T> {
         //constraint
     }
 
+    fn inertia(
+        &self,
+        state: ResidualState<&[T], &[T], &mut [T]>,
+        solid: &TetSolid,
+        shell: &TriShell,
+    ) -> T {
+        let ResidualState { cur, next, .. } = state;
+        solid.inertia().energy(cur.vel, next.vel) +
+        shell.inertia().energy(cur.vel, next.vel)
+    }
+
+    fn energy(
+        &self,
+        state: ResidualState<&[T], &[T], &mut [T]>,
+        solid: &TetSolid,
+        shell: &TriShell,
+        frictional_contacts: &[FrictionalContactConstraint<T>],
+    ) -> T {
+        let ResidualState { cur, next, .. } = state;
+
+        let mut energy = solid.elasticity().energy(cur.pos, next.pos);
+        energy += solid
+            .gravity(self.gravity)
+            .energy(cur.pos, next.pos);
+        energy += shell.elasticity().energy(cur.pos, next.pos);
+        energy += shell
+            .gravity(self.gravity)
+            .energy(cur.pos, next.pos);
+
+        //TODO add frictional contact energy
+
+        energy
+    }
+
     /// Computes and subtracts constraint forces from the given residual vector `r`.
     ///
     /// `pos` are the stacked position coordinates of all vertices.
@@ -1726,6 +1759,52 @@ impl<T: Real64> NLProblem<T> {
     pub fn clear_velocities(&mut self) {
         let state = &mut *self.state.borrow_mut();
         state.clear_velocities();
+    }
+
+    /// Compute the BE objective on simulated vertices.
+    pub fn compute_be_objective(&self) -> T {
+        let State {
+            vtx, solid, shell, ..
+        } = &mut *self.state.borrow_mut();
+
+        let mut objective = self.energy(
+            vtx.residual_state().into_storage(),
+            &solid,
+            &shell,
+            self.frictional_contact_constraints.as_slice(),
+        );
+
+        if !self.is_static() {
+            objective += self.inertia(vtx.residual_state().into_storage(), &solid, &shell);
+        }
+        objective
+    }
+
+    /// Compute the TR objective on simulated vertices.
+    pub fn compute_tr_objective(&self) -> T {
+        let State {
+            vtx, solid, shell, ..
+        } = &mut *self.state.borrow_mut();
+
+        // TR objective should have an extra term (compared to BE): h/2 grad W ^T v
+        // Compute it below
+
+        // Dot product
+        let mut objective: T = self.prev_force.iter().zip(vtx.next.vel.storage().iter()).map(|(&r,&v)| r*v).sum();
+        objective *= T::from(0.5).unwrap() * self.time_step();
+
+            // Compute the BE objective below
+        objective += self.energy(
+            vtx.residual_state().into_storage(),
+            &solid,
+            &shell,
+            self.frictional_contact_constraints.as_slice(),
+        );
+
+        if !self.is_static() {
+            objective += self.inertia(vtx.residual_state().into_storage(), &solid, &shell);
+        }
+        objective
     }
 
     /// Compute the bE residual on simulated vertices.
@@ -2270,6 +2349,18 @@ pub trait NonLinearProblem<T: Real> {
         vec![T::zero(); self.num_variables()]
     }
 
+    /// An objective function defined by the problem.
+    ///
+    /// This can be an energy or a residual norm. It is used by the newton solver to guide the
+    /// root finding method.
+    ///
+    /// By default it is implemented as half of the squared norm of the residual.
+    fn objective(&self, x: &[T]) -> T {
+        let mut r = vec![T::zero(); x.len()];
+        self.residual(x, &mut r);
+        T::from(0.5).unwrap() * r.as_tensor().norm_squared()
+    }
+
     /// The vector function `r` whose roots we want to find.
     ///
     /// `r(x) = 0`.
@@ -2326,6 +2417,29 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     #[inline]
     fn num_variables(&self) -> usize {
         self.state.borrow().dof.storage().len()
+    }
+
+    /// Energy objective.
+    #[inline]
+    fn objective(&self, dq: &[T]) -> T {
+        {
+            let state = &mut *self.state.borrow_mut();
+            let step_state = state.step_state(dq);
+            // Integrate position.
+            match self.time_integration {
+                TimeIntegration::TR => State::tr_step(step_state, self.time_step()),
+                //TimeIntegration::BDF2 => self.compute_vertex_bdf2_residual(),
+                //TimeIntegration::TRBDF2 => self.compute_vertex_trbdf2_residual(),
+                _ => State::be_step(step_state, self.time_step()),
+            }
+
+            state.update_vertices(dq);
+        }
+
+        match self.time_integration {
+            TimeIntegration::TR => self.compute_tr_objective(),
+            _ => self.compute_be_objective(),
+        }
     }
 
     #[inline]
@@ -2526,7 +2640,6 @@ impl<T: Real64> NLProblem<T> {
             // eprintln!("CHECK JAC AUTODIFF WRT {}", col);
             x0[col] = F::var(x0[col]);
             problem.residual(&x0, &mut r);
-            use tensr::Norm;
             let d: Vec<f64> = r.iter().map(|r| r.deriv()).collect();
             let avg_deriv = d.into_tensor().norm();
             for row in 0..n {

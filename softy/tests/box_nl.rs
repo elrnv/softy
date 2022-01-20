@@ -68,17 +68,17 @@ fn stretch_plain() -> Result<(), Error> {
 fn stretch_plain_large() -> Result<(), Error> {
     init_logger();
     let mesh = make_stretched_box(20);
+    geo::io::save_tetmesh(&mesh, "./out/box_stretch_init_20.vtk");
     let mut solver = SolverBuilder::new(NLParams {
         gravity: [0.0f32, 0.0, 0.0],
-        time_step: Some(0.1),
+        //time_step: Some(0.1),
         ..static_nl_params()
     })
     .set_mesh(Mesh::from(mesh))
     .set_materials(vec![medium_solid_material().into()])
     .build::<f64>()?;
-    for _ in 0..30 {
-        solver.step()?;
-    }
+    solver.step()?;
+    geo::io::save_mesh(&solver.mesh(), "./out/box_stretch_result_20.vtk");
     Ok(())
 }
 

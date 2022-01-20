@@ -67,8 +67,8 @@ fn stretch_plain() -> Result<(), Error> {
 #[ignore]
 fn stretch_plain_large() -> Result<(), Error> {
     init_logger();
-    let mesh = make_stretched_box(20);
-    geo::io::save_tetmesh(&mesh, "./out/box_stretch_init_20.vtk");
+    let mesh = make_stretched_box(10);
+    //geo::io::save_tetmesh(&mesh, "./out/box_stretch_init_20.vtk");
     let mut solver = SolverBuilder::new(NLParams {
         gravity: [0.0f32, 0.0, 0.0],
         //time_step: Some(0.1),

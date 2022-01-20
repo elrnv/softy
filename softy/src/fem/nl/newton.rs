@@ -715,8 +715,8 @@ where
         //let mut merit_prev = merit_cur;
         let mut merit_next;
 
-        let mut j_dense =
-            ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
+        //let mut j_dense =
+        //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
         //let mut identity =
         //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
         //for (i, id) in identity.iter_mut().enumerate() {
@@ -745,10 +745,10 @@ where
             //for (jp, p) in j_dense.iter_mut().zip(identity.iter()) {
             //    problem.jacobian_product(x, &p, &r, jp)
             //}
-            build_dense(j_dense.view_mut(), &j_rows, &j_cols, &j_vals, x.len());
+            //build_dense(j_dense.view_mut(), &j_rows, &j_cols, &j_vals, x.len());
             //print_dense(j_dense.view());
             //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
-            log::debug!("Condition number: {:?}", condition_number(j_dense.view()));
+            //log::debug!("Condition number: {:?}", condition_number(j_dense.view()));
             //write_jacobian_img(j_dense.view(), iterations);
             //jprod_time += Instant::now() - before_j;
 
@@ -956,7 +956,7 @@ where
 
             iterations += 1;
 
-            ls_time += Instant::now() - t_begin_ls;
+           ls_time += Instant::now() - t_begin_ls;
 
             log_debug_stats(
                 iterations,
@@ -1036,7 +1036,7 @@ where
  */
 fn log_debug_stats_header() {
     log::debug!(
-        "    i |   merit    |    d-2     |    x-2     | lin # |  lin err   |   sigma    | ls # "
+        "    i |    res2    |   merit    |    d-2     |    x-2     | lin # |  lin err   |   sigma    | ls # "
     );
     log::debug!(
         "------+------------+------------+------------+-------+------------+------------+------"
@@ -1053,8 +1053,9 @@ fn log_debug_stats<T: Real>(
     x_prev: &[T],
 ) {
     log::debug!(
-        "{i:>5} |  {merit:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {sigma:10.3e} | {ls:>4} ",
+        "{i:>5} | {res2:10.3e} | {merit:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {sigma:10.3e} | {ls:>4} ",
         i = iterations,
+        res2 = r.as_tensor().norm_squared().to_f64().unwrap(),
         merit = merit,
         di = x_prev.iter().zip(x.iter()).map(|(&a, &b)| (a - b)*(a-b)).sum::<T>()
             .to_f64()

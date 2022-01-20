@@ -249,12 +249,9 @@ impl<T: Real64> NLProblem<T> {
         // Update positions
         {
             let State {
-                vtx:
-                    VertexWorkspace {
-                        orig_index,
-                        next,
-                        ..
-                    },
+                vtx: VertexWorkspace {
+                    orig_index, next, ..
+                },
                 ..
             } = &*self.state.borrow();
 
@@ -1556,8 +1553,7 @@ impl<T: Real64> NLProblem<T> {
         shell: &TriShell,
     ) -> T {
         let ResidualState { cur, next, .. } = state;
-        solid.inertia().energy(cur.vel, next.vel) +
-        shell.inertia().energy(cur.vel, next.vel)
+        solid.inertia().energy(cur.vel, next.vel) + shell.inertia().energy(cur.vel, next.vel)
     }
 
     fn energy(
@@ -1570,13 +1566,9 @@ impl<T: Real64> NLProblem<T> {
         let ResidualState { cur, next, .. } = state;
 
         let mut energy = solid.elasticity().energy(cur.pos, next.pos);
-        energy += solid
-            .gravity(self.gravity)
-            .energy(cur.pos, next.pos);
+        energy += solid.gravity(self.gravity).energy(cur.pos, next.pos);
         energy += shell.elasticity().energy(cur.pos, next.pos);
-        energy += shell
-            .gravity(self.gravity)
-            .energy(cur.pos, next.pos);
+        energy += shell.gravity(self.gravity).energy(cur.pos, next.pos);
 
         //TODO add frictional contact energy
 
@@ -1790,10 +1782,15 @@ impl<T: Real64> NLProblem<T> {
         // Compute it below
 
         // Dot product
-        let mut objective: T = self.prev_force.iter().zip(vtx.next.vel.storage().iter()).map(|(&r,&v)| r*v).sum();
+        let mut objective: T = self
+            .prev_force
+            .iter()
+            .zip(vtx.next.vel.storage().iter())
+            .map(|(&r, &v)| r * v)
+            .sum();
         objective *= T::from(0.5).unwrap() * self.time_step();
 
-            // Compute the BE objective below
+        // Compute the BE objective below
         objective += self.energy(
             vtx.residual_state().into_storage(),
             &solid,

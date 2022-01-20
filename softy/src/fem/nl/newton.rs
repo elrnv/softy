@@ -1,5 +1,5 @@
-use std::convert::TryFrom;
 use std::cell::RefCell;
+use std::convert::TryFrom;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
@@ -309,9 +309,9 @@ fn new_sparse<T: Real>(m: DSMatrixView<T>, transposed: bool) -> SparseMatrixF64<
 }
 
 // Assumes values are in csc order.
+#[cfg(target_os = "macos")]
 fn update_sparse_values<T: Real>(m: &mut SparseMatrixF64, values: &[T]) {
-    m
-        .data_mut()
+    m.data_mut()
         .iter_mut()
         .zip(values.iter())
         .for_each(|(output, input)| *output = input.to_f64().unwrap());
@@ -545,6 +545,7 @@ where
                     j_rows: Vec::new(),
                     j: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
                     j_t: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
+                    #[cfg(target_os = "macos")]
                     j_sparse: LazyCell::new(),
                     j_mapping: Vec::new(),
                     j_t_mapping: Vec::new(),
@@ -607,7 +608,7 @@ where
         sj.sparse_solver
             .replace(SparseDirectSolver::new(sj.j_t.view()).unwrap());
         #[cfg(not(target_os = "macos"))]
-            sj.sparse_solver
+        sj.sparse_solver
             .replace(SparseDirectSolver::new(sj.j.view()).unwrap());
         #[cfg(target_os = "macos")]
         sj.sparse_iterative_solver
@@ -695,7 +696,16 @@ where
         let mut linsolve_result = super::linsolve::SolveResult::default();
 
         log_debug_stats_header();
-        log_debug_stats(0, 0, linsolve_result, linsolve.tol, std::f64::INFINITY, &r, x, &x_prev);
+        log_debug_stats(
+            0,
+            0,
+            linsolve_result,
+            linsolve.tol,
+            std::f64::INFINITY,
+            &r,
+            x,
+            &x_prev,
+        );
 
         // Remember original tolerance so we can reset it later.
         let orig_linsolve_tol = linsolve.tol;
@@ -892,7 +902,7 @@ where
             residual_time += Instant::now() - t_begin_residual;
 
             let ls_count = if rho >= 1.0 {
-                merit_next = problem.objective(x).to_f64().unwrap();//merit(r_next);
+                merit_next = problem.objective(x).to_f64().unwrap(); //merit(r_next);
                 1
             } else {
                 // Line search.
@@ -915,7 +925,7 @@ where
                     jprod_ls_time += Instant::now() - t_begin_jprod;
 
                     // Compute the merit function
-                    merit_next = problem.objective(x).to_f64().unwrap();//merit(r_next);
+                    merit_next = problem.objective(x).to_f64().unwrap(); //merit(r_next);
 
                     // TRADITIONAL BACKTRACKING:
                     let rjp = jp
@@ -982,7 +992,7 @@ where
             // Check the convergence condition.
             if (r_tol > T::zero() && merit_next < r_tol.to_f64().unwrap())
                 || (x_tol > T::zero() && dx_norm < x_tol * denom)
-                //|| (a_tol > T::zero() && merit_next < a_tol.to_f64().unwrap())
+            //|| (a_tol > T::zero() && merit_next < a_tol.to_f64().unwrap())
             {
                 break SolveResult {
                     iterations,

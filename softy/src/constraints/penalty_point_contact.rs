@@ -99,7 +99,11 @@ fn stabilized_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
 /// Derivative of the quadratic sliding profile.
 fn quadratic_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
     // `s(x) = -1/eps^2`
-    -T::one() / (epsilon * epsilon)
+    if x < epsilon {
+        -T::one() / (epsilon * epsilon)
+    } else {
+        T::zero()
+    }
 }
 
 /// The full sliding profile including 1D direction.

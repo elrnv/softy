@@ -12,6 +12,7 @@ use hdkrs::interop::CookResult;
 use softy::{self, fem, Mesh, PointCloud};
 #[cfg(feature = "optsolver")]
 use softy::{PolyMesh, TetMesh, TetMeshExt};
+use softy::nl_fem::LinearSolver;
 
 use crate::{ElasticityModel, MaterialProperties, SimParams};
 
@@ -97,8 +98,8 @@ impl From<TimeIntegration > for softy::nl_fem::TimeIntegration {
     fn from(ti: TimeIntegration) -> softy::nl_fem::TimeIntegration {
         match ti {
             TimeIntegration::TR => softy::nl_fem::TimeIntegration::TR,
-            TimeIntegration::BDF2 => softy::nl_fem::TimeIntegration::BDF2,
-            TimeIntegration::TRBDF2=> softy::nl_fem::TimeIntegration::TRBDF2,
+            //TimeIntegration::BDF2 => softy::nl_fem::TimeIntegration::BDF2,
+            //TimeIntegration::TRBDF2=> softy::nl_fem::TimeIntegration::TRBDF2,
             _ => softy::nl_fem::TimeIntegration::BE,
         }
     }
@@ -130,7 +131,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             SolverType::NewtonBacktracking => fem::nl::LineSearch::default_backtracking(),
             _ => fem::nl::LineSearch::None,
         };
-        std::dbg!(line_search);
+        log::debug!("{:#?}", line_search);
 
         fem::nl::SimParams {
             time_step: if time_step > 0.0 {
@@ -156,8 +157,14 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
                 None
             },
             max_iterations: max_outer_iterations,
-            linsolve_tolerance: tolerance,
-            max_linsolve_iterations: max_iterations,
+            linsolve: if tolerance > 0.0 && max_iterations > 0 {
+                LinearSolver::Iterative {
+                    tolerance,
+                    max_iterations,
+                }
+            } else {
+                LinearSolver::Direct
+            },
             line_search,
             jacobian_test: derivative_test > 0,
             friction_tolerance,
@@ -255,7 +262,7 @@ fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
                     ObjectType::Solid => Some(softy::Material::Solid(
                         softy::SolidMaterial::new(material_id as usize)
                             .with_elasticity(
-                                softy::ElasticityParameters::from_bulk_shear_with_model(
+                                softy::Elasticity::from_bulk_shear_with_model(
                                     bulk_modulus,
                                     shear_modulus,
                                     elasticity_model.into(),
@@ -267,7 +274,7 @@ fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
                     )),
                     ObjectType::Shell => Some(softy::Material::SoftShell(
                         softy::SoftShellMaterial::new(material_id as usize)
-                            .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
+                            .with_elasticity(softy::Elasticity::from_bulk_shear(
                                 bulk_modulus,
                                 shear_modulus,
                             ))

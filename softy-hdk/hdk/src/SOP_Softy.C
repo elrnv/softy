@@ -406,7 +406,7 @@ static const char *theDsFile = R"THEDSFILE(
             cppname "InnerTolerance"
             label "Inner Error Tolerance"
             type log
-            default { "1e-9" }
+            default { "0.0" }
             range { 0.0 1.0 }
         }
         parm {
@@ -414,7 +414,7 @@ static const char *theDsFile = R"THEDSFILE(
             cppname "MaxInnerIterations"
             label "Max Inner Iterations"
             type integer
-            default { "200" }
+            default { "0" }
             range { 0 1000 }
         }
 

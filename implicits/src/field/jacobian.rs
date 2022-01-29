@@ -41,6 +41,21 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// Blocks for which the query neighborhood is empty are set to `None`.
+    pub fn query_jacobian_indexed_block_par_chunks<'a, OP, TWS>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        ws: &mut [TWS],
+        op: OP,
+    ) where
+        TWS: Sync + Send,
+        OP: Fn(&mut TWS, (usize, usize, [T; 3])) + Send + Sync + 'a,
+    {
+        apply_kernel_query_fn!(self, |kernel| {
+            self.query_jacobian_indexed_block_par_chunks_impl(query_points, kernel, ws, op, false)
+        })
+    }
+
+    /// Blocks for which the query neighborhood is empty are set to `None`.
     pub fn query_jacobian_indexed_block_par_iter<'a>(
         &'a self,
         query_points: &'a [[T; 3]],
@@ -158,6 +173,72 @@ impl<T: Real> QueryTopo<T> {
                 )
                 .into()
             })
+    }
+
+    pub(crate) fn query_jacobian_indexed_block_par_chunks_impl<'a, K: 'a, OP, TWS>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        kernel: K,
+        ws: &mut [TWS],
+        op: OP,
+        full: bool,
+    ) where
+        TWS: Sync + Send,
+        OP: Fn(&mut TWS, (usize, usize, [T; 3])) + Send + Sync + 'a,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        let num_chunks = ws.len();
+        let chunk_size = (query_points.len() + num_chunks - 1) / num_chunks;
+        let neigh_points_chunks = self.trivial_neighborhood_par_chunks(chunk_size);
+        let closest_points_chunks = self.closest_samples_par_chunks(chunk_size);
+
+        let ImplicitSurfaceBase {
+            ref samples,
+            bg_field_params,
+            ..
+        } = *self.base();
+
+        // For each row (query point)
+        ws.as_parallel_slice_mut()
+            .par_iter_mut()
+            .zip(
+                query_points
+                    .par_chunks(chunk_size)
+                    .zip(neigh_points_chunks)
+                    .zip(closest_points_chunks),
+            )
+            .enumerate()
+            .for_each(
+                |(chunk_idx, (tws, ((q_chunk, nbr_points_chunk), closest_chunk)))| {
+                    for (local_idx, (q, nbr_points, closest)) in zip!(
+                        q_chunk.iter(),
+                        nbr_points_chunk.iter(),
+                        closest_chunk.iter()
+                    )
+                    .enumerate()
+                    {
+                        let idx = chunk_idx * chunk_size + local_idx;
+                        if full || !nbr_points.is_empty() {
+                            let view = SamplesView::new(nbr_points, samples);
+                            op(
+                                tws,
+                                (
+                                    idx,
+                                    idx,
+                                    query_jacobian_at(
+                                        Vector3::new(*q),
+                                        view,
+                                        Some(*closest),
+                                        kernel,
+                                        bg_field_params,
+                                    )
+                                    .into(),
+                                ),
+                            );
+                        }
+                    }
+                },
+            );
     }
 
     /// Parallel version of `query_jacobian_iter_impl`.
@@ -286,6 +367,21 @@ impl<T: Real> QueryTopo<T> {
     ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
         apply_kernel_query_fn_impl_iter!(self, |kernel| {
             self.surface_jacobian_par_iter_impl(query_points, kernel)
+        })
+    }
+
+    pub fn surface_jacobian_indexed_block_par_chunks<'a, OP, TWS>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        ws: &mut [TWS],
+        op: OP,
+    ) where
+        TWS: Send + Sync,
+        OP: Fn(&mut TWS, (usize, usize, [T; 3])) + Sync + Send + Copy + 'a,
+        TWS: 'a,
+    {
+        apply_kernel_query_fn!(self, |kernel| {
+            self.surface_jacobian_par_chunks_impl(query_points, kernel, ws, op)
         })
     }
 
@@ -554,6 +650,67 @@ impl<T: Real> QueryTopo<T> {
                             .map(move |(&col, block)| (row, col, block))
                     }),
             ),
+        }
+    }
+
+    /// # Panics
+    ///
+    /// Will panic for Vertex sampled surfaces.
+    pub(crate) fn surface_jacobian_par_chunks_impl<'a, K: 'a, OP, TWS>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        kernel: K,
+        ws: &mut [TWS],
+        op: OP,
+    ) where
+        TWS: Send + Sync,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        OP: Fn(&mut TWS, (usize, usize, [T; 3])) + Sync + Send + Copy,
+    {
+        let ImplicitSurfaceBase {
+            ref samples,
+            ref surface_topo,
+            ref surface_vertex_positions,
+            bg_field_params,
+            sample_type,
+            ..
+        } = *self.base();
+
+        let chunk_size = (query_points.len() + ws.len() - 1) / ws.len();
+
+        match sample_type {
+            SampleType::Vertex => unimplemented!(),
+            SampleType::Face => ws
+                .par_iter_mut()
+                .zip(
+                    query_points
+                        .par_chunks(chunk_size)
+                        .zip(self.trivial_neighborhood_par_chunks(chunk_size))
+                        .enumerate(),
+                )
+                .for_each(|(tws, (chunk_idx, (q_chunk, nbr_points_chunk)))| {
+                    q_chunk
+                        .iter()
+                        .zip(nbr_points_chunk.iter())
+                        .enumerate()
+                        .filter(|(_, (_, nbrs))| !nbrs.is_empty())
+                        .for_each(|(local_row, (q, nbr_points))| {
+                            let row = chunk_idx * chunk_size + local_row;
+                            let view = SamplesView::new(nbr_points, samples);
+                            nbr_points
+                                .iter()
+                                .flat_map(|&pidx| self.base().surface_topo[pidx].iter())
+                                .zip(face_jacobian_at(
+                                    Vector3::new(*q),
+                                    view,
+                                    kernel,
+                                    surface_topo,
+                                    surface_vertex_positions,
+                                    bg_field_params,
+                                ))
+                                .for_each(|(&col, block)| op(tws, (row, col, block)));
+                        })
+                }),
         }
     }
 
@@ -968,6 +1125,7 @@ where
     zip!(main_jac, nml_jac).map(|(m, n)| (m + n).into())
 }
 
+#[allow(dead_code)]
 pub(crate) fn vertex_jacobian_par_at<'a, T, K: 'a>(
     q: Vector3<T>,
     view: SamplesView<'a, 'a, T>,

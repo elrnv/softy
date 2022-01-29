@@ -343,36 +343,53 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
+    // /// This function returns precomputed neighbors.
+    // pub fn trivial_neighborhood_par_chunks<'a>(
+    //     &'a self,
+    //     chunk_size: usize,
+    // ) -> impl IndexedParallelIterator<Item = Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a>> + 'a
+    // {
+    //     match self {
+    //         QueryTopo::Local { neighborhood, .. } => Either::Left(
+    //             neighborhood
+    //                 .trivial_set()
+    //                 .par_chunks(chunk_size)
+    //                 .map(|chunk| {
+    //                     let out: Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a> =
+    //                         Box::new(chunk.iter().map(|nbrs| nbrs.as_slice()));
+    //                     out
+    //                 }),
+    //         ),
+    //         QueryTopo::Global {
+    //             closest_samples,
+    //             sample_indices,
+    //             ..
+    //         } => {
+    //             let ranges = split_range_into_chunks(0..closest_samples.len(), chunk_size);
+    //             Either::Right(ranges.into_par_iter().map(move |rng| {
+    //                 let out: Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a> =
+    //                     Box::new(rng.map(move |_| sample_indices.as_slice()));
+    //                 out
+    //             }))
+    //         }
+    //     }
+    // }
+
     /// This function returns precomputed neighbors.
+    ///
+    /// # Panics
+    ///
+    /// This function only works with surfaces with local support, and will panic if called on
+    /// `QueryTopo::Global` types.
     pub fn trivial_neighborhood_par_chunks<'a>(
         &'a self,
         chunk_size: usize,
-    ) -> impl IndexedParallelIterator<Item = Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a>> + 'a
-    {
+    ) -> impl IndexedParallelIterator<Item = &'a [Vec<usize>]> + 'a {
         match self {
-            QueryTopo::Local { neighborhood, .. } => Either::Left(
-                neighborhood
-                    .trivial_set()
-                    .as_parallel_slice()
-                    .par_chunks(chunk_size)
-                    .map(|chunk| {
-                        let out: Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a> =
-                            Box::new(chunk.iter().map(|nbrs| nbrs.as_slice()));
-                        out
-                    }),
-            ),
-            QueryTopo::Global {
-                closest_samples,
-                sample_indices,
-                ..
-            } => {
-                let ranges = split_range_into_chunks(0..closest_samples.len(), chunk_size);
-                Either::Right(ranges.into_par_iter().map(move |rng| {
-                    let out: Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a> =
-                        Box::new(rng.map(move |_| sample_indices.as_slice()));
-                    out
-                }))
+            QueryTopo::Local { neighborhood, .. } => {
+                neighborhood.trivial_set().par_chunks(chunk_size)
             }
+            QueryTopo::Global { .. } => unimplemented!(),
         }
     }
 
@@ -382,15 +399,27 @@ impl<T: Real> QueryTopo<T> {
         chunk_size: usize,
     ) -> impl IndexedParallelIterator<Item = &'a [usize]> + 'a {
         match self {
-            QueryTopo::Local { neighborhood, .. } => Either::Left(
-                neighborhood
-                    .closest_set()
-                    .as_parallel_slice()
-                    .par_chunks(chunk_size),
-            ),
+            QueryTopo::Local { neighborhood, .. } => {
+                Either::Left(neighborhood.closest_set().par_chunks(chunk_size))
+            }
             QueryTopo::Global {
                 closest_samples, ..
-            } => Either::Right(closest_samples.as_parallel_slice().par_chunks(chunk_size)),
+            } => Either::Right(closest_samples.par_chunks(chunk_size)),
+        }
+    }
+
+    /// This function returns precomputed neighbors in chunks.
+    pub fn extended_neighborhood_par_chunks<'a>(
+        &'a self,
+        chunk_size: usize,
+    ) -> impl IndexedParallelIterator<Item = &'a [Vec<usize>]> + 'a {
+        match self {
+            QueryTopo::Local { neighborhood, .. } => {
+                Either::Left(neighborhood.extended_set().par_chunks(chunk_size))
+            }
+            QueryTopo::Global { .. } => {
+                Either::Right(self.trivial_neighborhood_par_chunks(chunk_size))
+            }
         }
     }
 
@@ -965,6 +994,7 @@ impl<T: Real> QueryTopo<T> {
 }
 
 /// Utility function to subdivide a range into a `Vec` of smaller ranges with a given size.
+#[allow(dead_code)]
 fn split_range_into_chunks(
     rng: std::ops::Range<usize>,
     chunk_size: usize,

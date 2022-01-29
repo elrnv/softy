@@ -1,8 +1,4 @@
-use std::fs::File;
-use std::path::Path;
-
 use tensr::{IntoData, Vector3};
-use thiserror::Error;
 
 use crate::attrib_defines::*;
 use crate::fem::nl::{state::VertexType, SimParams as NLParams};
@@ -34,15 +30,7 @@ pub const STATIC_OPT_PARAMS: OptParams = OptParams {
 };
 
 pub fn static_nl_params() -> NLParams {
-    load_nl_params("assets/static_nl_params.ron").unwrap()
-}
-
-#[derive(Error, Debug)]
-pub enum LoadParamsError {
-    #[error("IO")]
-    IO(#[from] std::io::Error),
-    #[error("Parse")]
-    Parse(#[from] ron::Error),
+    crate::io::load_nl_params("assets/static_nl_params.ron").unwrap()
 }
 
 pub fn vertex_types_from_fixed(fixed: &[FixedIntType]) -> Vec<VertexType> {
@@ -56,11 +44,6 @@ pub fn vertex_types_from_fixed(fixed: &[FixedIntType]) -> Vec<VertexType> {
             }
         })
         .collect()
-}
-
-pub fn load_nl_params(path: impl AsRef<Path>) -> std::result::Result<NLParams, LoadParamsError> {
-    let f = File::open(path.as_ref())?;
-    Ok(ron::de::from_reader(f)?)
 }
 
 //pub(crate) const QUASI_STATIC_PARAMS: OptParams = OptParams {
@@ -84,21 +67,21 @@ pub const DYNAMIC_OPT_PARAMS: OptParams = OptParams {
 // 300 steps.
 pub fn default_solid() -> SolidMaterial {
     SolidMaterial::new(0)
-        .with_elasticity(ElasticityParameters {
-            lambda: 93333.33,
-            mu: 10e3,
-            model: ElasticityModel::NeoHookean,
-        })
+        .with_elasticity(Elasticity::from_lame(
+            93333.33,
+            10e3,
+            ElasticityModel::NeoHookean,
+        ))
         .with_density(1000.0)
 }
 
 pub fn default_shell() -> SoftShellMaterial {
     SoftShellMaterial::new(0)
-        .with_elasticity(ElasticityParameters {
-            lambda: 93333.33,
-            mu: 10e3,
-            model: ElasticityModel::NeoHookean,
-        })
+        .with_elasticity(Elasticity::from_lame(
+            93333.33,
+            10e3,
+            ElasticityModel::NeoHookean,
+        ))
         .with_density(1000.0)
 }
 

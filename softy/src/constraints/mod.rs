@@ -95,16 +95,16 @@ pub fn build_contact_constraint<T: Real, VP: geo::mesh::VertexMesh<f64>>(
     )?))
 }
 
-// TODO: move to a designated contact constraint.
-pub fn compute_contact_penalty<S: Real>(d: S, delta: f32) -> S {
-    if d.to_f32().unwrap() >= delta {
-        S::zero()
-    } else {
-        let delta = S::from(delta).unwrap();
-        let dd = delta - d;
-        (dd * dd) / delta
-    }
-}
+// // TODO: move to a designated contact constraint.
+// pub fn compute_contact_penalty<S: Real>(d: S, delta: f32) -> S {
+//     if d.to_f32().unwrap() >= delta {
+//         S::zero()
+//     } else {
+//         let delta = S::from(delta).unwrap();
+//         let dd = delta - d;
+//         (dd * dd) / delta
+//     }
+// }
 //pub fn compute_contact_penalty<S: Real>(
 //    // Input distance & Output force magnitude
 //    lambda: &mut [S],

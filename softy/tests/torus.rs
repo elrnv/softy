@@ -6,16 +6,18 @@ pub use test_utils::*;
 pub mod complex_tests {
     use super::*;
     use geo;
-    use softy::fem::{nl, opt};
+    use softy::fem::nl;
     use softy::*;
     use std::path::PathBuf;
 
     fn stiff_material() -> SolidMaterial {
-        default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
+        default_solid().with_elasticity(Elasticity::from_bulk_shear(1750e6, 10e6))
     }
 
     #[test]
+    #[cfg(feature = "optsolver")]
     fn torus_medium_test() -> Result<(), Error> {
+        use softy::fem::opt;
         init_logger();
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         let mut solver = opt::SolverBuilder::new(opt::SimParams {
@@ -30,7 +32,9 @@ pub mod complex_tests {
     }
 
     #[test]
+    #[cfg(feature = "optsolver")]
     fn torus_long_test() -> Result<(), Error> {
+        use softy::fem::opt;
         init_logger();
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk"))?;
         let mut solver = opt::SolverBuilder::new(DYNAMIC_OPT_PARAMS)
@@ -50,10 +54,15 @@ pub mod complex_tests {
     #[test]
     fn torus_medium_nl_test() -> Result<(), Error> {
         init_logger();
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets_lo_res.vtk")).unwrap();
-        let mut solver = nl::SolverBuilder::new(DYNAMIC_NL_PARAMS)
-            .add_solid(mesh, stiff_material())
-            .build()?;
+        let mesh = geo::io::load_tetmesh("assets/torus_tets.vtk")?;
+        let params = nl::SimParams {
+            time_step: Some(0.01),
+            ..static_nl_params()
+        };
+        let mut solver = nl::SolverBuilder::new(params)
+            .set_mesh(Mesh::from(mesh))
+            .set_materials(vec![stiff_material().into()])
+            .build::<f64>()?;
         solver.step()?;
         Ok(())
     }
@@ -61,10 +70,15 @@ pub mod complex_tests {
     #[test]
     fn torus_long_nl_test() -> Result<(), Error> {
         init_logger();
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets_lo_res.vtk"))?;
-        let mut solver = nl::SolverBuilder::new(DYNAMIC_NL_PARAMS)
-            .add_solid(mesh, stiff_material())
-            .build()?;
+        let mesh = geo::io::load_tetmesh("assets/torus_tets.vtk")?;
+        let params = nl::SimParams {
+            time_step: Some(0.01),
+            ..static_nl_params()
+        };
+        let mut solver = nl::SolverBuilder::new(params)
+            .set_mesh(Mesh::from(mesh))
+            .set_materials(vec![stiff_material().into()])
+            .build::<f64>()?;
 
         for _i in 0..10 {
             //geo::io::save_tetmesh_ascii(

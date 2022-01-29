@@ -273,7 +273,7 @@ impl<T: Real64> NLProblem<T> {
 
         self.compute_residual_on_mesh(&mut mesh);
         self.compute_distance_potential(&mut mesh);
-        self.compute_constraint_force(&mut mesh);
+        self.compute_frictional_contact_forces(&mut mesh);
         mesh
     }
 
@@ -326,7 +326,8 @@ impl<T: Real64> NLProblem<T> {
         .unwrap();
     }
 
-    fn compute_constraint_force(&self, mesh: &mut Mesh) {
+    // This includes friction and contact forces individually
+    fn compute_frictional_contact_forces(&self, mesh: &mut Mesh) {
         let State { vtx, .. } = &mut *self.state.borrow_mut();
 
         // Clear residual vector.
@@ -335,25 +336,43 @@ impl<T: Real64> NLProblem<T> {
             .iter_mut()
             .for_each(|x| *x = T::zero());
 
+        let mut contact_force = Chunked3::from_flat(vec![T::zero(); vtx.residual.storage().len()]);
+        let mut friction_force = Chunked3::from_flat(vec![T::zero(); vtx.residual.storage().len()]);
         {
-            let ResidualState { next, r, .. } = vtx.residual_state().into_storage();
-
+            let ResidualState { next, .. } = vtx.residual_state().into_storage();
             let frictional_contacts = self.frictional_contact_constraints.as_slice();
-            self.subtract_constraint_forces(next.pos, next.vel, r, frictional_contacts);
+            for fc in frictional_contacts.iter() {
+                let mut fc_constraint = fc.constraint.borrow_mut();
+                fc_constraint.update_state(Chunked3::from_flat(next.pos));
+                fc_constraint.update_distance_potential();
+                fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
+
+                fc_constraint.subtract_constraint_force(contact_force.view_mut());
+                fc_constraint.subtract_friction_force(
+                    friction_force.view_mut(),
+                    Chunked3::from_flat(next.vel),
+                );
+            }
         }
 
-        let vertex_forces = vtx.residual.view();
-        let mut orig_order_vertex_forces = vec![[0.0; 3]; vertex_forces.len()];
+        let mut orig_order_contact_forces = vec![[0.0; 3]; contact_force.len()];
+        let mut orig_order_friction_forces = vec![[0.0; 3]; friction_force.len()];
         vtx.orig_index
             .iter()
-            .zip(vertex_forces.iter())
-            .for_each(|(&i, v)| {
-                orig_order_vertex_forces[i] = (-v.as_tensor().cast::<f64>()).into_data()
+            .zip(contact_force.iter().zip(friction_force.iter()))
+            .for_each(|(&i, (c, f))| {
+                orig_order_contact_forces[i] = (-c.as_tensor().cast::<f64>()).into_data();
+                orig_order_friction_forces[i] = (-f.as_tensor().cast::<f64>()).into_data();
             });
         // Should not panic since vertex_forces should have the same number of elements as vertices.
-        mesh.set_attrib_data::<ResidualType, VertexIndex>(
-            CONSTRAINT_FORCE_ATTRIB,
-            orig_order_vertex_forces,
+        mesh.set_attrib_data::<ContactForceType, VertexIndex>(
+            CONTACT_ATTRIB,
+            orig_order_contact_forces,
+        )
+        .unwrap();
+        mesh.set_attrib_data::<FrictionForceType, VertexIndex>(
+            FRICTION_ATTRIB,
+            orig_order_friction_forces,
         )
         .unwrap();
     }
@@ -537,7 +556,7 @@ impl<T: Real64> NLProblem<T> {
     pub fn advance(&mut self, v: &[T]) {
         self.integrate_step(v);
         self.state.borrow_mut().advance(v);
-        // Commit candidate forces.
+        // Commit candidate forces. This is used for TR integration.
         self.prev_force.clone_from(&*self.candidate_force.borrow());
         self.prev_force_ad
             .clone_from(&*self.candidate_force_ad.borrow());
@@ -605,9 +624,12 @@ impl<T: Real64> NLProblem<T> {
     /// For implicit integration this boils down to a simple multiply by the time step.
     pub fn integrate_step(&self, v: &[T]) {
         let mut state = self.state.borrow_mut();
-        State::tr_step(state.step_state(v), self.time_step());
-        // or self.state.tr_step(v, self.time_step());
-        // or self.state.bdf2_step(v, self.time_step(), gamma);
+
+        match self.time_integration {
+            TimeIntegration::TR => State::tr_step(state.step_state(v), self.time_step()),
+            TimeIntegration::BE => State::be_step(state.step_state(v), self.time_step()),
+            // or self.state.bdf2_step(v, self.time_step(), gamma);
+        }
     }
 
     /// Convert a given array of contact forces to impulses.
@@ -1505,45 +1527,17 @@ impl<T: Real64> NLProblem<T> {
                 .unwrap_or(&T::infinity()),
         )
     }
-    pub fn contact_constraint(&self, _v: &[T]) -> Chunked<Vec<T>> {
-        return Chunked::from_offsets(vec![0], vec![]);
-        //let WorkspaceData { dof, vtx } = &mut *self.state.workspace.borrow_mut();
-        //let GeneralizedWorkspace {
-        //    state: GeneralizedState { q, .. },
-        //    ..
-        //} = dof.view_mut().into_storage();
-        //let VertexWorkspace {
-        //    state: VertexState { pos, .. },
-        //    ..
-        //} = vtx.view_mut().into_storage();
-
-        //// Integrate position.
-        //let q_cur = self.state.dof.storage().cur.q.as_slice();
-        //self.state.be_step(v, self.time_step(), q_cur, q);
-
-        //let dof = self.state.dof.view();
-        //let vtx = self.state.vtx.view();
-        //let q = dof.map_storage(|_| &*q);
-        //let mut pos = vtx.map_storage(|_| &mut *pos);
-
-        //// Transfer position data to vertex position state (relevant for rigid bodies)
-        //sync_pos(&self.state.shells, q, pos.view_mut());
-
-        //let pos = pos.view(); // Convert to a read-only reference.
-
-        //let mut constraint = Chunked::new();
-        //for (i, fc) in self.frictional_contacts.iter().enumerate() {
-        //    let mut fc_constraint = fc.constraint.borrow_mut();
-
-        //    // Compute constraint (i.e. distance).
-        //    let n = fc_constraint.constraint_size();
-        //    constraint.push_iter(std::iter::repeat(T::zero()).take(n));
-
-        //    let obj_pos = self.state.mesh_vertex_subset(q, pos, fc.object_index);
-        //    let col_pos = self.state.mesh_vertex_subset(q, pos, fc.collider_index);
-        //    fc_constraint.constraint([obj_pos, col_pos], constraint.view_mut().isolate(i));
-        //}
-        //constraint
+    pub fn contact_constraint(&self, _v: &[T]) -> Vec<T> {
+        let State { vtx, .. } = &*self.state.borrow_mut();
+        let pos = vtx.next.pos.view();
+        let mut constraint = Vec::new();
+        for fc in self.frictional_contact_constraints.iter() {
+            let mut fc_constraint = fc.constraint.borrow_mut();
+            fc_constraint.update_state(pos);
+            fc_constraint.update_distance_potential();
+            constraint.extend(fc_constraint.cached_distance_potential(pos.len()));
+        }
+        constraint
     }
 
     fn inertia(
@@ -1597,7 +1591,6 @@ impl<T: Real64> NLProblem<T> {
                 let mut fc_constraint = fc.constraint.borrow_mut();
                 fc_constraint.update_state(Chunked3::from_flat(pos));
                 fc_constraint.update_distance_potential();
-                fc_constraint.update_constraint_gradient();
                 fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
 
                 fc_constraint.subtract_constraint_force(Chunked3::from_flat(r));
@@ -1804,7 +1797,7 @@ impl<T: Real64> NLProblem<T> {
         objective
     }
 
-    /// Compute the bE residual on simulated vertices.
+    /// Compute the BE residual on simulated vertices.
     fn compute_vertex_be_residual(&self) {
         let State {
             vtx, solid, shell, ..
@@ -2321,8 +2314,8 @@ impl<T: Real64> NLProblem<T> {
         }
 
         match self.time_integration {
+            TimeIntegration::BE => self.be_residual_autodiff(),
             TimeIntegration::TR => self.tr_residual_autodiff(),
-            _ => self.be_residual_autodiff(),
         }
 
         let State { dof, .. } = &mut *self.state.borrow_mut();
@@ -2424,18 +2417,18 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             let step_state = state.step_state(dq);
             // Integrate position.
             match self.time_integration {
+                TimeIntegration::BE => State::be_step(step_state, self.time_step()),
                 TimeIntegration::TR => State::tr_step(step_state, self.time_step()),
                 //TimeIntegration::BDF2 => self.compute_vertex_bdf2_residual(),
                 //TimeIntegration::TRBDF2 => self.compute_vertex_trbdf2_residual(),
-                _ => State::be_step(step_state, self.time_step()),
             }
 
             state.update_vertices(dq);
         }
 
         match self.time_integration {
+            TimeIntegration::BE => self.compute_be_objective(),
             TimeIntegration::TR => self.compute_tr_objective(),
-            _ => self.compute_be_objective(),
         }
     }
 
@@ -2446,20 +2439,20 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             let step_state = state.step_state(dq);
             // Integrate position.
             match self.time_integration {
+                TimeIntegration::BE => State::be_step(step_state, self.time_step()),
                 TimeIntegration::TR => State::tr_step(step_state, self.time_step()),
                 //TimeIntegration::BDF2 => self.compute_vertex_bdf2_residual(),
                 //TimeIntegration::TRBDF2 => self.compute_vertex_trbdf2_residual(),
-                _ => State::be_step(step_state, self.time_step()),
             }
 
             state.update_vertices(dq);
         }
 
         match self.time_integration {
+            TimeIntegration::BE => self.compute_vertex_be_residual(),
             TimeIntegration::TR => self.compute_vertex_tr_residual(),
             //TimeIntegration::BDF2 => self.compute_vertex_bdf2_residual(),
             //TimeIntegration::TRBDF2 => self.compute_vertex_trbdf2_residual(),
-            _ => self.compute_vertex_be_residual(),
         }
 
         // Transfer residual to degrees of freedom.
@@ -2475,10 +2468,10 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     #[inline]
     fn jacobian_values(&self, v: &[T], r: &[T], rows: &[usize], cols: &[usize], vals: &mut [T]) {
         match self.time_integration {
+            TimeIntegration::BE => self.be_jacobian_values(v, r, rows, cols, vals),
             TimeIntegration::TR => self.tr_jacobian_values(v, r, rows, cols, vals),
             //TimeIntegration::BDF2 => self.bdf2_jacobian_values(v, r, rows, cols, vals),
             //TimeIntegration::TRBDF2 => self.trbdf2_jacobian_values(v, r, rows, cols, vals),
-            _ => self.be_jacobian_values(v, r, rows, cols, vals),
         }
     }
     #[inline]
@@ -2756,11 +2749,11 @@ mod tests {
 
     fn solid_material() -> SolidMaterial {
         SolidMaterial::new(0)
-            .with_elasticity(ElasticityParameters {
-                lambda: 5.4,
-                mu: 263.1,
-                model: ElasticityModel::NeoHookean,
-            })
+            .with_elasticity(Elasticity::from_lame(
+                5.4,
+                263.1,
+                ElasticityModel::NeoHookean,
+            ))
             .with_density(10.0)
             .with_damping(1.0, 0.01)
     }
@@ -2774,13 +2767,12 @@ mod tests {
             acceleration_tolerance: None,
             velocity_tolerance: 1e-2.into(),
             max_iterations: 1,
-            linsolve_tolerance: 1e-3,
-            max_linsolve_iterations: 300,
+            linsolve: LinearSolver::Direct,
             line_search: LineSearch::default_backtracking(),
             jacobian_test: false,
             contact_tolerance: 0.001,
             friction_tolerance: 0.001,
-            time_integration: TimeIntegration::BE,
+            time_integration: TimeIntegration::default(),
         }
     }
 }

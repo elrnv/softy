@@ -633,22 +633,18 @@ mod tests {
 
     fn membrane_only_material() -> SoftShellMaterial {
         SoftShellMaterial::new(0)
-            .with_elasticity(ElasticityParameters {
-                lambda: 5.4,
-                mu: 263.1,
-                model: ElasticityModel::NeoHookean,
-            })
+            .with_elasticity(Elasticity::from_lame(
+                5.4,
+                263.1,
+                ElasticityModel::NeoHookean,
+            ))
             .with_density(1.0)
             .with_damping(1.0, 0.01)
     }
 
     fn bend_only_material() -> SoftShellMaterial {
         SoftShellMaterial::new(0)
-            .with_elasticity(ElasticityParameters {
-                lambda: 0.0,
-                mu: 0.0,
-                model: ElasticityModel::NeoHookean,
-            })
+            .with_elasticity(Elasticity::from_lame(0.0, 0.0, ElasticityModel::NeoHookean))
             .with_density(1.0)
             .with_damping(1.0, 0.01)
             .with_bending_stiffness(2.0)

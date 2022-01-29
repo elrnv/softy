@@ -1,0 +1,17 @@
+Solid((
+    id: 0,
+    properties: (
+        volume_preservation: false,
+        deformable: (
+            elasticity: Some((
+                model: NeoHookean,
+                parameters: BulkShear(
+                    bulk: 300e6,
+                    shear: 100e6
+                )
+            )),
+            density: Some(1000),
+            damping: 0,
+        ),
+    ),
+))

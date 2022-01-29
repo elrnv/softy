@@ -1,0 +1,17 @@
+SoftShell((
+    id: 0,
+    properties: (
+        bending_stiffness: Some(1000.0),
+        deformable: (
+            elasticity: Some((
+                model: NeoHookean,
+                parameters: BulkShear(
+                    bulk: 1000e3,
+                    shear: 100e3
+                )
+            )),
+            density: Some(1000),
+            damping: 0,
+        ),
+    ),
+))

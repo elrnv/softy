@@ -1077,6 +1077,7 @@ impl<T: Real> State<T, ad::FT<T>> {
                 VertexWorkspace {
                     cur,
                     next,
+                    next_ad,
                     vertex_type,
                     ..
                 },
@@ -1097,17 +1098,34 @@ impl<T: Real> State<T, ad::FT<T>> {
             });
 
         next.iter_mut()
+            .zip(next_ad.iter_mut())
             .zip(new_pos_iter)
             .zip(vertex_type.iter())
             .filter(|(_, &vt)| vt == VertexType::Fixed)
-            .for_each(|((ParticleState { pos, vel }, new_pos), _)| {
-                // Update the vertices we find in the given `new_pos` collection.
-                if let Some(&new_pos) = new_pos {
-                    *vel.as_mut_tensor() =
-                        (new_pos.as_tensor().cast::<T>() - *(*pos).as_tensor()) * dt_inv;
-                    *pos.as_mut_tensor() = new_pos.as_tensor().cast::<T>();
-                }
-            });
+            .for_each(
+                |(
+                    (
+                        (
+                            ParticleState { pos, vel },
+                            ParticleState {
+                                pos: pos_ad,
+                                vel: vel_ad,
+                            },
+                        ),
+                        new_pos,
+                    ),
+                    _,
+                )| {
+                    // Update the vertices we find in the given `new_pos` collection.
+                    if let Some(&new_pos) = new_pos {
+                        *vel.as_mut_tensor() =
+                            (new_pos.as_tensor().cast::<T>() - *(*pos).as_tensor()) * dt_inv;
+                        *pos.as_mut_tensor() = new_pos.as_tensor().cast::<T>();
+                        *vel_ad.as_mut_tensor() = vel.as_tensor().cast::<ad::FT<T>>();
+                        *pos_ad.as_mut_tensor() = pos.as_tensor().cast::<ad::FT<T>>();
+                    }
+                },
+            );
         Ok(())
     }
 

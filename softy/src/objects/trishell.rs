@@ -106,7 +106,7 @@ impl TriangleElements {
             let mtls = shell_mtl_iter(mesh, materials, &orig_cell_indices)?;
             mtls.map(|mtl| {
                 mtl?.elasticity()
-                    .map(|x| x.lambda)
+                    .map(|x| x.lambda())
                     .ok_or(Error::MissingElasticityParams)
             })
             .collect::<Result<Vec<_>, Error>>()?
@@ -121,7 +121,7 @@ impl TriangleElements {
             let mtls = shell_mtl_iter(mesh, materials, &orig_cell_indices)?;
             mtls.map(|mtl| {
                 mtl?.elasticity()
-                    .map(|x| x.mu)
+                    .map(|x| x.mu())
                     .ok_or(Error::MissingElasticityParams)
             })
             .collect::<Result<Vec<_>, Error>>()?

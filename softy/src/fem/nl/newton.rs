@@ -28,10 +28,8 @@ pub struct NewtonParams {
     pub a_tol: f32,
     /// Maximum number of Newton iterations permitted.
     pub max_iter: u32,
-    /// Residual tolerance for the linear solve.
-    pub linsolve_tol: f32,
-    /// Maximum number of iterations permitted for the linear solve.
-    pub linsolve_max_iter: u32,
+    /// Linear solver configuration,
+    pub linsolve: LinearSolver,
     /// Line search method.
     pub line_search: LineSearch,
 }
@@ -419,34 +417,80 @@ impl SparseDirectSolver {
     }
 }
 
-pub struct SparseJacobian<T: Real> {
-    j_rows: Vec<usize>,
-    j_cols: Vec<usize>,
-    j_vals: Vec<T>,
+pub struct DirectSolver<T: Real> {
     /// Mapping from original triplets given by the `j_*` members to the final
     /// compressed sparse matrix.
-    j_mapping: Vec<Index>,
+    //j_mapping: Vec<Index>,
     j_t_mapping: Vec<Index>,
-    j: DSMatrix<T>,
+    //j: DSMatrix<T>,
     j_t: DSMatrix<T>,
-    #[cfg(target_os = "macos")]
-    j_sparse: LazyCell<SparseMatrixF64<'static>>,
+    //#[cfg(target_os = "macos")]
+    //j_sparse: LazyCell<SparseMatrixF64<'static>>,
     sparse_solver: LazyCell<SparseDirectSolver>,
-    #[cfg(target_os = "macos")]
-    sparse_iterative_solver: LazyCell<SparseIterativeSolver>,
+    //#[cfg(target_os = "macos")]
+    //sparse_iterative_solver: LazyCell<SparseIterativeSolver>,
     p64: Vec<f64>,
     out64: Vec<f64>,
 }
 
+pub struct SparseJacobian<T> {
+    j_rows: Vec<usize>,
+    j_cols: Vec<usize>,
+    j_vals: Vec<T>,
+}
+
+impl<T> Default for SparseJacobian<T> {
+    fn default() -> Self {
+        SparseJacobian {
+            j_rows: Vec::new(),
+            j_cols: Vec::new(),
+            j_vals: Vec::new(),
+        }
+    }
+}
+
+impl<T: Real> SparseJacobian<T> {
+    // Used for debugging
+    #[allow(dead_code)]
+    fn compute_product(&self, p: &[T], jp: &mut [T]) {
+        let num_rows = jp.len();
+        let num_cols = p.len();
+        // Clear output
+        jp.iter_mut().for_each(|jp| *jp = T::zero());
+        self.j_rows
+            .iter()
+            .zip(self.j_cols.iter())
+            .zip(self.j_vals.iter())
+            .filter(|((&row, &col), _)| row < num_rows && col < num_cols)
+            .for_each(|((&row, &col), &val)| {
+                jp[row] += p[col] * val;
+            });
+    }
+}
+
+pub enum LinearSolverWorkspace<T: Real> {
+    Iterative(BiCGSTAB<T>),
+    Direct(DirectSolver<T>),
+}
+
+impl<T: Real> LinearSolverWorkspace<T> {
+    fn iterative_tolerance(&self) -> f32 {
+        if let LinearSolverWorkspace::Iterative(bicgstab) = self {
+            bicgstab.tol
+        } else {
+            0.0 // no tolerance in direct solves.
+        }
+    }
+}
 pub struct NewtonWorkspace<T: Real> {
-    linsolve: BiCGSTAB<T>,
+    linsolve: LinearSolverWorkspace<T>,
+    sparse_jacobian: SparseJacobian<T>,
     x_prev: Vec<T>,
     r: Vec<T>,
     p: Vec<T>,
     jp: Vec<T>,
     r_cur: Vec<T>,
     r_next: Vec<T>,
-    sparse_jacobian: SparseJacobian<T>,
 }
 
 unsafe impl<T: Real> Send for NewtonWorkspace<T> {}
@@ -524,7 +568,31 @@ where
         let p = r.clone();
 
         // Allocate space for the linear solver.
-        let linsolve = BiCGSTAB::new(n, params.linsolve_max_iter, params.linsolve_tol);
+        let linsolve = match params.linsolve {
+            LinearSolver::Iterative {
+                tolerance,
+                max_iterations,
+            } => {
+                log::debug!("ITERATIVE SOLVE");
+                LinearSolverWorkspace::Iterative(BiCGSTAB::new(n, max_iterations, tolerance))
+            }
+            LinearSolver::Direct => {
+                log::debug!("DIRECT SOLVE");
+                LinearSolverWorkspace::Direct(DirectSolver {
+                    //j: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
+                    j_t: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
+                    //#[cfg(target_os = "macos")]
+                    //j_sparse: LazyCell::new(),
+                    //j_mapping: Vec::new(),
+                    j_t_mapping: Vec::new(),
+                    sparse_solver: LazyCell::new(),
+                    //#[cfg(target_os = "macos")]
+                    //sparse_iterative_solver: LazyCell::new(),
+                    p64: Vec::new(),
+                    out64: Vec::new(),
+                })
+            }
+        };
 
         Newton {
             problem,
@@ -533,28 +601,13 @@ where
             inner_callback: RefCell::new(inner_callback),
             workspace: RefCell::new(NewtonWorkspace {
                 linsolve,
+                sparse_jacobian: SparseJacobian::default(),
                 x_prev,
                 r,
                 p,
                 jp,
                 r_cur,
                 r_next,
-                sparse_jacobian: SparseJacobian {
-                    j_vals: Vec::new(),
-                    j_cols: Vec::new(),
-                    j_rows: Vec::new(),
-                    j: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
-                    j_t: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
-                    #[cfg(target_os = "macos")]
-                    j_sparse: LazyCell::new(),
-                    j_mapping: Vec::new(),
-                    j_t_mapping: Vec::new(),
-                    sparse_solver: LazyCell::new(),
-                    #[cfg(target_os = "macos")]
-                    sparse_iterative_solver: LazyCell::new(),
-                    p64: Vec::new(),
-                    out64: Vec::new(),
-                },
             }),
         }
     }
@@ -591,30 +644,37 @@ where
         let (j_rows, j_cols) = self.problem.jacobian_indices();
         assert_eq!(j_rows.len(), j_cols.len());
         let j_nnz = j_rows.len();
-        let mut ws = self.workspace.borrow_mut();
-        let sj = &mut ws.sparse_jacobian;
-        sj.j_vals.resize(j_nnz, T::zero());
-        let (j, j_mapping) = sparse_matrix_and_mapping(&j_rows, &j_cols, &sj.j_vals, n);
-        let (j_t, j_t_mapping) = sparse_matrix_and_mapping(&j_cols, &j_rows, &sj.j_vals, n);
-        sj.j_cols = j_cols;
+        log::debug!("Number of Jacobian non-zeros: {}", j_nnz);
+        let NewtonWorkspace {
+            sparse_jacobian: sj,
+            linsolve,
+            ..
+        } = &mut *self.workspace.borrow_mut();
         sj.j_rows = j_rows;
-        sj.j = j;
-        #[cfg(target_os = "macos")]
-        sj.j_sparse.replace(new_sparse(j_t.view(), true));
-        sj.j_t = j_t;
-        sj.j_mapping = j_mapping;
-        sj.j_t_mapping = j_t_mapping;
-        #[cfg(target_os = "macos")]
-        sj.sparse_solver
-            .replace(SparseDirectSolver::new(sj.j_t.view()).unwrap());
-        #[cfg(not(target_os = "macos"))]
-        sj.sparse_solver
-            .replace(SparseDirectSolver::new(sj.j.view()).unwrap());
-        #[cfg(target_os = "macos")]
-        sj.sparse_iterative_solver
-            .replace(SparseIterativeSolver::new(sj.j_t.view()));
-        sj.p64.resize(n, 0.0);
-        sj.out64.resize(n, 0.0);
+        sj.j_cols = j_cols;
+        sj.j_vals.resize(j_nnz, T::zero());
+        if let LinearSolverWorkspace::Direct(ds) = linsolve {
+            //let (j, j_mapping) = sparse_matrix_and_mapping(&j_rows, &j_cols, &sj.j_vals, n);
+            let (j_t, j_t_mapping) =
+                sparse_matrix_and_mapping(&sj.j_cols, &sj.j_rows, &sj.j_vals, n);
+            //ds.j = j;
+            //#[cfg(target_os = "macos")]
+            //ds.j_sparse.replace(new_sparse(j_t.view(), true));
+            ds.j_t = j_t;
+            //ds.j_mapping = j_mapping;
+            ds.j_t_mapping = j_t_mapping;
+            #[cfg(target_os = "macos")]
+            ds.sparse_solver
+                .replace(SparseDirectSolver::new(ds.j_t.view()).unwrap());
+            #[cfg(not(target_os = "macos"))]
+            ds.sparse_solver
+                .replace(SparseDirectSolver::new(ds.j.view()).unwrap());
+            //#[cfg(target_os = "macos")]
+            //ds.sparse_iterative_solver
+            //    .replace(SparseIterativeSolver::new(ds.j_t.view()));
+            ds.p64.resize(n, 0.0);
+            ds.out64.resize(n, 0.0);
+        }
     }
 
     /// Solves the problem and returns the solution along with the solve result
@@ -648,67 +708,67 @@ where
 
         let NewtonWorkspace {
             linsolve,
+            sparse_jacobian,
             x_prev,
             r,
             p,
             jp,
             r_cur,
             r_next,
-            sparse_jacobian,
         } = &mut *workspace.borrow_mut();
 
-        let SparseJacobian {
-            j_rows,
-            j_cols,
-            j_vals,
-            j_mapping,
-            j_t_mapping,
-            j,
-            j_t,
-            #[cfg(target_os = "macos")]
-            j_sparse,
-            sparse_solver,
-            #[cfg(target_os = "macos")]
-            sparse_iterative_solver,
-            p64,
-            out64: _,
-        } = sparse_jacobian;
+        // let SparseJacobian {
+        //     j_rows,
+        //     j_cols,
+        //     j_vals,
+        //     //j_mapping,
+        //     j_t_mapping,
+        //     //j,
+        //     j_t,
+        //     #[cfg(target_os = "macos")]
+        //     j_sparse,
+        //     sparse_solver,
+        //     //#[cfg(target_os = "macos")]
+        //     //sparse_iterative_solver,
+        //     p64,
+        //     out64: _,
+        // } = sparse_jacobian;
+        //
+        // // Unwrap the sparse solver. In case of panic check update_jacobian_indices function.
+        //  let sparse_solver = sparse_solver
+        //      .borrow_mut()
+        //      .expect("Uninitialized direct sparse solver.");
 
-        // Unwrap the sparse solver. In case of panic check update_jacobian_indices function.
-        let sparse_solver = sparse_solver
-            .borrow_mut()
-            .expect("Uninitialized direct sparse solver.");
-
-        #[cfg(target_os = "macos")]
-        let sparse_iterative_solver = sparse_iterative_solver
-            .borrow_mut()
-            .expect("Uninitialized iterative sparse solver.");
+        // #[cfg(target_os = "macos")]
+        // let sparse_iterative_solver = sparse_iterative_solver
+        //     .borrow_mut()
+        //     .expect("Uninitialized iterative sparse solver.");
 
         let mut iterations = 0;
 
         // Initialize the residual.
         problem.residual(x, r.as_mut_slice());
 
-        let a_tol = T::from(params.a_tol).unwrap();
+        //let a_tol = T::from(params.a_tol).unwrap();
         let r_tol = T::from(params.r_tol).unwrap();
         let x_tol = T::from(params.x_tol).unwrap();
 
         let mut linsolve_result = super::linsolve::SolveResult::default();
+
+        let sigma = linsolve.iterative_tolerance();
+        //let orig_sigma = sigma;
 
         log_debug_stats_header();
         log_debug_stats(
             0,
             0,
             linsolve_result,
-            linsolve.tol,
+            sigma,
             std::f64::INFINITY,
             &r,
             x,
             &x_prev,
         );
-
-        // Remember original tolerance so we can reset it later.
-        let orig_linsolve_tol = linsolve.tol;
 
         // Timing stats
         let mut linsolve_time = Duration::new(0, 0);
@@ -725,8 +785,7 @@ where
         //let mut merit_prev = merit_cur;
         let mut merit_next;
 
-        //let mut j_dense =
-        //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
+        let mut j_dense = LazyCell::new();
         //let mut identity =
         //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
         //for (i, id) in identity.iter_mut().enumerate() {
@@ -748,38 +807,6 @@ where
                 };
             }
 
-            // Update Jacobian values.
-            //let before_j = Instant::now();
-            problem.jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
-            // TODO: For debugging only
-            //for (jp, p) in j_dense.iter_mut().zip(identity.iter()) {
-            //    problem.jacobian_product(x, &p, &r, jp)
-            //}
-            //build_dense(j_dense.view_mut(), &j_rows, &j_cols, &j_vals, x.len());
-            //print_dense(j_dense.view());
-            //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
-            //log::debug!("Condition number: {:?}", condition_number(j_dense.view()));
-            //write_jacobian_img(j_dense.view(), iterations);
-            //jprod_time += Instant::now() - before_j;
-
-            ////log::trace!("j_vals = {:?}", &j_vals);
-
-            //// Zero out Jacobian.
-            j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
-            j_t.storage_mut().iter_mut().for_each(|x| *x = T::zero());
-
-            // Update the Jacobian matrix.
-            for (&pos, &j_val) in j_mapping.iter().zip(j_vals.iter()) {
-                if let Some(pos) = pos.into_option() {
-                    j.storage_mut()[pos] += j_val;
-                }
-            }
-            for (&pos, &j_val) in j_t_mapping.iter().zip(j_vals.iter()) {
-                if let Some(pos) = pos.into_option() {
-                    j_t.storage_mut()[pos] += j_val;
-                }
-            }
-
             //log::trace!("r = {:?}", &r);
 
             if !merit_cur.is_finite() {
@@ -792,52 +819,105 @@ where
             let t_begin_linsolve = Instant::now();
 
             // Update tolerance (forcing term)
-            //linsolve.tol = orig_linsolve_tol
-            //    .min(((merit_cur - linsolve_result.residual).abs() / merit_prev) as f32);
+            //sigma = orig_sigma.min(((merit_cur - linsolve_result.residual).abs() / merit_prev) as f32);
+
+            // Update Jacobian values.
+            //let before_j = Instant::now();
+            problem.jacobian_values(
+                x,
+                &r,
+                &sparse_jacobian.j_rows,
+                &sparse_jacobian.j_cols,
+                sparse_jacobian.j_vals.as_mut_slice(),
+            );
 
             r_cur.copy_from_slice(&r);
 
-            #[cfg(target_os = "macos")]
-            update_sparse_values(j_sparse.borrow_mut().unwrap(), j_t.storage());
-
-            //linsolve_result = linsolve.solve(
-            //    |p, out| {
-            //        let t_begin_jprod = Instant::now();
-            //        //problem.jacobian_product(x, p, r_cur, out);
-            //        p.iter().zip(p64.iter_mut()).for_each(|(&x,p64)| *p64 = x.to_f64().unwrap());
-            //        out64.iter_mut().for_each(|x| *x = 0.0);
-            //        j_sparse.borrow().unwrap().add_mul_vec(p64, out64);
-            //        out.iter_mut().zip(out64.iter()).for_each(|(out, &out64)| *out = T::from(out64).unwrap());
-            //        jprod_linsolve_time += Instant::now() - t_begin_jprod;
-            //        inner_callback.borrow_mut()(CallbackArgs {
-            //            residual: r_cur.as_slice(),
-            //            x,
-            //            problem,
-            //            iteration: iterations,
-            //        })
-            //    },
-            //    p.as_mut_slice(),
-            //    r.as_mut_slice(),
-            //);
-
-            //log::trace!("linsolve result: {:?}", linsolve_result);
-
-            //let result = sparse_iterative_solver.solve_with_values(&r, j_t.storage());
-            let result = sparse_solver.solve_with_values(&r, j_t.storage());
-            let r64 = match result {
-                Err(err) => {
-                    break SolveResult {
-                        iterations,
-                        status: Status::LinearSolveError(err.into()),
-                    }
+            match linsolve {
+                LinearSolverWorkspace::Iterative(linsolve) => {
+                    linsolve_result = linsolve.solve(
+                        |p, out| {
+                            let t_begin_jprod = Instant::now();
+                            problem.jacobian_product(x, p, r_cur, out);
+                            //sparse_jacobian.compute_product(p, out);
+                            jprod_linsolve_time += Instant::now() - t_begin_jprod;
+                            inner_callback.borrow_mut()(CallbackArgs {
+                                residual: r_cur.as_slice(),
+                                x,
+                                problem,
+                                iteration: iterations,
+                            })
+                        },
+                        p.as_mut_slice(),
+                        r.as_mut_slice(),
+                    );
                 }
-                Ok(r) => r,
-            };
+                LinearSolverWorkspace::Direct(DirectSolver {
+                    j_t_mapping,
+                    j_t,
+                    sparse_solver,
+                    ..
+                }) => {
+                    log::trace!("Condition number: {:?}", {
+                        let j_dense = j_dense.borrow_mut_with(|| {
+                            ChunkedN::from_flat_with_stride(
+                                x.len(),
+                                vec![T::zero(); x.len() * r.len()],
+                            )
+                        });
+                        build_dense(
+                            j_dense.view_mut(),
+                            &sparse_jacobian.j_rows,
+                            &sparse_jacobian.j_cols,
+                            &sparse_jacobian.j_vals,
+                            x.len(),
+                        );
+                        //print_dense(j_dense.view());
+                        //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
+                        //write_jacobian_img(j_dense.view(), iterations);
+                        condition_number(j_dense.view())
+                    });
+                    //jprod_time += Instant::now() - before_j;
 
-            // r is now the search direction, rename to avoid confusion.
-            p.iter_mut()
-                .zip(r64.iter())
-                .for_each(|(p, &r64)| *p = T::from(r64).unwrap());
+                    ////log::trace!("j_vals = {:?}", &j_vals);
+
+                    //// Zero out Jacobian.
+                    //j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
+                    j_t.storage_mut().iter_mut().for_each(|x| *x = T::zero());
+
+                    // Update the Jacobian matrix.
+                    // for (&pos, &j_val) in j_mapping.iter().zip(j_vals.iter()) {
+                    //     if let Some(pos) = pos.into_option() {
+                    //         j.storage_mut()[pos] += j_val;
+                    //     }
+                    // }
+                    for (&pos, &j_val) in j_t_mapping.iter().zip(sparse_jacobian.j_vals.iter()) {
+                        if let Some(pos) = pos.into_option() {
+                            j_t.storage_mut()[pos] += j_val;
+                        }
+                    }
+                    let sparse_solver = sparse_solver
+                        .borrow_mut()
+                        .expect("Uninitialized iterative sparse solver.");
+                    let result = sparse_solver.solve_with_values(&r, j_t.storage());
+                    let r64 = match result {
+                        Err(err) => {
+                            break SolveResult {
+                                iterations,
+                                status: Status::LinearSolveError(err.into()),
+                            }
+                        }
+                        Ok(r) => r,
+                    };
+
+                    // r is now the search direction, rename to avoid confusion.
+                    p.iter_mut()
+                        .zip(r64.iter())
+                        .for_each(|(p, &r64)| *p = T::from(r64).unwrap());
+
+                    //log::trace!("linsolve result: {:?}", linsolve_result);
+                }
+            }
 
             //log::trace!("p = {:?}", &r);
 
@@ -922,6 +1002,7 @@ where
                     //j.view()
                     //    .add_mul_in_place_par(p.as_tensor(), jp.as_mut_tensor());
                     problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
+                    //sparse_jacobian.compute_product(p, jp.as_mut_slice());
                     jprod_ls_time += Instant::now() - t_begin_jprod;
 
                     // Compute the merit function
@@ -966,13 +1047,13 @@ where
 
             iterations += 1;
 
-           ls_time += Instant::now() - t_begin_ls;
+            ls_time += Instant::now() - t_begin_ls;
 
             log_debug_stats(
                 iterations,
                 ls_count,
                 linsolve_result,
-                linsolve.tol,
+                sigma,
                 merit_next,
                 &r_next,
                 x,
@@ -1016,9 +1097,6 @@ where
             merit_cur = merit_next;
         };
 
-        // Reset tolerance for future solves.
-        linsolve.tol = orig_linsolve_tol;
-
         log::debug!(
             "Balance equation computation time: {}ms",
             residual_time.as_millis()
@@ -1038,6 +1116,7 @@ where
  * Status print routines.
  * i       - iteration number
  * res-2   - 2-norm of the residual
+ * merit   - Merit function
  * res-inf - inf-norm of the residual
  * d-inf   - inf-norm of the step vector
  * x-inf   - inf-norm of the variable vector
@@ -1184,6 +1263,17 @@ fn write_jacobian_img<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>, iter: u32
         }
     }
     super::problem::write_jacobian_img(&dense, iter);
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub enum LinearSolver {
+    Iterative {
+        /// Residual tolerance for the linear solve.
+        tolerance: f32,
+        /// Maximum number of iterations permitted for the linear solve.
+        max_iterations: u32,
+    },
+    Direct,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]

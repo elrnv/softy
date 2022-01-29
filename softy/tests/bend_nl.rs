@@ -9,11 +9,8 @@ pub use test_utils::*;
 
 mod test_utils;
 
-fn soft_shell_material() -> SoftShellMaterial {
-    SoftShellMaterial::new(0)
-        .with_elasticity(ElasticityParameters::from_bulk_shear(1000e3, 100e3))
-        .with_density(1000.0)
-        .with_bending_stiffness(1000.0)
+fn soft_shell_material() -> Result<Material, LoadConfigError> {
+    softy::io::load_material("assets/soft_shell_material.ron")
 }
 
 /// Test that the solver produces no change for an equilibrium configuration.
@@ -39,7 +36,7 @@ fn equilibrium() {
 
     let mut solver = SolverBuilder::new(params)
         .set_mesh(Mesh::from(mesh.clone()))
-        .set_materials(vec![soft_shell_material().into(); 1])
+        .set_materials(vec![soft_shell_material().unwrap(); 1])
         .build::<f64>()
         .expect("Failed to build a solver for a three triangle test.");
     let result = solver.step();
@@ -63,7 +60,7 @@ fn simple_quasi_static_undeformed() -> Result<(), Error> {
         ..static_nl_params()
     })
     .set_mesh(Mesh::from(mesh.clone()))
-    .set_materials(vec![soft_shell_material().into(); 1])
+    .set_materials(vec![soft_shell_material()?; 1])
     .build::<f64>()
     .expect("Failed to build a solver for a three triangle test.");
 
@@ -90,14 +87,13 @@ fn simple_quasi_static_undeformed() -> Result<(), Error> {
 fn quasi_static_deformed() -> Result<(), Error> {
     init_logger();
     let mesh = make_three_tri_mesh();
-    dbg!(mesh.vertex_positions());
     let mut solver = SolverBuilder::new(SimParams {
         velocity_clear_frequency: 20.0,
         time_step: Some(0.1),
         ..static_nl_params()
     })
     .set_mesh(Mesh::from(mesh.clone()))
-    .set_materials(vec![soft_shell_material().into()])
+    .set_materials(vec![soft_shell_material()?])
     .build::<f64>()
     .expect("Failed to build a solver for a three triangle test.");
 
@@ -133,7 +129,7 @@ fn dynamic_deformed() -> Result<(), Error> {
         ..static_nl_params()
     })
     .set_mesh(Mesh::from(mesh))
-    .set_materials(vec![soft_shell_material().into()])
+    .set_materials(vec![soft_shell_material()?])
     .build::<f64>()
     .expect("Failed to build a solver for a three triangle test.");
 

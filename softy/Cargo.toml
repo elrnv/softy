@@ -5,6 +5,7 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+num_cpus = "0.2.13"
 na = { package = "nalgebra", version = "0.29" }
 tensr = { git = "https://github.com/elrnv/tensr.git", features = ["autodiff"] }
 flatk = { git = "https://github.com/elrnv/flatk.git", version = "0.5" }

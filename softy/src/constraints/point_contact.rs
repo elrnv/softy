@@ -7,7 +7,7 @@ use implicits::*;
 use lazycell::LazyCell;
 use num_traits::Zero;
 use rayon::iter::Either;
-#[cfg(feature = "optsolver")]
+// #[cfg(feature = "optsolver")]
 use rayon::prelude::*;
 #[cfg(feature = "af")]
 use reinterpret::*;
@@ -639,27 +639,27 @@ impl<T: Real> PointContactConstraint<T> {
     pub fn in_contact_indices(
         &self,
         contact_impulse: &[T],
-        potential: &[T],
+        _potential: &[T],
     ) -> (Vec<usize>, Vec<usize>, Vec<Index>, Vec<Index>, Vec<T>) {
         let surf = &self.implicit_surface;
         let query_points = &self.collider_vertex_positions;
         let radius = surf.radius() * 0.999;
         let query_indices = self.active_constraint_indices();
         assert_eq!(query_indices.len(), contact_impulse.len());
-        assert_eq!(potential.len(), contact_impulse.len());
-        let dist_scale = 1.0 / self.problem_diameter;
+        //assert_eq!(potential.len(), contact_impulse.len());
+        //let dist_scale = 1.0 / self.problem_diameter;
         let mut vertices_in_contact = vec![Index::invalid(); query_points.len()];
         let mut constraints_in_contact = vec![Index::invalid(); query_indices.len()];
         let mut contact_counter = 0;
         let (active_constraint_subset, contact_impulse): (Vec<_>, Vec<_>) = contact_impulse
             .iter()
-            .zip(potential.iter())
+            //.zip(potential.iter())
             .zip(query_indices.iter())
             .zip(constraints_in_contact.iter_mut())
             .enumerate()
-            .filter_map(|(i, (((&cf, dist), &query_index), constraint_idx))| {
+            .filter_map(|(i, ((&cf, &query_index), constraint_idx))| {
                 if cf != T::zero()
-                    && dist.to_f64().unwrap() * dist_scale < 1e-4
+                    //&& dist.to_f64().unwrap() * dist_scale < 1e-4
                     && surf.num_neighbors_within_distance(query_points[query_index], radius) > 0
                 {
                     vertices_in_contact[query_index] = Index::new(contact_counter);
@@ -1968,7 +1968,52 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
-    #[cfg(feature = "optsolver")]
+    pub(crate) fn implicit_object_constraint_jacobian_blocks_par_chunks<'a, OP, TWS>(
+        &'a self,
+        ws: &mut [TWS],
+        op: OP,
+    ) where
+        TWS: Send + Sync,
+        OP: Fn(&mut TWS, (usize, usize, [T; 3])) + Send + Sync + 'a,
+    {
+        if self.object_is_fixed() {
+            return;
+        }
+
+        let surf = &self.implicit_surface;
+        let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
+        surf.surface_jacobian_indexed_block_par_chunks(
+            self.collider_vertex_positions.view().into(),
+            ws,
+            |tws, (row, col, block)| {
+                // Remap indices.
+                assert!(neighborhood_indices[row].is_valid());
+                op(tws, (neighborhood_indices[row].unwrap(), col, block))
+            },
+        );
+    }
+
+    pub(crate) fn implicit_object_constraint_jacobian_blocks_par_iter<'a>(
+        &'a self,
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+        let surf = &self.implicit_surface;
+        let iter = surf
+            .surface_jacobian_indexed_block_par_iter(self.collider_vertex_positions.view().into());
+        let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
+        if self.object_is_fixed() {
+            None
+        } else {
+            Some(iter)
+        }
+        .into_par_iter()
+        .flatten()
+        .map(move |(row, col, block)| {
+            assert!(neighborhood_indices[row].is_valid());
+            (neighborhood_indices[row].unwrap(), col, block)
+        })
+    }
+
+    //#[cfg(feature = "optsolver")]
     pub(crate) fn object_constraint_jacobian_blocks_par_iter<'a>(
         &'a self,
     ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
@@ -1991,24 +2036,25 @@ impl<T: Real> PointContactConstraint<T> {
                     .flatten(),
             )
         } else {
-            let surf = &self.implicit_surface;
-            let iter = surf.surface_jacobian_indexed_block_par_iter(
-                self.collider_vertex_positions.view().into(),
-            );
-            let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
-            Either::Right(
-                if self.object_is_fixed() {
-                    None
-                } else {
-                    Some(iter)
-                }
-                .into_par_iter()
-                .flatten()
-                .map(move |(row, col, block)| {
-                    assert!(neighborhood_indices[row].is_valid());
-                    (neighborhood_indices[row].unwrap(), col, block)
-                }),
-            )
+            Either::Right(self.implicit_object_constraint_jacobian_blocks_par_iter())
+            // let surf = &self.implicit_surface;
+            // let iter = surf.surface_jacobian_indexed_block_par_iter(
+            //     self.collider_vertex_positions.view().into(),
+            // );
+            // let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
+            // Either::Right(
+            //     if self.object_is_fixed() {
+            //         None
+            //     } else {
+            //         Some(iter)
+            //     }
+            //     .into_par_iter()
+            //     .flatten()
+            //     .map(move |(row, col, block)| {
+            //         assert!(neighborhood_indices[row].is_valid());
+            //         (neighborhood_indices[row].unwrap(), col, block)
+            //     }),
+            // )
         }
     }
 
@@ -2053,7 +2099,50 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
-    #[cfg(feature = "optsolver")]
+    pub(crate) fn implicit_collider_constraint_jacobian_blocks_par_chunks<'a, OP, TWS>(
+        &'a self,
+        ws: &mut [TWS],
+        op: OP,
+    ) where
+        TWS: Send + Sync,
+        OP: Fn(&mut TWS, (usize, usize, [T; 3])) + Send + Sync + 'a,
+    {
+        if self.collider_is_fixed() {
+            return;
+        }
+        let surf = &self.implicit_surface;
+        let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
+        surf.query_jacobian_indexed_block_par_chunks(
+            self.collider_vertex_positions.view().into(),
+            ws,
+            |tws, (row, col, block)| {
+                assert!(neighborhood_indices[row].is_valid());
+                op(tws, (neighborhood_indices[row].unwrap(), col, block))
+            },
+        );
+    }
+
+    pub(crate) fn implicit_collider_constraint_jacobian_blocks_par_iter<'a>(
+        &'a self,
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+        let surf = &self.implicit_surface;
+        let iter = surf
+            .query_jacobian_indexed_block_par_iter(self.collider_vertex_positions.view().into());
+        let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
+        if self.collider_is_fixed() {
+            None
+        } else {
+            Some(iter)
+        }
+        .into_par_iter()
+        .flatten()
+        .map(move |(row, col, block)| {
+            assert!(neighborhood_indices[row].is_valid());
+            (neighborhood_indices[row].unwrap(), col, block)
+        })
+    }
+
+    //#[cfg(feature = "optsolver")]
     pub(crate) fn collider_constraint_jacobian_blocks_par_iter<'a>(
         &'a self,
     ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
@@ -2076,24 +2165,25 @@ impl<T: Real> PointContactConstraint<T> {
                     .flatten(),
             )
         } else {
-            let surf = &self.implicit_surface;
-            let iter = surf.query_jacobian_indexed_block_par_iter(
-                self.collider_vertex_positions.view().into(),
-            );
-            let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
-            Either::Right(
-                if self.collider_is_fixed() {
-                    None
-                } else {
-                    Some(iter)
-                }
-                .into_par_iter()
-                .flatten()
-                .map(move |(row, col, block)| {
-                    assert!(neighborhood_indices[row].is_valid());
-                    (neighborhood_indices[row].unwrap(), col, block)
-                }),
-            )
+            Either::Right(self.implicit_collider_constraint_jacobian_blocks_par_iter())
+            // let surf = &self.implicit_surface;
+            // let iter = surf.query_jacobian_indexed_block_par_iter(
+            //     self.collider_vertex_positions.view().into(),
+            // );
+            // let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
+            // Either::Right(
+            //     if self.collider_is_fixed() {
+            //         None
+            //     } else {
+            //         Some(iter)
+            //     }
+            //     .into_par_iter()
+            //     .flatten()
+            //     .map(move |(row, col, block)| {
+            //         assert!(neighborhood_indices[row].is_valid());
+            //         (neighborhood_indices[row].unwrap(), col, block)
+            //     }),
+            // )
         }
     }
 

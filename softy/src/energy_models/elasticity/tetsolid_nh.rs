@@ -375,11 +375,11 @@ mod tests {
 
     fn material() -> SolidMaterial {
         SolidMaterial::new(0)
-            .with_elasticity(ElasticityParameters {
-                lambda: 5.4,
-                mu: 263.1,
-                model: ElasticityModel::NeoHookean,
-            })
+            .with_elasticity(Elasticity::from_lame(
+                5.4,
+                263.1,
+                ElasticityModel::NeoHookean,
+            ))
             .with_density(10.0)
             .with_damping(1.0, 0.01)
     }

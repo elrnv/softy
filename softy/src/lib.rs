@@ -12,6 +12,7 @@ mod energy;
 pub mod energy_models;
 pub mod fem;
 mod friction;
+pub mod io;
 pub mod mask_iter;
 mod matrix;
 pub mod objects;
@@ -41,6 +42,7 @@ pub use self::friction::*;
 pub use self::objects::init_mesh_source_index_attribute;
 pub use self::objects::material::*;
 use geo::attrib;
+pub use io::*;
 pub use utils::index::{CheckedIndex, Index};
 
 pub use attrib_defines::*;
@@ -157,6 +159,8 @@ pub enum Error {
     DerivativeCheckFailure,
     #[error("Nothing to solve: no mesh or all vertices are fixed")]
     NothingToSolve,
+    #[error("Failed to load configuration")]
+    LoadConfig(#[from] LoadConfigError),
 }
 
 pub enum SimResult {

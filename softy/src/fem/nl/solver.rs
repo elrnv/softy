@@ -11,7 +11,6 @@ use super::problem::{FrictionalContactConstraint, NLProblem, NonLinearProblem};
 use super::state::*;
 use super::{NLSolver, SimParams, SolveResult, Status};
 use crate::attrib_defines::*;
-use crate::constraints::compute_contact_penalty;
 use crate::constraints::*;
 use crate::contact::*;
 use crate::inf_norm;
@@ -619,10 +618,10 @@ impl SolverBuilder {
         let max_element_bending_scale =
             Self::compute_max_bending_stiffness(&state.shell) / max_element_size;
 
-        log::trace!("max_element_modulus_scale = {}", max_element_modulus_scale);
-        log::trace!("max_element_inertia_scale = {}", max_element_inertia_scale);
-        log::trace!("max_element_gravity_scale = {}", max_element_gravity_scale);
-        log::trace!("max_element_bending_scale = {}", max_element_bending_scale);
+        log::debug!("max_element_modulus_scale = {}", max_element_modulus_scale);
+        log::debug!("max_element_inertia_scale = {}", max_element_inertia_scale);
+        log::debug!("max_element_gravity_scale = {}", max_element_gravity_scale);
+        log::debug!("max_element_bending_scale = {}", max_element_bending_scale);
 
         // Determine the most likely dominant force.
         let mut max_scale = max_element_modulus_scale
@@ -660,10 +659,10 @@ impl SolverBuilder {
         let min_element_bending_scale =
             Self::compute_min_bending_stiffness(&state.shell) / min_element_size;
 
-        log::trace!("min_element_modulus_scale = {}", min_element_modulus_scale);
-        log::trace!("min_element_inertia_scale = {}", min_element_inertia_scale);
-        log::trace!("min_element_gravity_scale = {}", min_element_gravity_scale);
-        log::trace!("min_element_bending_scale = {}", min_element_bending_scale);
+        log::debug!("min_element_modulus_scale = {}", min_element_modulus_scale);
+        log::debug!("min_element_inertia_scale = {}", min_element_inertia_scale);
+        log::debug!("min_element_gravity_scale = {}", min_element_gravity_scale);
+        log::debug!("min_element_bending_scale = {}", min_element_bending_scale);
 
         // Determine the least dominant force.
         let min_scale = min_element_modulus_scale
@@ -721,9 +720,11 @@ impl SolverBuilder {
         let a_tol = params.acceleration_tolerance.unwrap_or(0.0);
 
         log::info!("Simulation Parameters:\n{:#?}", params);
+        log::info!("Materials:\n{:#?}", self.materials);
+        log::info!("Number of variables: {:?}", num_variables);
         log::info!("r_tol: {:?}", r_tol);
         log::info!("x_tol: {:?}", x_tol);
-        log::trace!("r-scale: {:?}", r_scale);
+        log::debug!("r-scale: {:?}", r_scale);
 
         // Construct the non-linear equation solver.
         let solver = MCPSolver::newton(
@@ -733,8 +734,7 @@ impl SolverBuilder {
                 x_tol,
                 a_tol,
                 max_iter: params.max_iterations,
-                linsolve_tol: params.linsolve_tolerance,
-                linsolve_max_iter: params.max_linsolve_iterations,
+                linsolve: params.linsolve,
                 line_search: params.line_search,
             },
             Box::new(move |_args| {
@@ -954,7 +954,7 @@ where
             ..
         } = self;
 
-        log::trace!("Updating constraint set...");
+        log::debug!("Updating constraint set...");
         solver.problem_mut().update_constraint_set();
         solver.update_jacobian_indices();
 
@@ -980,7 +980,7 @@ where
         // Loop to resolve all contacts.
         loop {
             /***     Main solve step     ***/
-            log::trace!("Begin main nonlinear solve.");
+            log::debug!("Begin main nonlinear solve.");
             let result = solver.solve_with(solution.as_mut_slice());
             /*******************************/
 
@@ -994,38 +994,36 @@ where
                         .into_storage();
                     //let mut orig_lambda = constraint.clone();
                     //let mut shifted_lambda = constraint.clone();
-                    let smallest = constraint
+                    let deepest = constraint
                         .iter()
                         .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
                         .copied()
                         .unwrap_or(T::zero())
                         .to_f64()
                         .unwrap();
-                    //shifted_lambda.iter_mut().for_each(|x| *x -= smallest);
-                    //compute_contact_penalty(
-                    //    shifted_lambda.as_mut_slice(),
-                    //    sim_params.contact_tolerance,
-                    //);
-                    //compute_contact_penalty(
-                    //    orig_lambda.as_mut_slice(),
-                    //    sim_params.contact_tolerance,
-                    //);
 
                     let delta = sim_params.contact_tolerance as f64;
-                    let denom: f64 = (compute_contact_penalty(0.0, delta as f32)
-                        - sim_params.residual_tolerance.unwrap_or(0.0) as f64
-                            / solver.problem().kappa)
-                        .min(0.5 * delta)
-                        .max(f64::EPSILON);
+                    log::debug!(
+                        "Deepest: {}; b: {}; db: {}",
+                        deepest,
+                        ContactPenalty::new(delta).b(deepest),
+                        ContactPenalty::new(delta).db(deepest)
+                    );
+                    log::debug!(
+                        "half   : {}; b: {}; db: {}",
+                        0.5 * delta,
+                        ContactPenalty::new(delta).b(0.5 * delta),
+                        ContactPenalty::new(delta).db(0.5 * delta)
+                    );
+                    let bump_ratio: f64 = ContactPenalty::new(delta).db(deepest)
+                        / ContactPenalty::new(delta).db(0.5 * delta);
 
-                    let bump_ratio: f64 =
-                        compute_contact_penalty(smallest, sim_params.contact_tolerance) / denom;
-                    log::trace!("Bump ratio: {}", bump_ratio);
-                    log::trace!("Kappa: {}", solver.problem().kappa);
+                    log::debug!("Bump ratio: {}", bump_ratio);
+                    log::debug!("Kappa: {}", solver.problem().kappa);
                     let violation = solver
                         .problem_mut()
                         .contact_violation(constraint.storage().as_slice());
-                    log::trace!("Contact violation: {}", violation);
+                    log::debug!("Contact violation: {}", violation);
 
                     contact_iterations -= 1;
 
@@ -1039,11 +1037,11 @@ where
                     }
 
                     if violation > T::zero() {
-                        //solver.problem_mut().kappa *= bump_ratio.max(2.0);
+                        solver.problem_mut().kappa *= bump_ratio.max(2.0);
                         continue;
                     } else {
                         // Relax kappa
-                        //if solver.problem().kappa > 1.0 / sim_params.contact_tolerance as f64 {
+                        //if solver.problem().kappa > 1.0e2 / sim_params.contact_tolerance as f64 {
                         //    solver.problem_mut().kappa /= 2.0;
                         //}
                         self.commit_solution(false);

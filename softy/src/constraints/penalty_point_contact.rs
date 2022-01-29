@@ -62,7 +62,7 @@ fn clone_cast_ssblock_mtx<T: Real, S: Real>(jac: &Tensor![T; S S 3 3]) -> Tensor
  * Functions defining the friction presliding profile
  */
 
-/// This function is the sliding profile divided by `x`.
+/// This function is the C-infty sliding profile divided by `x`.
 ///
 /// The sliding profile defines the relationship between velocity magnitude (the input)
 /// and the friction force magnitude (the output).
@@ -70,17 +70,24 @@ fn clone_cast_ssblock_mtx<T: Real, S: Real>(jac: &Tensor![T; S S 3 3]) -> Tensor
 /// The division is done for numerical stability to avoid division by zero.
 /// `s(x) = 1 / (x + 0.1 * eps)`
 fn stabilized_sliding_profile<T: Real>(x: T, epsilon: T) -> T {
-    // Quadratic smoothing function with compact support.
-    // s(x) = 2/eps - x/eps^2
-    //let s = |x| {
-    //    if x < epsilon {
-    //        T::from(2.0).unwrap()  / epsilon - x / (epsilon * epsilon)
-    //    } else {
-    //        T::one()
-    //    }
-    //};
     // Note that denominator is always >= 0.1eps since x > 0.
     T::one() / (x + T::from(0.1).unwrap() * epsilon)
+}
+
+/// This function is the quadratic C1 sliding profile divided by `x`, proposed by IPC.
+///
+/// The sliding profile defines the relationship between velocity magnitude (the input)
+/// and the friction force magnitude (the output).
+///
+/// `s(x) = 2/eps - x/eps^2 if x < eps and 1 otherwise`
+fn quadratic_sliding_profile<T: Real>(x: T, epsilon: T) -> T {
+    // Quadratic smoothing function with compact support.
+    // `s(x) = 2/eps - x/eps^2`
+    if x < epsilon {
+        T::from(2.0).unwrap() / epsilon - x / (epsilon * epsilon)
+    } else {
+        T::one()
+    }
 }
 
 /// Derivative of the sliding profile.
@@ -89,20 +96,29 @@ fn stabilized_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
     -T::one() / (denom * denom)
 }
 
+/// Derivative of the quadratic sliding profile.
+fn quadratic_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
+    // `s(x) = -1/eps^2`
+    -T::one() / (epsilon * epsilon)
+}
+
 /// The full sliding profile including 1D direction.
 ///
 /// This is the function eta in the paper.
 pub fn eta<T: Real>(v: Vector2<T>, factor: T, epsilon: T) -> Vector2<T> {
     // This is similar to function s but with the norm of v multiplied through to avoid
     // degeneracies.
-    let s = |x| stabilized_sliding_profile(x, epsilon);
+    // let s = |x| stabilized_sliding_profile(x, epsilon);
+    let s = |x| quadratic_sliding_profile(x, epsilon);
     v * (factor * s(v.norm()))
 }
 
 /// Jacobian of the full directional 1D sliding profile
 pub fn eta_jac<T: Real>(v: Vector2<T>, factor: T, epsilon: T) -> Matrix2<T> {
-    let s = |x| stabilized_sliding_profile(x, epsilon);
-    let ds = |x| stabilized_sliding_profile_derivative(x, epsilon);
+    // let s = |x| stabilized_sliding_profile(x, epsilon);
+    // let ds = |x| stabilized_sliding_profile_derivative(x, epsilon);
+    let s = |x| quadratic_sliding_profile(x, epsilon);
+    let ds = |x| quadratic_sliding_profile_derivative(x, epsilon);
     let norm_v = v.norm();
     let mut out = Matrix2::identity() * (s(norm_v) * factor);
     if norm_v > T::zero() {
@@ -170,6 +186,7 @@ where
 
     pub(crate) lambda: Vec<T>,
     pub distance_potential: Vec<T>,
+    force_workspace: std::cell::RefCell<Vec<Vec<T>>>,
 
     contact_jacobian: LazyCell<ContactJacobian<T>>,
     contact_gradient: LazyCell<ContactGradient<T>>,
@@ -210,6 +227,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             contact_jacobian,
             contact_gradient,
             friction_jacobian_workspace: FrictionJacobianWorkspace::default(),
+            force_workspace: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -250,6 +268,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             contact_gradient: LazyCell::new(),
             lambda: Vec::new(),
             distance_potential: Vec::new(),
+            force_workspace: std::cell::RefCell::new(Vec::new()),
             friction_jacobian_workspace: FrictionJacobianWorkspace::default(),
         };
 
@@ -472,15 +491,15 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
     /// Initializes the constraint gradient sparsity pattern.
     pub fn reset_distance_gradient<'a>(&mut self, num_vertices: usize) {
-        let (indices, blocks): (Vec<_>, Chunked3<Vec<_>>) = self
-            .distance_jacobian_blocks_iter()
+        let (indices, blocks): (Vec<_>, Vec<_>) = self
+            .distance_jacobian_blocks_par_iter()
             .map(|(row, col, block)| (MatrixElementIndex { row: col, col: row }, block))
             .unzip();
         let num_constraints = self.constraint_size();
         self.distance_gradient
             .replace(Self::build_distance_gradient(
                 indices.as_slice(),
-                blocks.view(),
+                Chunked3::from_array_slice(blocks.as_slice()),
                 num_vertices,
                 num_constraints,
             ));
@@ -596,6 +615,45 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .for_each(|(row, col, j)| {
                 *f[col].as_mut_tensor() -= *j.as_tensor() * self.lambda[row];
             });
+    }
+
+    pub fn subtract_constraint_force_par(&self, mut f: Chunked3<&mut [T]>) {
+        let Self {
+            point_constraint,
+            implicit_surface_vertex_indices,
+            collider_vertex_indices,
+            lambda,
+            force_workspace,
+            ..
+        } = self;
+        let fws = &mut *force_workspace.borrow_mut();
+        let ncpus = num_cpus::get();
+        fws.resize(ncpus, Vec::new());
+        for fws_vec in fws.iter_mut() {
+            fws_vec.resize(f.storage().len(), T::zero());
+            fws_vec.fill(T::zero());
+        }
+
+        Self::distance_jacobian_blocks_par_chunks_fn(
+            &point_constraint,
+            &implicit_surface_vertex_indices,
+            &collider_vertex_indices,
+            fws,
+            |fws, (row, col, j)| {
+                let mut fws = Chunked3::from_flat(fws.as_mut_slice());
+                *fws[col].as_mut_tensor() -= *j.as_tensor() * lambda[row];
+            },
+        );
+
+        // Accumulate results into f.
+        for fw in fws.iter() {
+            f.storage_mut()
+                .par_iter_mut()
+                .zip(fw.par_iter())
+                .for_each(|(out, f)| {
+                    *out += *f;
+                })
+        }
     }
 
     // Compute friction force `f_f(x,v) = -μT(x)H(T(x)'v)λ(x)` and subtract it from `f`.
@@ -1126,6 +1184,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         max_index: usize,
         recompute_contact_jacobian: bool,
     ) -> Option<impl Iterator<Item = (usize, usize, T)> + 'a> {
+        self.update_constraint_gradient();
+
         // If there is anything I regret in this life,
         // writing this function is at the top of that list.
 
@@ -1587,6 +1647,53 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             )
     }
 
+    fn distance_jacobian_blocks_par_iter<'a>(
+        &'a self,
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+        Self::distance_jacobian_blocks_par_iter_fn(
+            &self.point_constraint,
+            &self.implicit_surface_vertex_indices,
+            &self.collider_vertex_indices,
+        )
+    }
+
+    fn distance_jacobian_blocks_par_iter_fn<'a>(
+        point_constraint: &'a PointContactConstraint<T>,
+        implicit_surface_vertex_indices: &'a [usize],
+        collider_vertex_indices: &'a [usize],
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+        point_constraint
+            .object_constraint_jacobian_blocks_par_iter()
+            .map(move |(row, col, block)| (row, implicit_surface_vertex_indices[col], block))
+            .chain(
+                point_constraint
+                    .collider_constraint_jacobian_blocks_par_iter()
+                    .map(move |(row, col, block)| (row, collider_vertex_indices[col], block)),
+            )
+    }
+
+    fn distance_jacobian_blocks_par_chunks_fn<'a, OP, TWS>(
+        point_constraint: &'a PointContactConstraint<T>,
+        implicit_surface_vertex_indices: &'a [usize],
+        collider_vertex_indices: &'a [usize],
+        ws: &mut [TWS],
+        op: OP,
+    ) where
+        TWS: Send + Sync,
+        OP: Fn(&mut TWS, (usize, usize, [T; 3])) + Send + Sync + 'a,
+    {
+        point_constraint.implicit_object_constraint_jacobian_blocks_par_chunks(
+            ws,
+            // Remap indices.
+            |tws, (row, col, block)| op(tws, (row, implicit_surface_vertex_indices[col], block)),
+        );
+        point_constraint.implicit_collider_constraint_jacobian_blocks_par_chunks(
+            ws,
+            // Remap indices.
+            |tws, (row, col, block)| op(tws, (row, collider_vertex_indices[col], block)),
+        );
+    }
+
     pub(crate) fn constraint_hessian_size(&self, max_index: usize) -> usize {
         self.constraint_hessian_indices_iter(max_index).count()
     }
@@ -1952,7 +2059,7 @@ mod tests {
     use crate::nl_fem::state::{ResidualState, State};
     use crate::nl_fem::{NonLinearProblem, SimParams, SolverBuilder};
     use crate::test_utils::{default_solid, static_nl_params};
-    use crate::{ContactType, ElasticityParameters, FrictionalContactParams, MaterialIdType};
+    use crate::{ContactType, Elasticity, FrictionalContactParams, MaterialIdType};
     use ad::F1;
     use approx::assert_relative_eq;
     use flatk::zip;
@@ -2029,8 +2136,7 @@ mod tests {
         use tensr::IntoStorage;
         crate::test_utils::init_logger();
         // Using the sliding tet on implicit test we will check the friction derivative directly.
-        let material =
-            default_solid().with_elasticity(ElasticityParameters::from_young_poisson(1e5, 0.4));
+        let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
 
         let mut tetmesh = PlatonicSolidBuilder::build_tetrahedron();
         tetmesh.translate([0.0, 1.0 / 3.0, 0.0]);

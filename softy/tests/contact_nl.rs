@@ -13,10 +13,10 @@ use std::path::PathBuf;
 use test_utils::*;
 
 pub fn medium_solid_material() -> SolidMaterial {
-    default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
+    default_solid().with_elasticity(Elasticity::from_bulk_shear(300e6, 100e6))
 }
 pub fn medium_shell_material() -> SoftShellMaterial {
-    default_shell().with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
+    default_shell().with_elasticity(Elasticity::from_bulk_shear(300e6, 100e6))
 }
 
 fn compute_distance_potential_tetmesh(
@@ -323,7 +323,7 @@ fn tet_push() -> Result<(), Error> {
     let params = SimParams {
         gravity: [0.0f32; 3],
         jacobian_test: true,
-        time_step: Some(1.2),
+        //time_step: Some(1.2),
         ..static_nl_params()
     };
 
@@ -475,8 +475,7 @@ fn ball_tri_push_tester(
 
 #[test]
 fn ball_tri_push_plain() -> Result<(), Error> {
-    let material =
-        default_solid().with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
+    let material = default_solid().with_elasticity(Elasticity::from_young_poisson(10e6, 0.4));
     let fc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
         kernel: KernelType::Approximate {

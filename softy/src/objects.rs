@@ -177,7 +177,7 @@ pub trait ElasticObject: DeformableObject {
                 .mesh_mut()
                 .insert_attrib_data::<LambdaType, Self::ElementIndex>(
                     LAMBDA_ATTRIB,
-                    vec![elasticity.lambda; num_elements],
+                    vec![elasticity.lambda(); num_elements],
                 ) {
                 // if ok or already exists, everything is ok.
                 Err(attrib::Error::AlreadyExists(_)) => {}
@@ -188,7 +188,7 @@ pub trait ElasticObject: DeformableObject {
                 .mesh_mut()
                 .insert_attrib_data::<MuType, Self::ElementIndex>(
                     MU_ATTRIB,
-                    vec![elasticity.mu; num_elements],
+                    vec![elasticity.mu(); num_elements],
                 ) {
                 // if ok or already exists, everything is ok.
                 Err(attrib::Error::AlreadyExists(_)) => {}

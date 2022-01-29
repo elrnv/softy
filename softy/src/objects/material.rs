@@ -3,7 +3,9 @@
 //! is defined on the mesh itself. This allows us to define variable material
 //! properties.
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MaterialBase<P> {
     /// Material unique identifier.
     /// It is the user's responsibility to ensure that this value is used correctly:
@@ -15,11 +17,11 @@ pub struct MaterialBase<P> {
 }
 
 /// Common material properties shared among all deformable objects.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeformableProperties {
     /// Parameters determining the elastic behaviour of a simulated solid. If `None`, we will look
     /// for elasticity parameters in the mesh.
-    pub elasticity: Option<ElasticityParameters>,
+    pub elasticity: Option<Elasticity>,
     /// The density of the material. If `None`, we will look for a density attribute in the mesh.
     pub density: Option<f32>,
     /// Coefficient measuring the amount of artificial viscosity as dictated by the Rayleigh
@@ -42,7 +44,7 @@ impl Default for DeformableProperties {
 /// Fixed material properties.
 ///
 /// A fixed material is not subject to external physics and so has no physical properties.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FixedProperties;
 
 impl Default for FixedProperties {
@@ -52,7 +54,7 @@ impl Default for FixedProperties {
 }
 
 /// Rigid material properties.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RigidProperties {
     pub density: f32,
 }
@@ -60,7 +62,7 @@ pub struct RigidProperties {
 /// Soft shell material properties.
 ///
 /// This struct describes the physical properties of a deformable shell object.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SoftShellProperties {
     /// Bending stiffness sets the resistance of the material to bending.
     ///
@@ -83,7 +85,7 @@ impl Default for SoftShellProperties {
 
 /// Solids are always elastically deformable. For rigid solids, use rigid shells,
 /// because rigid objects don't require interior properties.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SolidProperties {
     /// Volume preservation sets the material to be globally incompressible.
     ///
@@ -107,7 +109,7 @@ pub trait DynamicMaterial {
 /// `None`. This helps distinguish between variable and uniform material properties.
 pub trait DeformableMaterial: DynamicMaterial {
     /// The elasticity parameters.
-    fn elasticity(&self) -> Option<ElasticityParameters>;
+    fn elasticity(&self) -> Option<Elasticity>;
     /// The damping parameter.
     fn damping(&self) -> f32;
 }
@@ -130,7 +132,7 @@ pub enum ShellMaterial {
 }
 
 /// A generic material.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum Material {
     Fixed(FixedMaterial),
     Rigid(RigidMaterial),
@@ -264,7 +266,7 @@ impl ShellMaterial {
     /// Add elasticity parameters to this material.
     ///
     /// This function converts this material to a `SoftShellMaterial`.
-    pub fn with_elasticity(self, elasticity: ElasticityParameters) -> Self {
+    pub fn with_elasticity(self, elasticity: Elasticity) -> Self {
         match self {
             ShellMaterial::Fixed(m) => m.with_elasticity(elasticity),
             ShellMaterial::Rigid(m) => m.with_elasticity(elasticity),
@@ -313,7 +315,7 @@ impl FixedMaterial {
     /// Add elasticity parameters to this material.
     ///
     /// This function converts this material to a `SoftShellMaterial`.
-    pub fn with_elasticity(self, elasticity: ElasticityParameters) -> SoftShellMaterial {
+    pub fn with_elasticity(self, elasticity: Elasticity) -> SoftShellMaterial {
         SoftShellMaterial::from(self).with_elasticity(elasticity)
     }
 
@@ -343,7 +345,7 @@ impl RigidMaterial {
     /// Add elasticity parameters to this material.
     ///
     /// This function converts this material to a `SoftShellMaterial`.
-    pub fn with_elasticity(self, elasticity: ElasticityParameters) -> SoftShellMaterial {
+    pub fn with_elasticity(self, elasticity: Elasticity) -> SoftShellMaterial {
         SoftShellMaterial::from(self).with_elasticity(elasticity)
     }
 
@@ -370,7 +372,7 @@ impl RigidMaterial {
 
 impl SoftShellMaterial {
     /// Construct a new `SoftShellMaterial` from this one with the given elasticity parameter.
-    pub fn with_elasticity(mut self, elasticity: ElasticityParameters) -> SoftShellMaterial {
+    pub fn with_elasticity(mut self, elasticity: Elasticity) -> SoftShellMaterial {
         self.properties.deformable.elasticity = Some(elasticity);
         self
     }
@@ -401,7 +403,7 @@ impl SoftShellMaterial {
 }
 
 impl SolidMaterial {
-    pub fn with_elasticity(mut self, elasticity: ElasticityParameters) -> SolidMaterial {
+    pub fn with_elasticity(mut self, elasticity: Elasticity) -> SolidMaterial {
         self.properties.deformable.elasticity = Some(elasticity);
         self
     }
@@ -429,7 +431,7 @@ impl SolidMaterial {
 }
 
 impl DeformableProperties {
-    pub fn with_elasticity(self, elasticity: ElasticityParameters) -> DeformableProperties {
+    pub fn with_elasticity(self, elasticity: Elasticity) -> DeformableProperties {
         DeformableProperties {
             elasticity: Some(elasticity),
             ..self
@@ -451,7 +453,7 @@ impl DeformableProperties {
         DeformableProperties { damping, ..self }
     }
 
-    fn elasticity(&self) -> Option<ElasticityParameters> {
+    fn elasticity(&self) -> Option<Elasticity> {
         self.elasticity
     }
     fn damping(&self) -> f32 {
@@ -466,32 +468,94 @@ impl DeformableProperties {
  * Elasticity parameters
  */
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ElasticityModel {
     StableNeoHookean,
     NeoHookean,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ElasticityParameters {
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Elasticity {
     pub model: ElasticityModel,
-    /// First Lame parameter. Measured in Pa = N/m² = kg/(ms²).
-    pub lambda: f32,
-    /// Second Lame parameter. Measured in Pa = N/m² = kg/(ms²).
-    pub mu: f32,
+    pub parameters: ElasticityParameters,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ElasticityParameters {
+    /// Lame parameters
+    Lame {
+        /// First Lame parameter. Measured in Pa = N/m² = kg/(ms²).
+        lambda: f32,
+        /// Second Lame parameter. Measured in Pa = N/m² = kg/(ms²).
+        mu: f32,
+    },
+    /// Young's modulus and Poisson's ratio.
+    YoungPoisson {
+        /// Young's modulus.
+        ///
+        /// Measured in Pa = N/m² = kg/(ms²).
+        young: f32,
+        /// Poisson's ratio.
+        ///
+        /// This is in the range `[0. 0.5]` for most realistic materials.
+        poisson: f32,
+    },
+    /// Bulk and shear moduli.
+    BulkShear {
+        /// Bulk modulus measures the material's resistance to expansion and compression, i.e. its
+        /// incompressibility. The larger the value, the more incompressible the material is.
+        /// Think of this as "Volume Stiffness".
+        bulk: f32,
+        /// Shear modulus measures the material's resistance to shear deformation. The larger the
+        /// value, the more it resists changes in shape. Think of this as "Shape Stiffness".
+        shear: f32,
+    },
 }
 
 impl ElasticityParameters {
+    /// Retrieves the first Lamé parameter.
+    pub fn lambda(self) -> f32 {
+        match self {
+            ElasticityParameters::Lame { lambda, .. } => lambda,
+            ElasticityParameters::YoungPoisson { young, poisson } => {
+                young * poisson / (1.0 + poisson) * (1.0 - 2.0 * poisson)
+            }
+            ElasticityParameters::BulkShear { bulk, shear } => bulk - 2.0 * shear / 3.0,
+        }
+    }
+    /// Retrieve raw first and second Lamé parameters as a pair.
+    pub fn mu(self) -> f32 {
+        match self {
+            ElasticityParameters::Lame { mu, .. } => mu,
+            ElasticityParameters::YoungPoisson { young, poisson } => {
+                young / (2.0 * (1.0 + poisson))
+            }
+            ElasticityParameters::BulkShear { shear, .. } => shear,
+        }
+    }
+    /// Retrieve raw first and second Lame parameters as a pair.
+    pub fn lame(self) -> (f32, f32) {
+        (self.lambda(), self.mu())
+    }
+    pub fn to_lame(self) -> ElasticityParameters {
+        let (lambda, mu) = self.lame();
+        ElasticityParameters::Lame { lambda, mu }
+    }
+}
+
+impl Elasticity {
+    /// Construct elasticity parameters from standard Lame parameters.
+    ///
+    /// In case of Stable Neo-Hookean, the given parameters are converted to be compatible with
+    /// that model.
+    pub fn new(model: ElasticityModel, parameters: ElasticityParameters) -> Self {
+        Self { model, parameters }
+    }
     /// Construct elasticity parameters from standard Lame parameters.
     pub fn from_lame(lambda: f32, mu: f32, model: ElasticityModel) -> Self {
-        match model {
-            ElasticityModel::NeoHookean => ElasticityParameters { model, lambda, mu },
-            // In case of Stable NeoHookean, we need to reparameterize lame coefficients.
-            ElasticityModel::StableNeoHookean => ElasticityParameters {
-                model,
-                lambda: lambda + 5.0 * mu / 6.0,
-                mu: 4.0 * mu / 3.0,
-            },
+        Self {
+            model,
+            parameters: ElasticityParameters::Lame { lambda, mu },
         }
     }
 
@@ -508,14 +572,25 @@ impl ElasticityParameters {
     }
 
     pub fn from_bulk_shear_with_model(bulk: f32, shear: f32, model: ElasticityModel) -> Self {
-        Self::from_lame(bulk - 2.0 * shear / 3.0, shear, model)
+        Self::new(model, ElasticityParameters::BulkShear { bulk, shear })
     }
     pub fn from_young_poisson_with_model(young: f32, poisson: f32, model: ElasticityModel) -> Self {
-        Self::from_lame(
-            young * poisson / (1.0 + poisson) * (1.0 - 2.0 * poisson),
-            young / (2.0 * (1.0 + poisson)),
-            model,
-        )
+        Self::new(model, ElasticityParameters::YoungPoisson { young, poisson })
+    }
+
+    /// Return the model effective Lame parameters to be used in simulation.
+    pub(crate) fn lame(&self) -> (f32, f32) {
+        let (lambda, mu) = self.parameters.lame();
+        match self.model {
+            ElasticityModel::NeoHookean => (lambda, mu),
+            ElasticityModel::StableNeoHookean => (lambda + 5.0 * mu / 6.0, 4.0 * mu / 3.0),
+        }
+    }
+    pub(crate) fn lambda(&self) -> f32 {
+        self.lame().0
+    }
+    pub(crate) fn mu(&self) -> f32 {
+        self.lame().1
     }
 }
 
@@ -538,7 +613,7 @@ impl DynamicMaterial for SolidMaterial {
 }
 
 impl DeformableMaterial for SoftShellMaterial {
-    fn elasticity(&self) -> Option<ElasticityParameters> {
+    fn elasticity(&self) -> Option<Elasticity> {
         self.properties.deformable.elasticity()
     }
     fn damping(&self) -> f32 {
@@ -547,7 +622,7 @@ impl DeformableMaterial for SoftShellMaterial {
 }
 
 impl DeformableMaterial for SolidMaterial {
-    fn elasticity(&self) -> Option<ElasticityParameters> {
+    fn elasticity(&self) -> Option<Elasticity> {
         self.properties.deformable.elasticity()
     }
     fn damping(&self) -> f32 {

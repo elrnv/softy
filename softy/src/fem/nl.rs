@@ -25,10 +25,16 @@ pub enum TimeIntegration {
     BE,
     /// Trapezoid Rule integration.
     TR,
-    /// Second order Backward Differentiation Formula.
-    BDF2,
-    /// TR and BDF2 mixed method.
-    TRBDF2,
+    ///// Second order Backward Differentiation Formula.
+    //BDF2,
+    ///// TR and BDF2 mixed method.
+    //TRBDF2,
+}
+
+impl Default for TimeIntegration {
+    fn default() -> Self {
+        TimeIntegration::BE
+    }
 }
 
 /// Simulation parameters.
@@ -46,8 +52,7 @@ pub struct SimParams {
     pub acceleration_tolerance: Option<f32>,
     pub velocity_tolerance: Option<f32>,
     pub max_iterations: u32,
-    pub linsolve_tolerance: f32,
-    pub max_linsolve_iterations: u32,
+    pub linsolve: LinearSolver,
     pub line_search: LineSearch,
     /// Test that the problem Jacobian is correct.
     pub jacobian_test: bool,

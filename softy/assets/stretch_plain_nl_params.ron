@@ -1,18 +1,15 @@
 SimParams(
     gravity: (0.0, -9.81, 0.0),
     time_step: None,
-    residual_tolerance: Some(1e-7),
+    residual_tolerance: Some(1e-30),
     velocity_tolerance: Some(1e-7),
     velocity_clear_frequency: 0,
-    max_iterations: 50,
- //   linsolve: Direct,
-    linsolve: Iterative(
-      tolerance: 0.00001,
-      max_iterations: 10,
-    ),
+    max_iterations: 300,
+    linsolve: Direct,
     line_search: BackTracking(c: 1e-4, rho: 0.9),
     jacobian_test: false,
     friction_tolerance: 1e-5,
     contact_tolerance: 1e-5,
     time_integration: BE
 )
+

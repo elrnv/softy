@@ -502,6 +502,28 @@ impl<T: Real> PointContactConstraint<T> {
         x.clone_into_other(&mut self.collider_vertex_positions);
     }
 
+    pub fn update_surface_with_mesh_pos_cast<S: Real>(
+        &mut self,
+        pos: SubsetView<Chunked3<&[S]>>,
+    ) -> usize {
+        self.implicit_surface.update_surface(
+            pos.iter()
+                .map(|&x| Vector3::from(x).cast::<T>().into_data()),
+        )
+    }
+
+    pub fn update_collider_vertex_positions_cast<S: Real>(
+        &mut self,
+        x: SubsetView<Chunked3<&[S]>>,
+    ) {
+        x.iter()
+            .zip(self.collider_vertex_positions.iter_mut())
+            .for_each(|(&x, out)| {
+                let x_t = Vector3::from(x).cast::<T>().into_data();
+                *out = x_t;
+            });
+    }
+
     /// Update the current state using the given position vector.
     pub fn update_state(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2]) {
         self.update_surface_with_mesh_pos(x[0]);

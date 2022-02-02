@@ -38,6 +38,22 @@ where
     fn initial_point(&self) -> Vec<T> {
         self.problem.initial_point()
     }
+    fn converged(
+        &self,
+        x_prev: &[T],
+        x: &[T],
+        r: &[T],
+        merit: f64,
+        x_tol: f32,
+        r_tol: f32,
+        a_tol: f32,
+    ) -> bool {
+        self.problem
+            .converged(x_prev, x, r, merit, x_tol, r_tol, a_tol)
+    }
+    fn compute_warm_start(&self, x: &mut [T]) {
+        self.problem.compute_warm_start(x);
+    }
     fn residual(&self, x: &[T], r: &mut [T]) {
         self.problem.residual(x, r);
         let (l, u) = &*self.bounds.borrow();

@@ -84,9 +84,9 @@ fn quadratic_sliding_profile<T: Real>(x: T, epsilon: T) -> T {
     // Quadratic smoothing function with compact support.
     // `s(x) = 2/eps - x/eps^2`
     if x < epsilon {
-        T::from(2.0).unwrap() / epsilon - x / (epsilon * epsilon)
+        (T::from(2.0).unwrap() - x / epsilon) / epsilon
     } else {
-        T::one()
+        T::one() / x
     }
 }
 
@@ -102,7 +102,7 @@ fn quadratic_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
     if x < epsilon {
         -T::one() / (epsilon * epsilon)
     } else {
-        T::zero()
+        -T::one() / (x * x)
     }
 }
 
@@ -112,7 +112,7 @@ fn quadratic_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
 pub fn eta<T: Real>(v: Vector2<T>, factor: T, epsilon: T) -> Vector2<T> {
     // This is similar to function s but with the norm of v multiplied through to avoid
     // degeneracies.
-    // let s = |x| stabilized_sliding_profile(x, epsilon);
+    //let s = |x| stabilized_sliding_profile(x, epsilon);
     let s = |x| quadratic_sliding_profile(x, epsilon);
     v * (factor * s(v.norm()))
 }
@@ -297,6 +297,19 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     pub fn update_collider_vertex_positions(&mut self, x: Chunked3<&[T]>) {
         let x = SubsetView::from_unique_ordered_indices(&self.collider_vertex_indices, x);
         self.point_constraint.update_collider_vertex_positions(x);
+    }
+
+    // Same as `update_collider_vertex_positions` but without knowledge about original vertex indices.
+    pub fn update_surface_vertex_positions_cast<S: Real>(&mut self, x: Chunked3<&[S]>) -> usize {
+        let x = SubsetView::from_unique_ordered_indices(&self.implicit_surface_vertex_indices, x);
+        self.point_constraint.update_surface_with_mesh_pos_cast(x)
+    }
+
+    // Same as `update_collider_vertex_positions` but without knowledge about original vertex indices.
+    pub fn update_collider_vertex_positions_cast<S: Real>(&mut self, x: Chunked3<&[S]>) {
+        let x = SubsetView::from_unique_ordered_indices(&self.collider_vertex_indices, x);
+        self.point_constraint
+            .update_collider_vertex_positions_cast(x);
     }
 
     pub fn cached_distance_potential(&self, num_vertices: usize) -> Vec<T> {
@@ -538,6 +551,18 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 .len()
         );
         self.update_collider_vertex_positions(x);
+    }
+
+    pub fn update_state_cast<S: Real>(&mut self, x: Chunked3<&[S]>) {
+        let num_vertices_updated = self.update_surface_vertex_positions_cast(x);
+        assert_eq!(
+            num_vertices_updated,
+            self.point_constraint
+                .implicit_surface
+                .surface_vertex_positions()
+                .len()
+        );
+        self.update_collider_vertex_positions_cast(x);
     }
 
     /// Update the cached constraint gradient for efficient future derivative computations.
@@ -2127,6 +2152,20 @@ mod tests {
             assert_relative_eq!(df_dv1_ad[0], df_dv[0][1]);
             assert_relative_eq!(df_dv1_ad[1], df_dv[1][1]);
         }
+    }
+
+    #[test]
+    fn sliding_profile() {
+        let h = 0.0000001;
+        let q_near_zero = h * quadratic_sliding_profile(h, 0.001);
+        assert!(q_near_zero < 0.5);
+        let s_near_zero = h * stabilized_sliding_profile(h, 0.001);
+        assert!(s_near_zero < 0.5);
+        let h = 0.1;
+        let q_large = h * quadratic_sliding_profile(h, 0.001);
+        assert!(q_large > 0.9);
+        let s_large = h * stabilized_sliding_profile(h, 0.001);
+        assert!(q_large > 0.9);
     }
 
     // Validate that the friction Jacobian is correct.

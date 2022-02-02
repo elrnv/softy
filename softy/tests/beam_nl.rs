@@ -14,8 +14,8 @@ pub use test_utils::*;
 
 pub fn make_beam(i: usize) -> TetMesh {
     let mut mesh = SolidBoxBuilder { res: [5 * i, i, i] }.build();
-    mesh.scale([0.5, 0.1, 0.1]);
-    mesh.translate([0.5, 0.0, 0.0]);
+    mesh.scale([2.0, 0.1, 0.1]);
+    mesh.translate([1.0, 0.0, 0.0]);
     let ref_verts = mesh
         .vertex_position_iter()
         .map(|&[a, b, c]| [a as f32, b as f32, c as f32])
@@ -48,17 +48,21 @@ fn beam() -> Result<(), Error> {
     let params = softy::io::load_nl_params("assets/beam_nl_params.ron").unwrap();
     let material: Material = load_material("assets/solid_beam_material.ron")?;
     #[cfg(not(debug_assertions))]
-    let mesh = make_beam(12);
+    let mesh = make_beam(5);
     #[cfg(debug_assertions)]
     let mesh = make_beam(1);
     let mut solver = SolverBuilder::new(params)
         .set_mesh(Mesh::from(mesh))
         .set_materials(vec![material.into()])
         .build::<f64>()?;
+    geo::io::save_mesh(&solver.mesh(), &format!("out/beam/beam{}.vtk", 0))?;
+    let mut iterations = Vec::new();
     for _i in 0..200 {
         let result = solver.step()?;
+        iterations.push(result.iterations);
         assert_eq!(result.status, Status::Success);
-        //geo::io::save_mesh(&solver.mesh(), &format!("out/beam/beam{}.vtk", i+1))?;
+        geo::io::save_mesh(&solver.mesh(), &format!("out/beam/beam{}.vtk", _i + 1))?;
     }
+    eprintln!("iterations: {:?}", iterations);
     Ok(())
 }

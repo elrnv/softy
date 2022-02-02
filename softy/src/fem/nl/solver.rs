@@ -977,6 +977,9 @@ where
         }
         .max(1);
 
+        // Prepare warm start.
+        //solver.problem().compute_warm_start(solution.as_mut_slice());
+
         // Loop to resolve all contacts.
         loop {
             /***     Main solve step     ***/
@@ -1003,26 +1006,13 @@ where
                         .unwrap();
 
                     let delta = sim_params.contact_tolerance as f64;
-                    log::debug!(
-                        "Deepest: {}; b: {}; db: {}",
-                        deepest,
-                        ContactPenalty::new(delta).b(deepest),
-                        ContactPenalty::new(delta).db(deepest)
-                    );
-                    log::debug!(
-                        "half   : {}; b: {}; db: {}",
-                        0.5 * delta,
-                        ContactPenalty::new(delta).b(0.5 * delta),
-                        ContactPenalty::new(delta).db(0.5 * delta)
-                    );
+                    let largest_penalty = ContactPenalty::new(delta).b(deepest);
                     let bump_ratio: f64 = ContactPenalty::new(delta).db(deepest)
                         / ContactPenalty::new(delta).db(0.5 * delta);
 
                     log::debug!("Bump ratio: {}", bump_ratio);
                     log::debug!("Kappa: {}", solver.problem().kappa);
-                    let violation = solver
-                        .problem_mut()
-                        .contact_violation(constraint.storage().as_slice());
+                    let violation = 0.0_f64.max(-deepest);
                     log::debug!("Contact violation: {}", violation);
 
                     contact_iterations -= 1;
@@ -1036,14 +1026,16 @@ where
                         });
                     }
 
-                    if violation > T::zero() {
+                    if violation > 0.0 {
                         solver.problem_mut().kappa *= bump_ratio.max(2.0);
                         continue;
                     } else {
                         // Relax kappa
-                        //if solver.problem().kappa > 1.0e2 / sim_params.contact_tolerance as f64 {
-                        //    solver.problem_mut().kappa /= 2.0;
-                        //}
+                        if largest_penalty == 0.0 {
+                            if solver.problem().kappa > 1.0e2 / sim_params.contact_tolerance as f64 {
+                                solver.problem_mut().kappa /= 2.0;
+                            }
+                        }
                         self.commit_solution(false);
                         // Kill velocities if needed.
                         if self.iteration_count % velocity_clear_steps == 0 {

@@ -5,7 +5,7 @@ use flatk::*;
 use geo::attrib::*;
 use geo::mesh::{topology::*, VertexPositions};
 use num_traits::{Float, Zero};
-use tensr::{AsMutTensor, AsTensor, IntoData, IntoTensor, Matrix, Norm, Tensor};
+use tensr::{AsMutTensor, AsTensor, IntoData, IntoTensor, Matrix, Norm, Tensor, Vector3};
 
 use super::state::*;
 use crate::attrib_defines::*;
@@ -347,7 +347,7 @@ impl<T: Real64> NLProblem<T> {
                 fc_constraint.update_distance_potential();
                 fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
 
-                fc_constraint.subtract_constraint_force(contact_force.view_mut());
+                fc_constraint.subtract_constraint_force_par(contact_force.view_mut());
                 fc_constraint.subtract_friction_force(
                     friction_force.view_mut(),
                     Chunked3::from_flat(next.vel),
@@ -1516,17 +1516,6 @@ impl<T: Real64> NLProblem<T> {
         shell.inertia().add_energy_gradient(cur.vel, next.vel, r);
     }
 
-    /// Compute contact violation: `max(0, -min(d(q)))`
-    pub fn contact_violation(&self, constraint: &[T]) -> T {
-        Float::max(
-            T::zero(),
-            -*constraint
-                .iter()
-                // If there is a NaN, propagate it down so it will appear in the violation.
-                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
-                .unwrap_or(&T::infinity()),
-        )
-    }
     pub fn contact_constraint(&self, _v: &[T]) -> Vec<T> {
         let State { vtx, .. } = &*self.state.borrow_mut();
         let pos = vtx.next.pos.view();
@@ -1577,6 +1566,7 @@ impl<T: Real64> NLProblem<T> {
     /// `r` is the output stacked force vector.
     fn subtract_constraint_forces<S: Real>(
         &self,
+        _prev_pos: &[T],
         pos: &[S],
         vel: &[S],
         r: &mut [S],
@@ -1589,13 +1579,16 @@ impl<T: Real64> NLProblem<T> {
         {
             for fc in frictional_contact_constraints.iter() {
                 let mut fc_constraint = fc.constraint.borrow_mut();
+                // fc_constraint.update_state_cast(Chunked3::from_flat(prev_pos));
+                // fc_constraint.update_distance_potential();
+                // fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
                 fc_constraint.update_state(Chunked3::from_flat(pos));
                 fc_constraint.update_distance_potential();
                 fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
-
-                fc_constraint.subtract_constraint_force(Chunked3::from_flat(r));
                 fc_constraint
                     .subtract_friction_force(Chunked3::from_flat(r), Chunked3::from_flat(vel));
+
+                fc_constraint.subtract_constraint_force(Chunked3::from_flat(r));
             }
         }
     }
@@ -1622,7 +1615,7 @@ impl<T: Real64> NLProblem<T> {
             .gravity(self.gravity)
             .add_energy_gradient(cur.pos, next.pos, r);
 
-        self.subtract_constraint_forces(next.pos, next.vel, r, frictional_contacts);
+        self.subtract_constraint_forces(cur.pos, next.pos, next.vel, r, frictional_contacts);
 
         debug_assert!(r.iter().all(|r| r.is_finite()));
     }
@@ -2339,6 +2332,26 @@ pub trait NonLinearProblem<T: Real> {
         vec![T::zero(); self.num_variables()]
     }
 
+    /// Checks if the problem is converged.
+    ///
+    /// This is the stopping condition implementation.
+    fn converged(
+        &self,
+        x_prev: &[T],
+        x: &[T],
+        r: &[T],
+        merit: f64,
+        x_tol: f32,
+        r_tol: f32,
+        a_tol: f32,
+    ) -> bool;
+
+    /// Computes a warm start into `x`.
+    ///
+    /// The given `x` are the unknowns from the previous step, so doing nothing will use
+    /// previous step's solution as a warm start.
+    fn compute_warm_start(&self, _x: &mut [T]) {}
+
     /// An objective function defined by the problem.
     ///
     /// This can be an energy or a residual norm. It is used by the newton solver to guide the
@@ -2432,6 +2445,104 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         }
     }
 
+    /// Stopping condition.
+    fn converged(
+        &self,
+        x_prev: &[T],
+        x: &[T],
+        r: &[T],
+        _merit: f64,
+        x_tol: f32,
+        r_tol: f32,
+        a_tol: f32,
+    ) -> bool {
+        use tensr::LpNorm;
+        let mass_inv = std::cell::Ref::map(self.state.borrow(), |x| x.vtx.mass_inv.as_slice());
+        let dt = NLProblem::time_step(self);
+
+        (r_tol > 0.0 && {
+            let r_norm = r.as_tensor().lp_norm(LpNorm::Inf).to_f64().unwrap();
+            r_norm < r_tol as f64
+        }) || (x_tol > 0.0 && {
+            let denom = x.as_tensor().norm() + T::one();
+
+            let dx_norm = num_traits::Float::sqrt(
+                x_prev
+                    .iter()
+                    .zip(x.iter())
+                    .map(|(&a, &b)| (a - b) * (a - b))
+                    .sum::<T>(),
+            );
+
+            dx_norm < T::from(x_tol).unwrap() * denom
+        }) || (a_tol > 0.0 && {
+            let a_abs = T::from(9.81 * a_tol).unwrap() * dt;
+            let a_tol = T::from(a_tol).unwrap();
+            Chunked3::from_flat(&*r)
+                .iter()
+                .zip(mass_inv.iter())
+                .zip(
+                    Chunked3::from_flat(&*x_prev)
+                        .iter()
+                        .zip(Chunked3::from_flat(&*x).iter()),
+                )
+                .all(|((&r, &m_inv), (&v_prev, &v))| {
+                    let v = Vector3::from(v);
+                    let v_prev = Vector3::from(v_prev);
+                    let r = Vector3::from(r);
+                    let ah = v - v_prev;
+                    // dbg!(a_abs);
+                    // dbg!(a_tol);
+                    // dbg!(ah);
+                    // dbg!((r * m_inv).norm());
+                    (r * m_inv).norm() <= num_traits::Float::max(a_tol * ah.norm(), a_abs)
+                })
+        })
+    }
+
+    // TODO: Figure out a better warm start. FE does not work well.
+    fn compute_warm_start(&self, dq: &mut [T]) {
+        // Use FE for warm starts.
+        eprintln!("before = {:?}", &*dq);
+
+        // Take an explicit step
+        //{
+        //    let state = &mut *self.state.borrow_mut();
+        //    State::be_step(state.step_state(dq), self.time_step());
+        //    state.update_vertices(dq);
+        //}
+
+        let State {
+            vtx, solid, shell, ..
+        } = &mut *self.state.borrow_mut();
+
+        // Clear residual vector. Using as a buffer. This shouldn't affect other solves.
+        vtx.residual
+            .storage_mut()
+            .iter_mut()
+            .for_each(|x| *x = T::zero());
+
+        self.subtract_force(
+            vtx.residual_state().into_storage(),
+            &solid,
+            &shell,
+            self.frictional_contact_constraints.as_slice(),
+        );
+
+        eprintln!("force = {:?}", vtx.residual.storage());
+
+        let dt = self.time_step();
+
+        vtx.mass_inv
+            .iter()
+            .zip(vtx.residual.iter())
+            .zip(Chunked3::from_flat(&mut *dq).iter_mut())
+            .for_each(|((&m_inv, f), v)| {
+                *v.as_mut_tensor() -= *f.as_tensor() * m_inv * dt;
+            });
+        eprintln!("after = {:?}", &*dq);
+    }
+
     #[inline]
     fn residual(&self, dq: &[T], r: &mut [T]) {
         {
@@ -2446,7 +2557,12 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             }
 
             state.update_vertices(dq);
+
+            // eprintln!("lumpedMinv = ");
+            // eprintln!("{:?}", state.vtx.mass_inv.as_slice());
+            // eprintln!(";");
         }
+
 
         match self.time_integration {
             TimeIntegration::BE => self.compute_vertex_be_residual(),

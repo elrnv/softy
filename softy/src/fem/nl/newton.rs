@@ -749,26 +749,13 @@ where
         // Initialize the residual.
         problem.residual(x, r.as_mut_slice());
 
-        //let a_tol = T::from(params.a_tol).unwrap();
-        let r_tol = T::from(params.r_tol).unwrap();
-        let x_tol = T::from(params.x_tol).unwrap();
-
         let mut linsolve_result = super::linsolve::SolveResult::default();
 
         let sigma = linsolve.iterative_tolerance();
         //let orig_sigma = sigma;
 
         log_debug_stats_header();
-        log_debug_stats(
-            0,
-            0,
-            linsolve_result,
-            sigma,
-            std::f64::INFINITY,
-            &r,
-            x,
-            &x_prev,
-        );
+        log_debug_stats(0, 0, linsolve_result, sigma, f64::INFINITY, &r, x, &x_prev);
 
         // Timing stats
         let mut linsolve_time = Duration::new(0, 0);
@@ -777,20 +764,20 @@ where
         let mut jprod_ls_time = Duration::new(0, 0);
         let mut residual_time = Duration::new(0, 0);
 
-        //let merit = |r: &[T]| 0.5 * r.as_tensor().norm_squared().to_f64().unwrap();
-        let merit = |_: &[T]| problem.objective(x).to_f64().unwrap();
+        let merit = |_: &P, _: &[T], r: &[T]| 0.5 * r.as_tensor().norm_squared().to_f64().unwrap();
+        // let merit = |problem: &P, x: &[T], _: &[T]| problem.objective(x).to_f64().unwrap();
 
         // Keep track of merit function to avoid having to recompute it
-        let mut merit_cur = merit(r);
+        let mut merit_cur = merit(problem, x, r);
         //let mut merit_prev = merit_cur;
         let mut merit_next;
 
         let mut j_dense = LazyCell::new();
-        //let mut identity =
-        //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
-        //for (i, id) in identity.iter_mut().enumerate() {
-        //    id[i] = T::one();
-        //}
+        // let mut identity =
+        //     ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
+        // for (i, id) in identity.iter_mut().enumerate() {
+        //     id[i] = T::one();
+        // }
 
         let result = loop {
             //log::trace!("Previous r norm: {}", r_prev_norm);
@@ -823,19 +810,23 @@ where
 
             // Update Jacobian values.
             //let before_j = Instant::now();
-            problem.jacobian_values(
-                x,
-                &r,
-                &sparse_jacobian.j_rows,
-                &sparse_jacobian.j_cols,
-                sparse_jacobian.j_vals.as_mut_slice(),
-            );
 
             r_cur.copy_from_slice(&r);
 
             match linsolve {
                 LinearSolverWorkspace::Iterative(linsolve) => {
-                    linsolve_result = linsolve.solve(
+                    // let j_dense = j_dense.borrow_mut_with(|| {
+                    //     ChunkedN::from_flat_with_stride(
+                    //         x.len(),
+                    //         vec![T::zero(); x.len() * r.len()],
+                    //     )
+                    // });
+                    // build_dense_from_product(j_dense.view_mut(), |i, col| {
+                    //     problem.jacobian_product(x, &identity[i], r_cur, col);
+                    // }, x.len());
+                    // print_dense(j_dense.view());
+
+                    linsolve_result = linsolve.solve_precond(
                         |p, out| {
                             let t_begin_jprod = Instant::now();
                             problem.jacobian_product(x, p, r_cur, out);
@@ -850,6 +841,7 @@ where
                         },
                         p.as_mut_slice(),
                         r.as_mut_slice(),
+                        |p| { true }
                     );
                 }
                 LinearSolverWorkspace::Direct(DirectSolver {
@@ -858,6 +850,13 @@ where
                     sparse_solver,
                     ..
                 }) => {
+                    problem.jacobian_values(
+                        x,
+                        &r,
+                        &sparse_jacobian.j_rows,
+                        &sparse_jacobian.j_cols,
+                        sparse_jacobian.j_vals.as_mut_slice(),
+                    );
                     log::trace!("Condition number: {:?}", {
                         let j_dense = j_dense.borrow_mut_with(|| {
                             ChunkedN::from_flat_with_stride(
@@ -982,7 +981,7 @@ where
             residual_time += Instant::now() - t_begin_residual;
 
             let ls_count = if rho >= 1.0 {
-                merit_next = problem.objective(x).to_f64().unwrap(); //merit(r_next);
+                merit_next = merit(problem, x, r_next);
                 1
             } else {
                 // Line search.
@@ -1006,7 +1005,7 @@ where
                     jprod_ls_time += Instant::now() - t_begin_jprod;
 
                     // Compute the merit function
-                    merit_next = problem.objective(x).to_f64().unwrap(); //merit(r_next);
+                    merit_next = merit(problem, x, r_next);
 
                     // TRADITIONAL BACKTRACKING:
                     let rjp = jp
@@ -1060,21 +1059,16 @@ where
                 &x_prev,
             );
 
-            let denom = x.as_tensor().norm() + T::one();
-
-            let dx_norm = num_traits::Float::sqrt(
-                x_prev
-                    .iter()
-                    .zip(x.iter())
-                    .map(|(&a, &b)| (a - b) * (a - b))
-                    .sum::<T>(),
-            );
-
             // Check the convergence condition.
-            if (r_tol > T::zero() && merit_next < r_tol.to_f64().unwrap())
-                || (x_tol > T::zero() && dx_norm < x_tol * denom)
-            //|| (a_tol > T::zero() && merit_next < a_tol.to_f64().unwrap())
-            {
+            if problem.converged(
+                x_prev,
+                x,
+                r,
+                merit_next,
+                params.x_tol,
+                params.r_tol,
+                params.a_tol,
+            ) {
                 break SolveResult {
                     iterations,
                     status: Status::Success,
@@ -1186,6 +1180,23 @@ fn eig<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
     }
 
     log::debug!("J eigenvalues: {:?}", dense.complex_eigenvalues());
+}
+
+// Helper function for debugging the jacobian.
+#[allow(dead_code)]
+fn build_dense_from_product<T: Real>(
+    mut j_dense: ChunkedN<&mut [T]>,
+    jprod: impl Fn(usize, &mut [T]),
+    num_variables: usize,
+) {
+    // Clear j_dense
+    for jd in j_dense.storage_mut().iter_mut() {
+        *jd = T::zero();
+    }
+    // Copy j_vals to j_dense
+    for c in 0..num_variables {
+        jprod(c, &mut j_dense[c]);
+    }
 }
 
 // Helper function for debugging the jacobian.

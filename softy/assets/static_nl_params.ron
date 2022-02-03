@@ -2,7 +2,7 @@ SimParams(
     gravity: (0.0, -9.81, 0.0),
     time_step: None,
     //residual_tolerance: Some(1e-7),
-    acceleration_tolerance: Some(1e-3),
+    acceleration_tolerance: Some(1e-7),
     velocity_clear_frequency: 0,
     max_iterations: 50,
  //   linsolve: Direct,

@@ -2236,7 +2236,6 @@ impl<T: Real64> NLProblem<T> {
             // }
         }
 
-
         // let ResidualState { next, r, .. } = vtx.residual_state_ad().into_storage();
         // let mut vel = next.vel.to_vec();
         // let mut next_pos = next.pos.to_vec();
@@ -2567,7 +2566,6 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             // eprintln!(";");
         }
 
-
         match self.time_integration {
             TimeIntegration::BE => self.compute_vertex_be_residual(),
             TimeIntegration::TR => self.compute_vertex_tr_residual(),
@@ -2694,7 +2692,11 @@ impl<T: Real64> NLProblem<T> {
     }
 
     /// Checks that the given problem has a consistent Jacobian implementation.
-    pub(crate) fn check_jacobian(&self, x: &[T], perturb_initial: bool) -> Result<(), crate::Error> {
+    pub(crate) fn check_jacobian(
+        &self,
+        x: &[T],
+        perturb_initial: bool,
+    ) -> Result<(), crate::Error> {
         log::debug!("Checking Jacobian...");
         use ad::F1 as F;
         // Compute Jacobian
@@ -2757,7 +2759,7 @@ impl<T: Real64> NLProblem<T> {
                     jac[row][col],
                     r[row].deriv(),
                     max_relative = 1e-6,
-                    epsilon = 1e-7,// * avg_deriv
+                    epsilon = 1e-7, // * avg_deriv
                 );
                 jac_ad[row][col] = r[row].deriv();
                 if !res {

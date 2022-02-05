@@ -619,12 +619,13 @@ where
             iteration_count: 0,
         }
     }
-    fn update_jacobian_indices(problem: &P,
-                               sparse_jacobian: &mut SparseJacobian<T>,
-                               init_sparse_jacobian_vals: &mut Vec<T>,
-                               init_sparse_solver: &mut LazyCell<SparseDirectSolver>,
-                               init_j_t_mapping: &mut Vec<Index>,
-                               linsolve: &mut LinearSolverWorkspace<T>,
+    fn update_jacobian_indices(
+        problem: &P,
+        sparse_jacobian: &mut SparseJacobian<T>,
+        init_sparse_jacobian_vals: &mut Vec<T>,
+        init_sparse_solver: &mut LazyCell<SparseDirectSolver>,
+        init_j_t_mapping: &mut Vec<Index>,
+        linsolve: &mut LinearSolverWorkspace<T>,
     ) {
         // Construct the sparse Jacobian.
         let n = problem.num_variables();
@@ -635,10 +636,13 @@ where
         sparse_jacobian.j_rows = j_rows;
         sparse_jacobian.j_cols = j_cols;
         sparse_jacobian.j_vals.resize(j_nnz, T::zero());
-        let (j_t, j_t_mapping) =
-            sparse_matrix_and_mapping(&sparse_jacobian.j_cols, &sparse_jacobian.j_rows, &sparse_jacobian.j_vals, n);
-        init_sparse_solver
-            .replace(SparseDirectSolver::new(j_t.view()).unwrap());
+        let (j_t, j_t_mapping) = sparse_matrix_and_mapping(
+            &sparse_jacobian.j_cols,
+            &sparse_jacobian.j_rows,
+            &sparse_jacobian.j_vals,
+            n,
+        );
+        init_sparse_solver.replace(SparseDirectSolver::new(j_t.view()).unwrap());
         *init_j_t_mapping = j_t_mapping;
         init_sparse_jacobian_vals.clone_from(j_t.storage());
         if let LinearSolverWorkspace::Direct(ds) = linsolve {
@@ -652,10 +656,10 @@ where
             //ds.j_mapping = j_mapping;
             ds.j_t_mapping = j_t_mapping;
             #[cfg(target_os = "macos")]
-                ds.sparse_solver
+            ds.sparse_solver
                 .replace(SparseDirectSolver::new(ds.j_t.view()).unwrap());
             #[cfg(not(target_os = "macos"))]
-                ds.sparse_solver
+            ds.sparse_solver
                 .replace(SparseDirectSolver::new(ds.j.view()).unwrap());
             //#[cfg(target_os = "macos")]
             //ds.sparse_iterative_solver
@@ -700,7 +704,14 @@ where
             linsolve,
             ..
         } = &mut *self.workspace.borrow_mut();
-        Self::update_jacobian_indices(&self.problem, sj, init_sparse_jacobian_vals, init_sparse_solver, init_j_t_mapping, linsolve);
+        Self::update_jacobian_indices(
+            &self.problem,
+            sj,
+            init_sparse_jacobian_vals,
+            init_sparse_solver,
+            init_j_t_mapping,
+            linsolve,
+        );
     }
 
     /// Solves the problem and returns the solution along with the solve result
@@ -728,15 +739,10 @@ where
 
         {
             let Self {
-                problem,
-                workspace,
-                ..
+                problem, workspace, ..
             } = self;
 
-            let NewtonWorkspace {
-                r,
-                ..
-            } = &mut *workspace.borrow_mut();
+            let NewtonWorkspace { r, .. } = &mut *workspace.borrow_mut();
 
             // Initialize the residual.
             problem.residual(x, r.as_mut_slice());
@@ -822,7 +828,9 @@ where
             sparse_jacobian.j_vals.as_mut_slice(),
         );
 
-        init_sparse_jacobian_vals.iter_mut().for_each(|x| *x = T::zero());
+        init_sparse_jacobian_vals
+            .iter_mut()
+            .for_each(|x| *x = T::zero());
         for (&pos, &j_val) in init_j_t_mapping.iter().zip(sparse_jacobian.j_vals.iter()) {
             if let Some(pos) = pos.into_option() {
                 init_sparse_jacobian_vals[pos] += j_val;
@@ -843,7 +851,9 @@ where
         //     let r64 = result.expect("Initial Jacobian is singular.");
         //     0.5 * r64.as_tensor().norm_squared()
         // };
-        let merit = |_: &P, _: &[T], r: &[T], _: &SparseDirectSolver| 0.5 * r.as_tensor().norm_squared().to_f64().unwrap();
+        let merit = |_: &P, _: &[T], r: &[T], _: &SparseDirectSolver| {
+            0.5 * r.as_tensor().norm_squared().to_f64().unwrap()
+        };
         //let merit = |problem: &P, x: &[T], _: &[T]| problem.objective(x).to_f64().unwrap();
 
         // Computes the product of merit function with the search direction.
@@ -862,8 +872,7 @@ where
         //         .fold(0.0, |acc, (&jinv_jp, &jinv_r)| acc + jinv_jp * jinv_r)
         // };
         let mut merit_jac_prod = |problem: &P, jp: &[T], r: &[T], _: &SparseDirectSolver| {
-            jp
-                .iter()
+            jp.iter()
                 .zip(r.iter())
                 .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap())
         };
@@ -882,7 +891,14 @@ where
         }
 
         let result = loop {
-            Self::update_jacobian_indices(problem, sparse_jacobian, init_sparse_jacobian_vals, init_sparse_solver, init_j_t_mapping, linsolve);
+            Self::update_jacobian_indices(
+                problem,
+                sparse_jacobian,
+                init_sparse_jacobian_vals,
+                init_sparse_solver,
+                init_j_t_mapping,
+                linsolve,
+            );
             //log::trace!("Previous r norm: {}", r_prev_norm);
             //log::trace!("Current  r norm: {}", r_cur_norm);
             if !(outer_callback.borrow_mut())(CallbackArgs {
@@ -944,7 +960,7 @@ where
                         },
                         p.as_mut_slice(),
                         r.as_mut_slice(),
-                        |p| { true }
+                        |p| true,
                     );
                 }
                 LinearSolverWorkspace::Direct(DirectSolver {
@@ -961,16 +977,19 @@ where
                         sparse_jacobian.j_vals.as_mut_slice(),
                     );
                     log::trace!("Condition number: {:?}", {
-
                         let j_dense_ad = j_dense_ad.borrow_mut_with(|| {
                             ChunkedN::from_flat_with_stride(
                                 x.len(),
                                 vec![T::zero(); x.len() * r.len()],
                             )
                         });
-                        build_dense_from_product(j_dense_ad.view_mut(), |i, col| {
-                            problem.jacobian_product(x, &identity[i], r, col);
-                        }, x.len());
+                        build_dense_from_product(
+                            j_dense_ad.view_mut(),
+                            |i, col| {
+                                problem.jacobian_product(x, &identity[i], r, col);
+                            },
+                            x.len(),
+                        );
                         print_dense(j_dense_ad.view());
 
                         let j_dense = j_dense.borrow_mut_with(|| {
@@ -995,7 +1014,7 @@ where
                             for j in 0..j_dense.len() {
                                 let a = *j_dense.view().at(i).at(j);
                                 let b = *j_dense_ad.view().at(j).at(i);
-                                if num_traits::Float::abs(a-b) > T::from(1e-4).unwrap() {
+                                if num_traits::Float::abs(a - b) > T::from(1e-4).unwrap() {
                                     eprintln!("({},{}): {} vs {}", i, j, a, b);
                                     success = false;
                                 }
@@ -1153,7 +1172,9 @@ where
                     merit_next = merit(problem, x, r_next, init_sparse_solver);
 
                     // TRADITIONAL BACKTRACKING:
-                    if merit_next <= merit_cur - params.line_search.armijo_coeff() * alpha * merit_jac_p {
+                    if merit_next
+                        <= merit_cur - params.line_search.armijo_coeff() * alpha * merit_jac_p
+                    {
                         break;
                     }
 
@@ -1192,10 +1213,12 @@ where
                     let mut probe_r = vec![T::zero(); r_next.len()];
                     let mut probe_x = vec![T::zero(); x.len()];
                     for i in 0..1000 {
-                        let alpha: f64 = 0.0000005*i as f64;
-                        zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
-                            *x = num_traits::Float::mul_add(p, T::from(-alpha).unwrap(), x0);
-                        });
+                        let alpha: f64 = 0.0000005 * i as f64;
+                        zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
+                            |(x, &x0, &p)| {
+                                *x = num_traits::Float::mul_add(p, T::from(-alpha).unwrap(), x0);
+                            },
+                        );
                         problem.residual(&probe_x, probe_r.as_mut_slice());
                         let probe = merit(problem, x, &probe_r, init_sparse_solver);
                         xs.push(alpha);

@@ -961,7 +961,10 @@ where
         solver.problem_mut().update_cur_vertices();
 
         if sim_params.jacobian_test {
-            solver.problem().check_jacobian(solution.as_slice(), false).ok();//?;
+            solver
+                .problem()
+                .check_jacobian(solution.as_slice(), false)
+                .ok(); //?;
         }
 
         let mut contact_iterations = sim_params.contact_iterations as i64;
@@ -1033,7 +1036,8 @@ where
                     } else {
                         // Relax kappa
                         if largest_penalty == 0.0 {
-                            if solver.problem().kappa > 1.0e2 / sim_params.contact_tolerance as f64 {
+                            if solver.problem().kappa > 1.0e2 / sim_params.contact_tolerance as f64
+                            {
                                 solver.problem_mut().kappa /= 2.0;
                             }
                         }

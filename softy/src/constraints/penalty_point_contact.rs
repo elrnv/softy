@@ -112,7 +112,7 @@ fn quadratic_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
 pub fn eta<T: Real>(v: Vector2<T>, factor: T, epsilon: T) -> Vector2<T> {
     // This is similar to function s but with the norm of v multiplied through to avoid
     // degeneracies.
-    //let s = |x| stabilized_sliding_profile(x, epsilon);
+    // let s = |x| stabilized_sliding_profile(x, epsilon);
     let s = |x| quadratic_sliding_profile(x, epsilon);
     v * (factor * s(v.norm()))
 }
@@ -1222,6 +1222,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             return None;
         }
 
+        //TODO: We need to deal with in-contact vertices being added to the solve, the following
+        // function prunes too many vertices making the jacobian inaccurate after the first step.
+
         // Note that there is a distinction between active *contacts* and active
         // *constraints*. Active *constraints* correspond to to those points
         // that are in the MLS neighborhood of influence to be part of the
@@ -1254,7 +1257,6 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             &query_points_in_contact,
             recompute_contact_jacobian,
         )?;
-        // dbg!(&c);
         assert_eq!(c.len(), num_contacts);
 
         //dbg!(&self.point_constraint.implicit_surface.surface_vertex_positions());

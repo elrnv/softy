@@ -1585,10 +1585,9 @@ impl<T: Real64> NLProblem<T> {
                 fc_constraint.update_state(Chunked3::from_flat(pos));
                 fc_constraint.update_distance_potential();
                 fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
+                fc_constraint.subtract_constraint_force(Chunked3::from_flat(r));
                 fc_constraint
                     .subtract_friction_force(Chunked3::from_flat(r), Chunked3::from_flat(vel));
-
-                fc_constraint.subtract_constraint_force(Chunked3::from_flat(r));
             }
         }
     }
@@ -2217,11 +2216,15 @@ impl<T: Real64> NLProblem<T> {
                     iter.zip(vals[count..].iter_mut())
                         .map(|((_r, _c, val), out_val)| {
                             // jac[_r][_c] = val.to_f64().unwrap();
+                            dbg!(&val);
                             *out_val = force_multiplier * factor * val;
                         })
                         .count()
                 })
                 .unwrap_or(0);
+            dbg!(num_active_coords / 3);
+            dbg!(f_jac_count);
+            dbg!(&vals[count..]);
             count += f_jac_count;
 
             // eprintln!("FRICTION JACOBIAN:");
@@ -2232,6 +2235,7 @@ impl<T: Real64> NLProblem<T> {
             //     eprintln!("");
             // }
         }
+
 
         // let ResidualState { next, r, .. } = vtx.residual_state_ad().into_storage();
         // let mut vel = next.vel.to_vec();
@@ -2690,14 +2694,14 @@ impl<T: Real64> NLProblem<T> {
     }
 
     /// Checks that the given problem has a consistent Jacobian implementation.
-    pub(crate) fn check_jacobian(&self, perturb_initial: bool) -> Result<(), crate::Error> {
+    pub(crate) fn check_jacobian(&self, x: &[T], perturb_initial: bool) -> Result<(), crate::Error> {
         log::debug!("Checking Jacobian...");
         use ad::F1 as F;
         // Compute Jacobian
         let jac = {
             let problem_clone = self.clone();
             let n = problem_clone.num_variables();
-            let mut x0 = problem_clone.initial_point();
+            let mut x0 = x.to_vec();
             if perturb_initial {
                 perturb(&mut x0);
             }
@@ -2727,11 +2731,11 @@ impl<T: Real64> NLProblem<T> {
             jac
         };
 
-        // Check jacobian and compute autodiff jacobian.
+        // Check Jacobian and compute autodiff Jacobian.
 
         let problem = self.clone_as_autodiff();
         let n = problem.num_variables();
-        let mut x0 = problem.initial_point();
+        let mut x0: Vec<_> = x.iter().map(|&x| F::cst(x.to_f64().unwrap())).collect();
         if perturb_initial {
             perturb(&mut x0);
         }
@@ -2753,7 +2757,7 @@ impl<T: Real64> NLProblem<T> {
                     jac[row][col],
                     r[row].deriv(),
                     max_relative = 1e-6,
-                    epsilon = 1e-7 * avg_deriv
+                    epsilon = 1e-7,// * avg_deriv
                 );
                 jac_ad[row][col] = r[row].deriv();
                 if !res {
@@ -2814,6 +2818,21 @@ impl<T: Real64> NLProblem<T> {
             //     }
             //     eprintln!("");
             // }
+        }
+        eprintln!("Actual:");
+        for row in 0..n {
+            for col in 0..n {
+                eprint!("{:10.2e} ", jac[row][col]);
+            }
+            eprintln!("");
+        }
+
+        eprintln!("Expected:");
+        for row in 0..n {
+            for col in 0..n {
+                eprint!("{:10.2e} ", jac_ad[row][col]);
+            }
+            eprintln!("");
         }
         if success {
             log::debug!("No errors during Jacobian check.");

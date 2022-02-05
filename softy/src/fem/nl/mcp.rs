@@ -159,14 +159,14 @@ where
     ///
     /// This version of [`solve`] does not rely on the `initial_point` method of
     /// the problem definition. Instead the given `x` is used as the initial point.
-    fn solve_with(&mut self, x: &mut [T]) -> SolveResult {
+    fn solve_with(&mut self, x: &mut [T], update_jacobian_indices: bool) -> SolveResult {
         {
             let (l, u) = &mut *self.solver.problem().bounds.borrow_mut();
             self.problem()
                 .update_bounds(l.as_mut_slice(), u.as_mut_slice());
             // This scope drops the l and u mutable borrows.
         }
-        self.solver.solve_with(x)
+        self.solver.solve_with(x, update_jacobian_indices)
     }
 }
 

@@ -60,6 +60,8 @@ pub struct SimParams {
     pub friction_tolerance: f32,
     /// The distance tolerance between objects in contact.
     pub contact_tolerance: f32,
+    /// Number of contact iterations.
+    pub contact_iterations: u32,
     pub time_integration: TimeIntegration,
 }
 
@@ -128,5 +130,5 @@ pub trait NLSolver<P, T> {
     ///
     /// This version of [`solve`] does not rely on the `initial_point` method of
     /// the problem definition. Instead the given `x` is used as the initial point.
-    fn solve_with(&mut self, x: &mut [T]) -> SolveResult;
+    fn solve_with(&mut self, x: &mut [T], update_jacobian_indices: bool) -> SolveResult;
 }

@@ -4,6 +4,15 @@
 //#[global_allocator]
 //static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
+macro_rules! add_time {
+    ($t:expr; $expr:expr) => {{
+        let _t_begin = std::time::Instant::now();
+        let result = $expr;
+        $t += std::time::Instant::now() - _t_begin;
+        result
+    }};
+}
+
 mod attrib_defines;
 mod constraint;
 mod constraints;

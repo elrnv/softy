@@ -1,5 +1,7 @@
-use std::cell::RefCell;
+use std::borrow::BorrowMut;
+use std::cell::{Ref, RefCell, RefMut};
 
+use crate::nl_fem::Timings;
 use num_traits::Float;
 use rayon::prelude::*;
 use tensr::*;
@@ -28,6 +30,12 @@ where
     T: Real,
     P: MixedComplementarityProblem<T>,
 {
+    fn timings(&self) -> RefMut<'_, Timings> {
+        self.problem.timings()
+    }
+    fn debug_friction(&self) -> Ref<'_, Vec<T>> {
+        self.problem.debug_friction()
+    }
     #[inline]
     fn mesh_with(&self, dq: &[T]) -> crate::Mesh {
         self.problem.mesh_with(dq)
@@ -37,6 +45,12 @@ where
     }
     fn initial_point(&self) -> Vec<T> {
         self.problem.initial_point()
+    }
+    fn objective(&self, x: &[T]) -> T {
+        self.problem.objective(x)
+    }
+    fn assist_line_search(&self, alpha: T, p: &[T], x: &[T], r_cur: &[T], r_next: &[T]) -> T {
+        self.problem.assist_line_search(alpha, p, x, r_cur, r_next)
     }
     fn converged(
         &self,

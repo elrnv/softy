@@ -510,7 +510,6 @@ pub struct Newton<P, T: Real> {
     /// If this function returns false, the solve is interrupted.
     pub outer_callback: RefCell<Callback<T>>,
     pub workspace: RefCell<NewtonWorkspace<T>>,
-    iteration_count: u32,
 }
 
 fn sparse_matrix_and_mapping<T: Real>(
@@ -616,7 +615,6 @@ where
                 r_cur,
                 r_next,
             }),
-            iteration_count: 0,
         }
     }
     fn update_jacobian_indices(
@@ -647,8 +645,12 @@ where
         init_sparse_jacobian_vals.clone_from(j_t.storage());
         if let LinearSolverWorkspace::Direct(ds) = linsolve {
             //let (j, j_mapping) = sparse_matrix_and_mapping(&j_rows, &j_cols, &sj.j_vals, n);
-            let (j_t, j_t_mapping) =
-                sparse_matrix_and_mapping(&sj.j_cols, &sj.j_rows, &sj.j_vals, n);
+            let (j_t, j_t_mapping) = sparse_matrix_and_mapping(
+                &sparse_jacobian.j_cols,
+                &sparse_jacobian.j_rows,
+                &sparse_jacobian.j_vals,
+                n,
+            );
             //ds.j = j;
             //#[cfg(target_os = "macos")]
             //ds.j_sparse.replace(new_sparse(j_t.view(), true));
@@ -728,14 +730,23 @@ where
     /// This version of [`solve`] does not rely on the `initial_point` method of
     /// the problem definition. Instead the given `x` is used as the initial point.
     fn solve_with(&mut self, x: &mut [T], update_jacobian_indices: bool) -> SolveResult {
-        self.iteration_count += 1;
-        let iteration_count = self.iteration_count;
         if x.is_empty() {
             return SolveResult {
                 iterations: 0,
                 status: Status::NothingToSolve,
             };
         }
+
+        // Timing stats
+        let mut linsolve_time = Duration::new(0, 0);
+        let mut ls_time = Duration::new(0, 0);
+        let mut jprod_linsolve_time = Duration::new(0, 0);
+        // let mut jprod_ls_time = Duration::new(0, 0);
+        let mut residual_time = Duration::new(0, 0);
+        let mut assist_time = Duration::new(0, 0);
+        let mut total_solve_time = Duration::new(0, 0);
+        self.problem.timings().clear();
+        let t_begin_solve = Instant::now();
 
         {
             let Self {
@@ -745,7 +756,7 @@ where
             let NewtonWorkspace { r, .. } = &mut *workspace.borrow_mut();
 
             // Initialize the residual.
-            problem.residual(x, r.as_mut_slice());
+            add_time!(residual_time; problem.residual(x, r.as_mut_slice()));
         }
 
         if update_jacobian_indices {
@@ -810,14 +821,7 @@ where
         //let orig_sigma = sigma;
 
         log_debug_stats_header();
-        log_debug_stats(0, 0, linsolve_result, sigma, f64::INFINITY, &r, x, &x_prev);
-
-        // Timing stats
-        let mut linsolve_time = Duration::new(0, 0);
-        let mut ls_time = Duration::new(0, 0);
-        let mut jprod_linsolve_time = Duration::new(0, 0);
-        let mut jprod_ls_time = Duration::new(0, 0);
-        let mut residual_time = Duration::new(0, 0);
+        log_debug_stats(0, 0, linsolve_result, 1.0, f64::INFINITY, &r, x, &x_prev);
 
         // Prepare initial Jacobian used in the merit function.
         problem.jacobian_values(
@@ -841,9 +845,15 @@ where
             .borrow_mut()
             .expect("Uninitialized iterative sparse solver.");
         init_sparse_solver.update_values(&init_sparse_jacobian_vals);
-        init_sparse_solver.refactor();
-
-        // TODO: Debug stagnation/cycling.
+        match init_sparse_solver.refactor() {
+            Err(err) => {
+                return SolveResult {
+                    iterations,
+                    status: Status::LinearSolveError(err.into()),
+                }
+            }
+            Ok(_) => {}
+        }
 
         // let mut merit = |problem: &P, _: &[T], residual: &[T], init_sparse_solver: &mut SparseDirectSolver| {
         //     init_sparse_solver.update_rhs(residual);
@@ -854,7 +864,9 @@ where
         let merit = |_: &P, _: &[T], r: &[T], _: &SparseDirectSolver| {
             0.5 * r.as_tensor().norm_squared().to_f64().unwrap()
         };
-        //let merit = |problem: &P, x: &[T], _: &[T]| problem.objective(x).to_f64().unwrap();
+        // let merit = |problem: &P, x: &[T], _: &[T], _: &SparseDirectSolver| {
+        //     problem.objective(x).to_f64().unwrap()
+        // };
 
         // Computes the product of merit function with the search direction.
         // In this version, we leverage that Jp is already computed.
@@ -871,10 +883,11 @@ where
         //         .zip(jinv_r.iter())
         //         .fold(0.0, |acc, (&jinv_jp, &jinv_r)| acc + jinv_jp * jinv_r)
         // };
-        let mut merit_jac_prod = |problem: &P, jp: &[T], r: &[T], _: &SparseDirectSolver| {
-            jp.iter()
-                .zip(r.iter())
-                .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap())
+        let merit_jac_prod = |_: &P, jp: &[T], r: &[T], _: &SparseDirectSolver| {
+            r.as_tensor().norm_squared().to_f64().unwrap()
+            // jp.iter()
+            //     .zip(r.iter())
+            //     .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap())
         };
 
         // Keep track of merit function to avoid having to recompute it
@@ -891,14 +904,6 @@ where
         }
 
         let result = loop {
-            Self::update_jacobian_indices(
-                problem,
-                sparse_jacobian,
-                init_sparse_jacobian_vals,
-                init_sparse_solver,
-                init_j_t_mapping,
-                linsolve,
-            );
             //log::trace!("Previous r norm: {}", r_prev_norm);
             //log::trace!("Current  r norm: {}", r_cur_norm);
             if !(outer_callback.borrow_mut())(CallbackArgs {
@@ -960,7 +965,7 @@ where
                         },
                         p.as_mut_slice(),
                         r.as_mut_slice(),
-                        |p| true,
+                        |_| true,
                     );
                 }
                 LinearSolverWorkspace::Direct(DirectSolver {
@@ -1009,20 +1014,20 @@ where
                         //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
                         //write_jacobian_img(j_dense.view(), iterations);
 
-                        let mut success = true;
-                        for i in 0..j_dense.len() {
-                            for j in 0..j_dense.len() {
-                                let a = *j_dense.view().at(i).at(j);
-                                let b = *j_dense_ad.view().at(j).at(i);
-                                if num_traits::Float::abs(a - b) > T::from(1e-4).unwrap() {
-                                    eprintln!("({},{}): {} vs {}", i, j, a, b);
-                                    success = false;
-                                }
-                            }
-                        }
-                        if !success {
-                            panic!("Jacobian Error");
-                        }
+                        // let mut success = true;
+                        // for i in 0..j_dense.len() {
+                        //     for j in 0..j_dense.len() {
+                        //         let a = *j_dense.view().at(i).at(j);
+                        //         let b = *j_dense_ad.view().at(j).at(i);
+                        //         if num_traits::Float::abs(a - b) > T::from(1e-4).unwrap() {
+                        //             eprintln!("({},{}): {} vs {}", i, j, a, b);
+                        //             success = false;
+                        //         }
+                        //     }
+                        // }
+                        // if !success {
+                        //     panic!("Jacobian Error");
+                        // }
                         condition_number(j_dense.view())
                     });
                     //jprod_time += Instant::now() - before_j;
@@ -1064,54 +1069,22 @@ where
                         .for_each(|(p, &r64)| *p = T::from(r64).unwrap());
 
                     // Check
-                    problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
-                    eprintln!("r = {:?}", &r_cur);
-                    eprintln!("jp_check = {:?}", &jp);
+                    // problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
+                    // eprintln!("r = {:?}", &r_cur);
+                    // eprintln!("jp_check = {:?}", &jp);
 
                     //log::trace!("linsolve result: {:?}", linsolve_result);
                 }
             }
 
+            // Negate
+            p.iter_mut().for_each(|p| *p = -*p);
+
             //log::trace!("p = {:?}", &r);
 
             linsolve_time += Instant::now() - t_begin_linsolve;
 
-            // Check solution:
-            // Compute out = J * p
-            //jp.iter_mut().for_each(|x| *x = T::zero());
-            //j.view()
-            //    .add_right_mul_in_place(p.as_tensor(), jp.as_mut_tensor());
-            //for (&a, &x) in out.iter().zip(r_cur.iter()) {
-            //    log::trace!(
-            //        "newton solve residual: {:?}",
-            //        (a - x.to_f64().unwrap()).abs()
-            //    );
-            //}
-
             // The solve converts the rhs r into the unknown negative search direction p.
-
-            // probe
-            //let mut probe_x = x.to_vec();
-            //let mut probe_r = r.clone();
-            //{
-            //    use std::io::Write;
-            //    let mut f =
-            //        std::fs::File::create(format!("./out/alpha_res_{}.jl", iterations)).unwrap();
-            //    writeln!(&mut f, "alpha_res2 = [").ok();
-            //    for alpha in (0..100).map(|i| T::from(i).unwrap() / T::from(100.0).unwrap()) {
-            //        zip!(probe_x.iter_mut(), r.iter(), x.iter())
-            //            .for_each(|(px, &r, &x)| *px = x - alpha * r);
-            //        problem.residual(&probe_x, probe_r.as_mut_slice());
-            //        writeln!(
-            //            &mut f,
-            //            "{:?} {:10.3e};",
-            //            alpha,
-            //            probe_r.as_slice().as_tensor().norm().to_f64().unwrap()
-            //        )
-            //        .ok();
-            //    }
-            //    writeln!(&mut f, "]").ok();
-            //}
 
             if !p.as_tensor().norm_squared().is_finite() {
                 break SolveResult {
@@ -1127,125 +1100,211 @@ where
             let rho = params.line_search.step_factor();
 
             // Take the full step
-            *x.as_mut_tensor() -= p.as_tensor();
+            *x.as_mut_tensor() += p.as_tensor();
 
             // Compute the residual for the full step.
             let t_begin_residual = Instant::now();
             problem.residual(&x, r_next.as_mut_slice());
             residual_time += Instant::now() - t_begin_residual;
 
-            let ls_count = if rho >= 1.0 {
-                merit_next = merit(problem, x, r_next, init_sparse_solver);
-                1
-            } else {
-                // Line search.
-                let mut alpha = 1.0;
-                let mut ls_count = 1;
-                //let mut sigma = linsolve.tol as f64;
-
-                let t_begin_jprod = Instant::now();
-                //jp.iter_mut().for_each(|x| *x = T::zero());
-                //j.view()
-                //    .add_mul_in_place_par(p.as_tensor(), jp.as_mut_tensor());
-                problem.jacobian_product(x_prev, p, r_cur, jp.as_mut_slice());
-                //sparse_jacobian.compute_product(p, jp.as_mut_slice());
-                jprod_ls_time += Instant::now() - t_begin_jprod;
-                eprintln!("jp = {:?}", &jp);
-                let merit_jac_p = merit_jac_prod(problem, jp, r_cur, init_sparse_solver);
-                dbg!(&x_prev);
-                dbg!(&x);
-                dbg!(&p);
-                dbg!(&r_cur);
-                dbg!(&r_next);
-                dbg!(merit_jac_p);
-                dbg!(merit_cur);
-
-                loop {
-                    // Compute gradient of the merit function 0.5 r'r  multiplied by p, which is r' dr/dx p.
-                    // Gradient dot search direction.
-                    // Check Armijo condition:
-                    // Given f(x) = 0.5 || r(x) ||^2 = 0.5 r(x)'r(x)
-                    // Test f(x + αp) < f(x) - cα(J(x)'r(x))'p(x)
-                    // Test f(x + αp) < f(x) - cα r(x)'J(x)p(x)
-
-                    // Compute the merit function
+            let (ls_count, alpha) = add_time! {
+                ls_time;
+                if rho >= 1.0 {
                     merit_next = merit(problem, x, r_next, init_sparse_solver);
+                    (1, 1.0)
+                } else {
+                    // Line search.
+                    let mut alpha = 1.0;
+                    let mut ls_count = 1;
+                    //let mut sigma = linsolve.tol as f64;
 
-                    // TRADITIONAL BACKTRACKING:
-                    if merit_next
-                        <= merit_cur - params.line_search.armijo_coeff() * alpha * merit_jac_p
-                    {
-                        break;
-                    }
+                    // let t_begin_jprod = Instant::now();
+                    //jp.iter_mut().for_each(|x| *x = T::zero());
+                    //j.view()
+                    //    .add_mul_in_place_par(p.as_tensor(), jp.as_mut_tensor());
+                    // problem.jacobian_product(x_prev, p, r_cur, jp.as_mut_slice());
+                    //sparse_jacobian.compute_product(p, jp.as_mut_slice());
+                    // jprod_ls_time += Instant::now() - t_begin_jprod;
+                    // eprintln!("jp = {:?}", &jp);
+                    let merit_jac_p = merit_jac_prod(problem, r_cur, r_cur, init_sparse_solver);
+                    // let merit_jac_p = merit_jac_prod(problem, p, r_cur, init_sparse_solver);
+                    // dbg!(&x_prev);
+                    // dbg!(&x);
+                    // dbg!(&p);
+                    // dbg!(&r_cur);
+                    // dbg!(&r_next);
+                    // dbg!(merit_jac_p);
+                    // dbg!(merit_cur);
 
-                    // INEXACT NEWTON:
-                    // if merit_next <= merit_cur * (1.0 - rho * (1.0 - sigma)) {
-                    //     break;
-                    // }
-                    //
-                    alpha *= rho;
-                    // sigma = 1.0 - alpha * (1.0 - sigma);
-
-                    // Break if alpha becomes too small. This is usually a bad sign.
-                    if alpha < 1e-5 {
-                        break;
-                    }
-
-                    // Take a fractional step.
-                    zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
-                        *x = num_traits::Float::mul_add(p, T::from(-alpha).unwrap(), x0);
-                    });
-
-                    // Compute the candidate residual.
-                    let before_residual = Instant::now();
-                    problem.residual(x, r_next.as_mut_slice());
-                    residual_time += Instant::now() - before_residual;
-
-                    ls_count += 1;
-                }
-
-                if ls_count == 98 {
-                    let mut merit_data = vec![];
-                    let mut r0 = vec![];
-                    let mut r1 = vec![];
-                    let mut r2 = vec![];
-                    let mut xs = vec![];
-                    let mut probe_r = vec![T::zero(); r_next.len()];
-                    let mut probe_x = vec![T::zero(); x.len()];
-                    for i in 0..1000 {
-                        let alpha: f64 = 0.0000005 * i as f64;
-                        zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
-                            |(x, &x0, &p)| {
-                                *x = num_traits::Float::mul_add(p, T::from(-alpha).unwrap(), x0);
-                            },
+                    if params.line_search.is_assisted() {
+                        add_time!(
+                            assist_time;
+                            alpha = problem
+                                .assist_line_search(T::from(alpha).unwrap(), p, x_prev, r_cur, r_next)
+                                .to_f64()
+                                .unwrap()
                         );
-                        problem.residual(&probe_x, probe_r.as_mut_slice());
-                        let probe = merit(problem, x, &probe_r, init_sparse_solver);
-                        xs.push(alpha);
-                        merit_data.push(probe);
-                        r0.push(probe_r[9]);
-                        r1.push(probe_r[10]);
-                        r2.push(probe_r[11]);
                     }
-                    println!("xs = {:?}", xs);
-                    println!("merit_data = {:?}", merit_data);
-                    println!("r0 = {:?}", r0);
-                    println!("r1 = {:?}", r1);
-                    println!("r2 = {:?}", r2);
-                    panic!("STOP");
+
+                    loop {
+                        // Compute gradient of the merit function 0.5 r'r  multiplied by p, which is r' dr/dx p.
+                        // Gradient dot search direction.
+                        // Check Armijo condition:
+                        // Given f(x) = 0.5 || r(x) ||^2 = 0.5 r(x)'r(x)
+                        // Test f(x + αp) < f(x) - cα(J(x)'r(x))'p(x)
+                        // Test f(x + αp) < f(x) - cα r(x)'J(x)p(x)
+
+                        // Compute the merit function
+                        merit_next = merit(problem, x, r_next, init_sparse_solver);
+
+                        // TRADITIONAL BACKTRACKING:
+                        if merit_next
+                            <= merit_cur - params.line_search.armijo_coeff() * alpha * merit_jac_p
+                        {
+                            // eprintln!("success: {merit_next} <= {merit_cur} - {}; alpha <- {}", params.line_search.armijo_coeff() * alpha * merit_jac_p, alpha*rho);
+                            break;
+                        }
+
+                        // eprintln!("backtracking: {merit_next} > {merit_cur} - {}; alpha <- {}", params.line_search.armijo_coeff() * alpha * merit_jac_p, alpha*rho);
+
+                        // INEXACT NEWTON:
+                        // if merit_next <= merit_cur * (1.0 - rho * (1.0 - sigma)) {
+                        //     break;
+                        // }
+                        //
+                        alpha *= rho;
+
+                        // sigma = 1.0 - alpha * (1.0 - sigma);
+
+                        // Break if alpha becomes too small. This is usually a bad sign.
+                        if alpha < 1e-5 {
+                            break;
+                        }
+
+                        // Take a fractional step.
+                        zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
+                            *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
+                        });
+
+                        // Compute the candidate residual.
+                        add_time!(residual_time; problem.residual(x, r_next.as_mut_slice()));
+
+                        ls_count += 1;
+                    }
+
+                    // dbg!(alpha);
+                    // if ls_count > 10 {
+                    //     let mut merit_data = vec![];
+                    //     let mut r0 = vec![];
+                    //     let mut r1 = vec![];
+                    //     let mut r2 = vec![];
+                    //     let mut r3 = vec![];
+                    //     let mut r4 = vec![];
+                    //     let mut r5 = vec![];
+                    //     let mut r6 = vec![];
+                    //     let mut r7 = vec![];
+                    //     let mut r8 = vec![];
+                    //     let mut r9 = vec![];
+                    //     let mut r10 = vec![];
+                    //     let mut r11 = vec![];
+                    //     let mut f0 = vec![];
+                    //     let mut f1 = vec![];
+                    //     let mut f2 = vec![];
+                    //     let mut f3 = vec![];
+                    //     let mut f4 = vec![];
+                    //     let mut f5 = vec![];
+                    //     let mut f6 = vec![];
+                    //     let mut f7 = vec![];
+                    //     let mut f8 = vec![];
+                    //     let mut f9 = vec![];
+                    //     let mut f10 = vec![];
+                    //     let mut f11 = vec![];
+                    //
+                    //     let mut xs = vec![];
+                    //     let mut probe_r = vec![T::zero(); r_next.len()];
+                    //     let mut probe_x = vec![T::zero(); x.len()];
+                    //     for i in 0..=1000 {
+                    //         let alpha: f64 = 0.00001 * i as f64;
+                    //         zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
+                    //             |(x, &x0, &p)| {
+                    //                 *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
+                    //             },
+                    //         );
+                    //         problem.residual(&probe_x, probe_r.as_mut_slice());
+                    //         if i == 0 || i == 1000 {
+                    //             dbg!(&probe_r);
+                    //         }
+                    //         let probe_f = problem.debug_friction();
+                    //         let probe = merit(problem, &probe_x, &probe_r, init_sparse_solver);
+                    //         xs.push(alpha);
+                    //         merit_data.push(probe);
+                    //         r0.push(probe_r[0]);
+                    //         r1.push(probe_r[1]);
+                    //         r2.push(probe_r[2]);
+                    //         r3.push(probe_r[3]);
+                    //         r4.push(probe_r[4]);
+                    //         r5.push(probe_r[5]);
+                    //         r6.push(probe_r[30]);
+                    //         r7.push(probe_r[31]);
+                    //         r8.push(probe_r[32]);
+                    //         r9.push(probe_r[33]);
+                    //         r10.push(probe_r[34]);
+                    //         r11.push(probe_r[35]);
+                    //         f0.push(probe_f[0]);
+                    //         f1.push(probe_f[1]);
+                    //         f2.push(probe_f[2]);
+                    //         f3.push(probe_f[3]);
+                    //         f4.push(probe_f[4]);
+                    //         f5.push(probe_f[5]);
+                    //         f6.push(probe_f[30]);
+                    //         f7.push(probe_f[31]);
+                    //         f8.push(probe_f[32]);
+                    //         f9.push(probe_f[33]);
+                    //         f10.push(probe_f[34]);
+                    //         f11.push(probe_f[35]);
+                    //     }
+                    //     use std::io::Write;
+                    //     let mut file = std::fs::File::create("./out/debug_data.jl").unwrap();
+                    //     writeln!(file, "xs = {:?}", xs);
+                    //     writeln!(file, "merit_data = {:?}", merit_data);
+                    //     writeln!(file, "r0 = {:?}", r0);
+                    //     writeln!(file, "r1 = {:?}", r1);
+                    //     writeln!(file, "r2 = {:?}", r2);
+                    //     writeln!(file, "r3 = {:?}", r3);
+                    //     writeln!(file, "r4 = {:?}", r4);
+                    //     writeln!(file, "r5 = {:?}", r5);
+                    //     writeln!(file, "r6 = {:?}", r6);
+                    //     writeln!(file, "r7 = {:?}", r7);
+                    //     writeln!(file, "r8 = {:?}", r8);
+                    //     writeln!(file, "r9 = {:?}", r9);
+                    //     writeln!(file, "r10 = {:?}", r10);
+                    //     writeln!(file, "r11 = {:?}", r11);
+                    //     writeln!(file, "f0 = {:?}", f0);
+                    //     writeln!(file, "f1 = {:?}", f1);
+                    //     writeln!(file, "f2 = {:?}", f2);
+                    //     writeln!(file, "f3 = {:?}", f3);
+                    //     writeln!(file, "f4 = {:?}", f4);
+                    //     writeln!(file, "f5 = {:?}", f5);
+                    //     writeln!(file, "f6 = {:?}", f6);
+                    //     writeln!(file, "f7 = {:?}", f7);
+                    //     writeln!(file, "f8 = {:?}", f8);
+                    //     writeln!(file, "f9 = {:?}", f9);
+                    //     writeln!(file, "f10 = {:?}", f10);
+                    //     writeln!(file, "f11 = {:?}", f11);
+                    //     writeln!(file, "xs_length = {:?}", xs.len());
+                    //     panic!("STOP");
+                    // }
+                    (ls_count, alpha)
                 }
-                ls_count
             };
 
             iterations += 1;
-
-            ls_time += Instant::now() - t_begin_ls;
 
             log_debug_stats(
                 iterations,
                 ls_count,
                 linsolve_result,
-                sigma,
+                alpha as f32,
                 merit_next,
                 &r_next,
                 x,
@@ -1284,9 +1343,28 @@ where
             merit_cur = merit_next;
         };
 
+        total_solve_time = Instant::now() - t_begin_solve;
+
+        log::debug!("Line search assist time: {}ms", assist_time.as_millis());
         log::debug!(
             "Balance equation computation time: {}ms",
             residual_time.as_millis()
+        );
+        log::debug!(
+            "   Energy gradient time: {}ms",
+            self.problem.timings().energy_gradient.as_millis()
+        );
+        log::debug!(
+            "   Contact prep time: {}ms",
+            self.problem.timings().prepare_contact.as_millis()
+        );
+        log::debug!(
+            "   Contact force time: {}ms",
+            self.problem.timings().contact_force.as_millis()
+        );
+        log::debug!(
+            "   Friction force time: {}ms",
+            self.problem.timings().friction_force.as_millis()
         );
         log::debug!("Linear solve time: {}ms", linsolve_time.as_millis());
         log::debug!(
@@ -1294,7 +1372,8 @@ where
             jprod_linsolve_time.as_millis()
         );
         log::debug!("Line search time: {}ms", ls_time.as_millis());
-        log::debug!("   Jacobian product time: {}ms", jprod_ls_time.as_millis());
+        // log::debug!("   Jacobian product time: {}ms", jprod_ls_time.as_millis());
+        log::debug!("Total solve time {}ms", total_solve_time.as_millis());
         result
     }
 }
@@ -1312,24 +1391,24 @@ where
  */
 fn log_debug_stats_header() {
     log::debug!(
-        "    i |  res-inf   |   merit    |    d-2     |    x-2     | lin # |  lin err   |   sigma    | ls # "
+        "    i |  res-inf   |   merit    |    d-2     |    x-2     | lin # |  lin err   |   alpha    | ls # "
     );
     log::debug!(
-        "------+------------+------------+------------+-------+------------+------------+------"
+        "------+------------+------------+------------+------------+-------+------------+------------+------"
     );
 }
 fn log_debug_stats<T: Real>(
     iterations: u32,
     ls_steps: u32,
     linsolve_result: super::linsolve::SolveResult,
-    sigma: f32,
+    alpha: f32,
     merit: f64,
     r: &[T],
     x: &[T],
     x_prev: &[T],
 ) {
     log::debug!(
-        "{i:>5} | {resinf:10.3e} | {merit:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {sigma:10.3e} | {ls:>4} ",
+        "{i:>5} | {resinf:10.3e} | {merit:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {alpha:10.3e} | {ls:>4} ",
         i = iterations,
         resinf = r.as_tensor().lp_norm(LpNorm::Inf).to_f64().unwrap(),
         merit = merit,
@@ -1339,7 +1418,7 @@ fn log_debug_stats<T: Real>(
         xi = x.as_tensor().norm().to_f64().unwrap(),
         lin = linsolve_result.iterations,
         linerr = linsolve_result.error,
-        sigma = sigma,
+        alpha = alpha,
         ls = ls_steps
     );
 }
@@ -1489,23 +1568,40 @@ pub enum LineSearch {
         c: f64,
         rho: f64,
     },
+    /// Contact aware line search that truncates `α` according to expected friction and contact
+    /// potentials before using backtracking to ensure sufficient decrease.
+    AssistedBackTracking {
+        c: f64,
+        rho: f64,
+    },
     None,
 }
 
 impl Default for LineSearch {
     fn default() -> LineSearch {
-        LineSearch::default_backtracking()
+        LineSearch::default_assisted_backtracking()
     }
 }
 
 impl LineSearch {
+    pub const fn default_assisted_backtracking() -> Self {
+        LineSearch::AssistedBackTracking { c: 1e-4, rho: 0.9 }
+    }
     pub const fn default_backtracking() -> Self {
         LineSearch::BackTracking { c: 1e-4, rho: 0.9 }
+    }
+    pub fn is_assisted(&self) -> bool {
+        match self {
+            LineSearch::AssistedBackTracking { .. } => true,
+            _ => false,
+        }
     }
     /// Gets the factor by which the step size should be decreased.
     pub fn step_factor(&self) -> f64 {
         match self {
-            LineSearch::BackTracking { rho, .. } => *rho,
+            LineSearch::BackTracking { rho, .. } | LineSearch::AssistedBackTracking { rho, .. } => {
+                *rho
+            }
             LineSearch::None => 1.0,
         }
     }
@@ -1513,7 +1609,7 @@ impl LineSearch {
     // Gets the coefficient for the Armijo condition.
     pub fn armijo_coeff(&self) -> f64 {
         match self {
-            LineSearch::BackTracking { c, .. } => *c,
+            LineSearch::BackTracking { c, .. } | LineSearch::AssistedBackTracking { c, .. } => *c,
             LineSearch::None => 1.0,
         }
     }

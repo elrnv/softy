@@ -509,7 +509,7 @@ impl<T: Real> TripletContactJacobian<T> {
         }
     }
 
-    pub fn from_selection_reindexed_full<'a>(
+    pub fn from_selection_reindexed<'a>(
         surf: &implicits::QueryTopo<T>,
         active_contact_points: SelectView<'a, Chunked3<&'a [T]>>,
         active_contact_point_indices: &'a [Index],

@@ -7,7 +7,9 @@ use tensr::*;
 
 use super::mcp::*;
 use super::newton::*;
-use super::problem::{FrictionalContactConstraint, NLProblem, NonLinearProblem};
+use super::problem::{
+    FrictionalContactConstraint, LineSearchWorkspace, NLProblem, NonLinearProblem,
+};
 use super::state::*;
 use super::{NLSolver, SimParams, SolveResult, Status};
 use crate::attrib_defines::*;
@@ -674,6 +676,7 @@ impl SolverBuilder {
             state: RefCell::new(state),
             kappa: 1.0e2 / params.contact_tolerance as f64,
             delta: params.contact_tolerance as f64,
+            epsilon: params.friction_tolerance as f64,
             frictional_contact_constraints,
             frictional_contact_constraints_ad,
             volume_constraints,
@@ -691,6 +694,17 @@ impl SolverBuilder {
             candidate_force_ad: RefCell::new(vec![autodiff::FT::<T>::zero(); num_verts * 3]),
             prev_force_ad: vec![autodiff::FT::<T>::zero(); num_verts * 3],
             time_integration: params.time_integration,
+            line_search_ws: RefCell::new(LineSearchWorkspace {
+                pos_cur: Chunked3::default(),
+                pos_next: Chunked3::default(),
+                vel: Chunked3::default(),
+                search_dir: Chunked3::default(),
+                f1vtx: Chunked3::default(),
+                f2vtx: Chunked3::default(),
+                dq: Vec::new(),
+            }),
+            debug_friction: RefCell::new(Vec::new()),
+            timings: RefCell::new(crate::fem::nl::Timings::default()),
         })
     }
 

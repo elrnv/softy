@@ -36,6 +36,15 @@ pub struct ParticleState<X, V> {
     pub vel: V,
 }
 
+// TODO: Merge this function with the `update_with` function below to avoid repeated code.
+//       The two functions do the same thing except that this function updates velocities only.
+pub fn to_vertex_velocity<V: Real>(dq: ChunkedView<&[V]>, mut vtx_vel: Chunked3<&mut [V]>) {
+    let vtx_dq = Chunked3::from_flat(dq.isolate(VERTEX_DOFS));
+    for (vtx_vel, vtx_dq) in vtx_vel.iter_mut().zip(vtx_dq) {
+        *vtx_vel = *vtx_dq;
+    }
+}
+
 impl<X: Real, V: Real> ParticleState<Chunked3<&mut [X]>, Chunked3<&mut [V]>> {
     /// Updates vertex positions from given degrees of freedom.
     ///

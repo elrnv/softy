@@ -7,7 +7,7 @@ use crate::{Action, Params};
  */
 use geo::{
     self,
-    attrib::*, 
+    attrib::*,
     mesh::{topology::*, VertexPositions},
 };
 use hdkrs::interop::CookResult;

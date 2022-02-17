@@ -1,7 +1,6 @@
 use super::*;
 use crate::jacobian::{normalized_neighbor_weight_gradient, query_jacobian_at};
 use crate::Error;
-use geo::Index;
 use rayon::iter::Either;
 use std::cmp::Ordering;
 use tensr::IntoTensor;
@@ -553,11 +552,10 @@ impl<T: Real> QueryTopo<T> {
     pub fn contact_hessian_product_indexed_blocks_iter<'a>(
         &'a self,
         query_points: &'a [[T; 3]],
-        constraints_in_contact: &'a [Index],
         multipliers: &'a [[T; 3]],
     ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error> {
         Ok(apply_kernel_query_fn_impl_iter!(self, |kernel| {
-            self.contact_hessian_product_indexed_blocks_iter_impl(query_points, constraints_in_contact, multipliers, kernel)
+            self.contact_hessian_product_indexed_blocks_iter_impl(query_points, multipliers, kernel)
         }, ?))
     }
 
@@ -565,7 +563,6 @@ impl<T: Real> QueryTopo<T> {
     pub(crate) fn contact_hessian_product_indexed_blocks_iter_impl<'a, K: 'a>(
         &'a self,
         query_points: &'a [[T; 3]],
-        constraints_in_contact: &'a [Index],
         multipliers: &'a [[T; 3]],
         kernel: K,
     ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error>
@@ -591,10 +588,6 @@ impl<T: Real> QueryTopo<T> {
                 // Each of these is a "Hessian" at a particular contact point.
                 let hess = zip!(query_points.iter(), neigh_points)
                     .filter(|(_, nbrs)| !nbrs.is_empty())
-                    .zip(constraints_in_contact.iter())
-                    .filter_map(|((q, nbrs), contact_idx)| {
-                        contact_idx.into_option().map(|_| (q, nbrs))
-                    })
                     .zip(multipliers.iter())
                     .flat_map(move |((q, nbr_points), lambda)| {
                         let view = SamplesView::new(nbr_points, samples);

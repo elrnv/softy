@@ -90,6 +90,7 @@ static const char *theDsFile = R"THEDSFILE(
             "ipopt" "IPOPT (Optimization)"
             "newton" "Newton"
             "newtonbt" "Newton with Backtracking"
+            "newtonassistbt" "Newton with Assisted Backtracking"
             "trustregion" "Trust Region"
         }
     }
@@ -525,6 +526,15 @@ static const char *theDsFile = R"THEDSFILE(
             range { 0.0 1.0 }
             hidewhen "{ solvertype == ipopt }"
         }
+        parm {
+            name "contactiterations"
+            cppname "ContactIterations"
+            label "Contact Iterations"
+            type integer
+            default { "5" }
+            range { 0 50 }
+            hidewhen "{ solvertype == ipopt }"
+        }
 
         groupcollapsible {
             name    "ipoptoptions"
@@ -689,6 +699,9 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
     case SOP_SoftyEnums::SolverType::NEWTONBT:
         sim_params.solver_type = softy::SolverType::NewtonBacktracking;
         break;
+    case SOP_SoftyEnums::SolverType::NEWTONASSISTBT:
+        sim_params.solver_type = softy::SolverType::NewtonAssistedBacktracking;
+        break;
     case SOP_SoftyEnums::SolverType::TRUSTREGION:
         sim_params.solver_type = softy::SolverType::TrustRegion;
         break;
@@ -806,6 +819,7 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
     sim_params.derivative_test = sopparms.getDerivativeTest();
     sim_params.friction_tolerance = sopparms.getFrictionTolerance();
     sim_params.contact_tolerance = sopparms.getContactTolerance();
+    sim_params.contact_iterations = sopparms.getContactIterations();
 
     switch (static_cast<SOP_SoftyEnums::MuStrategy>(sopparms.getMuStrategy()))
     {

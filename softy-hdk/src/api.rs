@@ -9,10 +9,10 @@ use geo::attrib::*;
 use geo::mesh::topology::*;
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
+use softy::nl_fem::LinearSolver;
 use softy::{self, fem, Mesh, PointCloud};
 #[cfg(feature = "optsolver")]
 use softy::{PolyMesh, TetMesh, TetMeshExt};
-use softy::nl_fem::LinearSolver;
 
 use crate::{ElasticityModel, MaterialProperties, SimParams};
 
@@ -94,7 +94,7 @@ pub(crate) fn get_solver(
     }
 }
 
-impl From<TimeIntegration > for softy::nl_fem::TimeIntegration {
+impl From<TimeIntegration> for softy::nl_fem::TimeIntegration {
     fn from(ti: TimeIntegration) -> softy::nl_fem::TimeIntegration {
         match ti {
             TimeIntegration::TR => softy::nl_fem::TimeIntegration::TR,
@@ -124,10 +124,14 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             derivative_test,
             friction_tolerance,
             contact_tolerance,
+            contact_iterations,
             time_integration,
             ..
         } = *self;
         let line_search = match solver_type {
+            SolverType::NewtonAssistedBacktracking => {
+                fem::nl::LineSearch::default_assisted_backtracking()
+            }
             SolverType::NewtonBacktracking => fem::nl::LineSearch::default_backtracking(),
             _ => fem::nl::LineSearch::None,
         };
@@ -169,7 +173,8 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             jacobian_test: derivative_test > 0,
             friction_tolerance,
             contact_tolerance,
-            time_integration: time_integration.into()
+            contact_iterations,
+            time_integration: time_integration.into(),
         }
     }
 }
@@ -261,13 +266,11 @@ fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
                 match object_type {
                     ObjectType::Solid => Some(softy::Material::Solid(
                         softy::SolidMaterial::new(material_id as usize)
-                            .with_elasticity(
-                                softy::Elasticity::from_bulk_shear_with_model(
-                                    bulk_modulus,
-                                    shear_modulus,
-                                    elasticity_model.into(),
-                                ),
-                            )
+                            .with_elasticity(softy::Elasticity::from_bulk_shear_with_model(
+                                bulk_modulus,
+                                shear_modulus,
+                                elasticity_model.into(),
+                            ))
                             .with_volume_preservation(volume_constraint)
                             .with_density(density)
                             .with_damping(damping, time_step),

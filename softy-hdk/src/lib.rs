@@ -59,6 +59,7 @@ mod ffi {
         Ipopt,
         Newton,
         NewtonBacktracking,
+        NewtonAssistedBacktracking,
         TrustRegion,
     }
 
@@ -148,6 +149,7 @@ mod ffi {
         // TODO: move these into FrictionalContactParams.
         pub friction_tolerance: f32, // epsilon
         pub contact_tolerance: f32,  // delta
+        pub contact_iterations: u32,
 
         // Solver params
         pub solver_type: SolverType,
@@ -332,7 +334,8 @@ fn validate_id(id: i64) -> Option<u32> {
 
 fn add_mesh(mut detail: Pin<&mut GU_Detail>, mesh: Box<Mesh>) {
     if let Some(mut mesh) = mesh.mesh {
-        mesh.0.reverse_if(|_, cell_type| matches!(cell_type, geo::mesh::CellType::Triangle));
+        mesh.0
+            .reverse_if(|_, cell_type| matches!(cell_type, geo::mesh::CellType::Triangle));
         hdkrs::ffi::add_unstructured_mesh(detail.as_mut(), &mesh);
     }
 }

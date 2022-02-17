@@ -1,5 +1,6 @@
 use geo::algo::split::TypedMesh;
 use geo::attrib::*;
+use geo::topology::*;
 #[cfg(feature = "optsolver")]
 use softy::SOURCE_INDEX_ATTRIB;
 use softy::{fem, Error, Mesh, PointCloud, SimResult, TetMesh, TriMesh};
@@ -42,7 +43,7 @@ impl Solver for fem::opt::Solver {
         )
         .expect("Missing source index attribute.");
         tetmesh
-            .reset_attrib_to_default::<i32, geo::CellIndex>("object_type", 0)
+            .reset_attrib_to_default::<i32, CellIndex>("object_type", 0)
             .unwrap();
         tetmesh
     }
@@ -54,13 +55,12 @@ impl Solver for fem::opt::Solver {
         )
         .expect("Missing source index attribute.");
         trimesh
-            .reset_attrib_to_default::<i32, geo::FaceIndex>("object_type", 1)
+            .reset_attrib_to_default::<i32, FaceIndex>("object_type", 1)
             .unwrap();
         trimesh
     }
     #[inline]
     fn num_vertices(&self) -> usize {
-        use geo::mesh::topology::NumVertices;
         let num_solid_verts: usize = self.solids().iter().map(|x| x.tetmesh.num_vertices()).sum();
         let num_shell_verts: usize = self.shells().iter().map(|x| x.trimesh.num_vertices()).sum();
         num_solid_verts + num_shell_verts
@@ -95,7 +95,7 @@ where
         for unimesh in meshes.into_iter() {
             if let TypedMesh::Tet(mut tetmesh) = unimesh {
                 tetmesh
-                    .reset_attrib_to_default::<i32, geo::CellIndex>("object_type", 0)
+                    .reset_attrib_to_default::<i32, CellIndex>("object_type", 0)
                     .unwrap();
                 return tetmesh;
             }
@@ -109,7 +109,7 @@ where
         for unimesh in meshes.into_iter() {
             if let TypedMesh::Tri(mut trimesh) = unimesh {
                 trimesh
-                    .reset_attrib_to_default::<i32, geo::FaceIndex>("object_type", 1)
+                    .reset_attrib_to_default::<i32, FaceIndex>("object_type", 1)
                     .unwrap();
                 return trimesh;
             }
@@ -118,7 +118,6 @@ where
     }
     #[inline]
     fn num_vertices(&self) -> usize {
-        use geo::mesh::topology::NumVertices;
         self.mesh().num_vertices()
     }
     #[inline]

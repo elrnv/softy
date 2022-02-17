@@ -4,7 +4,7 @@ use geo::attrib::Attrib;
 use geo::mesh::builder::SolidBoxBuilder;
 use geo::mesh::VertexPositions;
 use geo::ops::{Scale, Translate};
-use geo::{CellIndex, NumCells, NumVertices, VertexIndex};
+use geo::topology::{CellIndex, NumCells, NumVertices, VertexIndex};
 use softy::fem::nl::*;
 use softy::{
     load_material, Error, FixedIntType, Material, MaterialIdType, Mesh, RefPosType, TetMesh,

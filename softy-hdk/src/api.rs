@@ -7,7 +7,7 @@ use thiserror::Error;
 use geo::attrib::*;
 #[cfg(feature = "optsolver")]
 use geo::mesh::topology::*;
-use geo::NumVertices;
+use geo::topology::NumVertices;
 use hdkrs::interop::CookResult;
 use softy::nl_fem::LinearSolver;
 use softy::{self, fem, Mesh, PointCloud};

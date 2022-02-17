@@ -420,9 +420,13 @@ impl SparseDirectSolver {
 pub struct DirectSolver<T: Real> {
     /// Mapping from original triplets given by the `j_*` members to the final
     /// compressed sparse matrix.
-    //j_mapping: Vec<Index>,
+    #[cfg(not(target_os = "macos"))]
+    j_mapping: Vec<Index>,
+    #[cfg(target_os = "macos")]
     j_t_mapping: Vec<Index>,
-    //j: DSMatrix<T>,
+    #[cfg(not(target_os = "macos"))]
+    j: DSMatrix<T>,
+    #[cfg(target_os = "macos")]
     j_t: DSMatrix<T>,
     //#[cfg(target_os = "macos")]
     //j_sparse: LazyCell<SparseMatrixF64<'static>>,
@@ -582,11 +586,15 @@ where
             LinearSolver::Direct => {
                 log::debug!("DIRECT SOLVE");
                 LinearSolverWorkspace::Direct(DirectSolver {
-                    //j: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
+                    #[cfg(not(target_os = "macos"))]
+                    j: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
+                    #[cfg(target_os = "macos")]
                     j_t: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
                     //#[cfg(target_os = "macos")]
                     //j_sparse: LazyCell::new(),
-                    //j_mapping: Vec::new(),
+                    #[cfg(not(target_os = "macos"))]
+                    j_mapping: Vec::new(),
+                    #[cfg(target_os = "macos")]
                     j_t_mapping: Vec::new(),
                     sparse_solver: LazyCell::new(),
                     //#[cfg(target_os = "macos")]
@@ -645,18 +653,33 @@ where
         init_sparse_jacobian_vals.clone_from(j_t.storage());
         if let LinearSolverWorkspace::Direct(ds) = linsolve {
             //let (j, j_mapping) = sparse_matrix_and_mapping(&j_rows, &j_cols, &sj.j_vals, n);
+            #[cfg(not(target_os = "macos"))]
+            let (j, j_mapping) = sparse_matrix_and_mapping(
+                &sparse_jacobian.j_rows,
+                &sparse_jacobian.j_cols,
+                &sparse_jacobian.j_vals,
+                n,
+            );
+            #[cfg(target_os = "macos")]
             let (j_t, j_t_mapping) = sparse_matrix_and_mapping(
                 &sparse_jacobian.j_cols,
                 &sparse_jacobian.j_rows,
                 &sparse_jacobian.j_vals,
                 n,
             );
-            //ds.j = j;
+
             //#[cfg(target_os = "macos")]
             //ds.j_sparse.replace(new_sparse(j_t.view(), true));
-            ds.j_t = j_t;
-            //ds.j_mapping = j_mapping;
-            ds.j_t_mapping = j_t_mapping;
+            #[cfg(target_os = "macos")]
+            {
+                ds.j_t = j_t;
+                ds.j_t_mapping = j_t_mapping;
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                ds.j = j;
+                ds.j_mapping = j_mapping;
+            }
             #[cfg(target_os = "macos")]
             ds.sparse_solver
                 .replace(SparseDirectSolver::new(ds.j_t.view()).unwrap());
@@ -844,15 +867,18 @@ where
         let init_sparse_solver = init_sparse_solver
             .borrow_mut()
             .expect("Uninitialized iterative sparse solver.");
-        init_sparse_solver.update_values(&init_sparse_jacobian_vals);
-        match init_sparse_solver.refactor() {
-            Err(err) => {
-                return SolveResult {
-                    iterations,
-                    status: Status::LinearSolveError(err.into()),
+        #[cfg(target_os = "macos")]
+        {
+            init_sparse_solver.update_values(&init_sparse_jacobian_vals);
+            match init_sparse_solver.refactor() {
+                Err(err) => {
+                    return SolveResult {
+                        iterations,
+                        status: Status::LinearSolveError(err.into()),
+                    }
                 }
+                Ok(_) => {}
             }
-            Ok(_) => {}
         }
 
         // let mut merit = |problem: &P, _: &[T], residual: &[T], init_sparse_solver: &mut SparseDirectSolver| {
@@ -969,8 +995,14 @@ where
                     );
                 }
                 LinearSolverWorkspace::Direct(DirectSolver {
-                    j_t_mapping,
-                    j_t,
+                    #[cfg(not(target_os = "macos"))]
+                    j_mapping,
+                    #[cfg(not(target_os = "macos"))]
+                    j,
+                    #[cfg(target_os = "macos")]
+                        j_t_mapping: j_mapping,
+                    #[cfg(target_os = "macos")]
+                        j_t: j,
                     sparse_solver,
                     ..
                 }) => {
@@ -1036,7 +1068,7 @@ where
 
                     //// Zero out Jacobian.
                     //j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
-                    j_t.storage_mut().iter_mut().for_each(|x| *x = T::zero());
+                    j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
 
                     // Update the Jacobian matrix.
                     // for (&pos, &j_val) in j_mapping.iter().zip(j_vals.iter()) {
@@ -1044,15 +1076,15 @@ where
                     //         j.storage_mut()[pos] += j_val;
                     //     }
                     // }
-                    for (&pos, &j_val) in j_t_mapping.iter().zip(sparse_jacobian.j_vals.iter()) {
+                    for (&pos, &j_val) in j_mapping.iter().zip(sparse_jacobian.j_vals.iter()) {
                         if let Some(pos) = pos.into_option() {
-                            j_t.storage_mut()[pos] += j_val;
+                            j.storage_mut()[pos] += j_val;
                         }
                     }
                     let sparse_solver = sparse_solver
                         .borrow_mut()
                         .expect("Uninitialized iterative sparse solver.");
-                    let result = sparse_solver.solve_with_values(&r, j_t.storage());
+                    let result = sparse_solver.solve_with_values(&r, j.storage());
                     let r64 = match result {
                         Err(err) => {
                             break SolveResult {

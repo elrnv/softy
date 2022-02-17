@@ -17,7 +17,7 @@ rpath = false
 
 [patch.crates-io]
 autodiff = {git = "https://github.com/elrnv/autodiff.git"}
-meshx = { version = "0.2", git = "https://github.com/elrnv/meshx.git" }
+meshx = { version = "0.3", git = "https://github.com/elrnv/meshx.git" }
 vtkio = { git = "https://github.com/elrnv/vtkio.git", branch = "no-lzma" }
 
 [patch.'https://github.com/Andlon/mkl-sys']

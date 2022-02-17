@@ -13,7 +13,7 @@ use flatk::{
 use geo::attrib::Attrib;
 use geo::index::CheckedIndex;
 use geo::mesh::VertexMesh;
-use geo::{NumVertices, VertexIndex};
+use geo::topology::{NumVertices, VertexIndex};
 use implicits::{KernelType, QueryTopo};
 use lazycell::LazyCell;
 use num_traits::Zero;
@@ -2282,7 +2282,7 @@ mod tests {
     use geo::mesh::builder::{AxisPlaneOrientation, GridBuilder, PlatonicSolidBuilder};
     use geo::mesh::Mesh;
     use geo::ops::{Rotate, Scale, Translate};
-    use geo::{CellIndex, FaceIndex, NumCells, NumFaces};
+    use geo::topology::{CellIndex, FaceIndex, NumCells, NumFaces};
 
     #[test]
     fn contact_penalty_derivative() {

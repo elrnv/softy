@@ -1,4 +1,3 @@
-use std::borrow::BorrowMut;
 use std::cell::{Ref, RefCell, RefMut};
 
 use crate::nl_fem::Timings;

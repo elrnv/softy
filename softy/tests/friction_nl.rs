@@ -5,7 +5,7 @@ use geo::attrib::Attrib;
 use geo::mesh::builder::*;
 use geo::mesh::{VertexMesh, VertexPositions};
 use geo::ops::transform::*;
-use geo::{CellIndex, FaceIndex, NumCells, NumFaces, NumVertices, VertexIndex};
+use geo::topology::{CellIndex, FaceIndex, NumCells, NumFaces, NumVertices, VertexIndex};
 use num_traits::Zero;
 use softy::nl_fem::*;
 use softy::Error;

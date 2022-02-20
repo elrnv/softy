@@ -55,13 +55,13 @@ fn beam() -> Result<(), Error> {
         .set_mesh(Mesh::from(mesh))
         .set_materials(vec![material.into()])
         .build::<f64>()?;
-    geo::io::save_mesh(&solver.mesh(), &format!("out/beam/beam{}.vtk", 0))?;
+    // geo::io::save_mesh(&solver.mesh(), &format!("out/beam/beam{}.vtk", 0))?;
     let mut iterations = Vec::new();
     for _i in 0..200 {
         let result = solver.step()?;
         iterations.push(result.iterations);
         assert_eq!(result.status, Status::Success);
-        geo::io::save_mesh(&solver.mesh(), &format!("out/beam/beam{}.vtk", _i + 1))?;
+        // geo::io::save_mesh(&solver.mesh(), &format!("out/beam/beam{}.vtk", _i + 1))?;
     }
     eprintln!("iterations: {:?}", iterations);
     Ok(())

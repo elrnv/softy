@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::convert::TryFrom;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
@@ -265,6 +264,7 @@ pub struct SparseDirectSolver {
 #[cfg(target_os = "macos")]
 // Given a transpose matrix in CSR, returns a new CSC sparse matrix with the same sparsity pattern.
 fn new_sparse<T: Real>(m: DSMatrixView<T>, transposed: bool) -> SparseMatrixF64<'static> {
+    use std::convert::TryFrom;
     let (num_rows, num_cols) = if transposed {
         (m.num_cols(), m.num_rows())
     } else {
@@ -390,17 +390,13 @@ impl SparseDirectSolver {
         r: &[T],
         values: &[T],
     ) -> Result<&[f64], SparseDirectSolveError> {
-        let t_begin = Instant::now();
         // Update values and refactor
         self.update_rhs(&r);
-        let t_update = Instant::now();
         let values: Vec<_> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
         self.solver
-            .refactor(values.as_slice(), mkl::dss::Definiteness::Indefinite);
-        let t_factor = Instant::now();
+            .refactor(values.as_slice(), mkl::dss::Definiteness::Indefinite)?;
         self.solver
             .solve_into(&mut self.sol, &mut self.buf, &mut self.r64)?;
-        let t_end = Instant::now();
         Ok(&self.sol)
     }
 
@@ -1128,7 +1124,6 @@ where
             // Update previous step.
             x_prev.copy_from_slice(x);
 
-            let t_begin_ls = Instant::now();
             let rho = params.line_search.step_factor();
 
             // Take the full step

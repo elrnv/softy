@@ -2351,7 +2351,7 @@ mod tests {
         let q_large = h * quadratic_sliding_profile(h, 0.001);
         assert!(q_large > 0.9);
         let s_large = h * stabilized_sliding_profile(h, 0.001);
-        assert!(q_large > 0.9);
+        assert!(s_large > 0.9);
     }
 
     // Validate that the friction Jacobian is correct.

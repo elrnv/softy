@@ -3,16 +3,16 @@
 // TODO: Save only fixed vertices.
 // TODO: Enable more sophisticated interpolation.
 
-use std::collections::HashMap;
 use flatk::IntoStorage;
+use std::collections::HashMap;
 
-use serde::{Serialize, Deserialize};
-use thiserror::Error;
-use geo::topology::{CellIndex, VertexIndex};
 use geo::attrib::Attrib;
+use geo::topology::{CellIndex, VertexIndex};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
+use crate::nl_fem::{SimParams, SolveResult, SolverBuilder};
 use crate::{FrictionalContactParams, Material, Mesh};
-use crate::nl_fem::{SimParams, SolverBuilder, SolveResult};
 
 #[derive(Debug, Error)]
 pub enum SceneError {
@@ -50,9 +50,9 @@ impl Attribute {
             Attribute::I8(v)
         } else if let Ok(v) = attrib.direct_clone_into_vec::<usize>() {
             Attribute::Usize(v)
-        } else if let Ok(v) = attrib.direct_clone_into_vec::<[f32;3]>() {
+        } else if let Ok(v) = attrib.direct_clone_into_vec::<[f32; 3]>() {
             Attribute::F32x3(v)
-        } else if let Ok(v) = attrib.direct_clone_into_vec::<[f64;3]>() {
+        } else if let Ok(v) = attrib.direct_clone_into_vec::<[f64; 3]>() {
             Attribute::F64x3(v)
         } else {
             return None;
@@ -90,7 +90,7 @@ impl From<CellType> for geo::mesh::CellType {
     fn from(t: CellType) -> Self {
         match t {
             CellType::Tetrahedron => geo::mesh::CellType::Tetrahedron,
-            CellType::Triangle =>    geo::mesh::CellType::Triangle,
+            CellType::Triangle => geo::mesh::CellType::Triangle,
         }
     }
 }
@@ -135,13 +135,25 @@ impl Scene {
     ///
     /// This function sets the initial keyframe to be the mesh vertex positions.
     pub fn new(mesh: Mesh) -> Self {
-        let vertex_attributes = mesh.vertex_attributes.iter().filter_map(|(name, attrib)| {
-            Attribute::from_attrib_data(&attrib.data).map(|attrib| (name.clone(), attrib))
-        }).collect();
-        let cell_attributes = mesh.cell_attributes.iter().filter_map(|(name, attrib)| {
-            Attribute::from_attrib_data(&attrib.data).map(|attrib| (name.clone(), attrib))
-        }).collect();
-        let index_blocks: Vec<_> = mesh.indices.clump_iter().map(|chunked| chunked.into_storage().to_vec()).collect();
+        let vertex_attributes = mesh
+            .vertex_attributes
+            .iter()
+            .filter_map(|(name, attrib)| {
+                Attribute::from_attrib_data(&attrib.data).map(|attrib| (name.clone(), attrib))
+            })
+            .collect();
+        let cell_attributes = mesh
+            .cell_attributes
+            .iter()
+            .filter_map(|(name, attrib)| {
+                Attribute::from_attrib_data(&attrib.data).map(|attrib| (name.clone(), attrib))
+            })
+            .collect();
+        let index_blocks: Vec<_> = mesh
+            .indices
+            .clump_iter()
+            .map(|chunked| chunked.into_storage().to_vec())
+            .collect();
         let mesh_topo = MeshTopo {
             indices: index_blocks,
             types: mesh.types.iter().map(|&t| CellType::from(t)).collect(),
@@ -151,11 +163,11 @@ impl Scene {
         let mut animation = Vec::new();
         animation.push(KeyframedVertexPositions {
             frame: 0,
-            positions: mesh.vertex_positions.into_vec()
+            positions: mesh.vertex_positions.into_vec(),
         });
         Scene {
             mesh_topo,
-            animation
+            animation,
         }
     }
 
@@ -171,7 +183,11 @@ impl Scene {
     ///   - `frames` and `positions` have different sizes,
     ///   - they are empty, or
     ///   - `frames` is not monotonically increasing.
-    pub fn set_keyframes(&mut self, frames: impl AsRef<[u64]>, positions: impl Into<Vec<Vec<[f64; 3]>>>) -> &mut Self {
+    pub fn set_keyframes(
+        &mut self,
+        frames: impl AsRef<[u64]>,
+        positions: impl Into<Vec<Vec<[f64; 3]>>>,
+    ) -> &mut Self {
         let frames = frames.as_ref();
         let positions = positions.into();
 
@@ -189,12 +205,12 @@ impl Scene {
             self.animation.truncate(1);
         }
 
-        self.animation.extend(frames.iter().zip(positions.into_iter()).map(|(&frame, positions)|
-            KeyframedVertexPositions {
-                frame,
-                positions
-            }
-        ));
+        self.animation.extend(
+            frames
+                .iter()
+                .zip(positions.into_iter())
+                .map(|(&frame, positions)| KeyframedVertexPositions { frame, positions }),
+        );
         self
     }
 
@@ -205,7 +221,8 @@ impl Scene {
         let last = self.animation.last_mut().unwrap();
         if frame > last.frame {
             // Insert at the end. Presumably this is the most common scenario.
-            self.animation.push(KeyframedVertexPositions { frame, positions });
+            self.animation
+                .push(KeyframedVertexPositions { frame, positions });
         } else if frame == last.frame {
             // Times coincide, overwrite the last one
             last.positions = positions;
@@ -213,7 +230,9 @@ impl Scene {
             // Insert in the middle, or overwrite previous keyframe.
             match self.animation.binary_search_by_key(&frame, |tp| tp.frame) {
                 Ok(pos) => self.animation[pos].positions = positions,
-                Err(pos) => self.animation.insert(pos, KeyframedVertexPositions { frame, positions }),
+                Err(pos) => self
+                    .animation
+                    .insert(pos, KeyframedVertexPositions { frame, positions }),
             }
         }
         self
@@ -221,11 +240,23 @@ impl Scene {
 
     /// Constructs a mesh from the stored topology and vertex position data for the first frame.
     fn build_mesh(&self) -> Result<Mesh, SceneError> {
-        let types: Vec<_> = self.mesh_topo.types.iter().map(|&x| geo::mesh::CellType::from(x)).collect();
-        let mut mesh = Mesh::from_cells_and_types(self.animation.first().unwrap().positions.clone(), self.mesh_topo.indices.clone(), types);
+        let types: Vec<_> = self
+            .mesh_topo
+            .types
+            .iter()
+            .map(|&x| geo::mesh::CellType::from(x))
+            .collect();
+        let mut mesh = Mesh::from_cells_and_types(
+            self.animation.first().unwrap().positions.clone(),
+            self.mesh_topo.indices.clone(),
+            types,
+        );
 
         for (name, attrib) in self.mesh_topo.vertex_attributes.iter() {
-            mesh.insert_attrib::<VertexIndex>(name, attrib.clone().into_geo_attrib::<VertexIndex>())?;
+            mesh.insert_attrib::<VertexIndex>(
+                name,
+                attrib.clone().into_geo_attrib::<VertexIndex>(),
+            )?;
         }
         for (name, attrib) in self.mesh_topo.cell_attributes.iter() {
             mesh.insert_attrib::<CellIndex>(name, attrib.clone().into_geo_attrib::<CellIndex>())?;
@@ -266,7 +297,11 @@ impl SceneConfig {
     ///   - `frames` and `positions` have different sizes,
     ///   - they are empty, or
     ///   - `frames` is not monotonically increasing.
-    pub fn set_animation(&mut self, frames: impl AsRef<[u64]>, positions: impl Into<Vec<Vec<[f64; 3]>>>) -> &mut Self {
+    pub fn set_animation(
+        &mut self,
+        frames: impl AsRef<[u64]>,
+        positions: impl Into<Vec<Vec<[f64; 3]>>>,
+    ) -> &mut Self {
         self.scene.set_keyframes(frames, positions);
         self
     }
@@ -310,38 +345,48 @@ impl SceneConfig {
     /// Saves this scene configuration to the given path interpreted as a RON file.
     pub fn save_as_ron(&self, path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
         let path = path.as_ref();
-        std::fs::File::create(path).map_err(SceneError::from).and_then(|f| {
-            ron::ser::to_writer_pretty(f, self, ron::ser::PrettyConfig::new()).map_err(|_| SceneError::Serialize)
-        }).into()
+        std::fs::File::create(path)
+            .map_err(SceneError::from)
+            .and_then(|f| {
+                ron::ser::to_writer_pretty(f, self, ron::ser::PrettyConfig::new())
+                    .map_err(|_| SceneError::Serialize)
+            })
+            .into()
     }
 
     /// Saves this scene configuration to the given path interpreted as a binary file using `bincode`.
-    #[cfg(feature="bincode")]
+    #[cfg(feature = "bincode")]
     pub fn save_as_bin(&self, path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
         let path = path.as_ref();
-        std::fs::File::create(path).map_err(SceneError::from).and_then(|f| {
-            bincode::serialize_into(f, self).map_err(|_| SceneError::Serialize)
-        }).into()
+        std::fs::File::create(path)
+            .map_err(SceneError::from)
+            .and_then(|f| bincode::serialize_into(f, self).map_err(|_| SceneError::Serialize))
+            .into()
     }
 
     /// Loads the scene from a `bincode` binary file.
-    #[cfg(feature="bincode")]
+    #[cfg(feature = "bincode")]
     pub fn load_from_bin(path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
         let path = path.as_ref();
-        std::fs::File::open(path).map_err(SceneError::from).and_then(|f| {
-            bincode::deserialize_from(f).map_err(|_| SceneError::Serialize)
-        }).into()
+        std::fs::File::open(path)
+            .map_err(SceneError::from)
+            .and_then(|f| bincode::deserialize_from(f).map_err(|_| SceneError::Serialize))
+            .into()
     }
 
     /// Runs a simulation on this scene.
     pub fn run(&self, steps: u64) -> Result<(), SceneError> {
-        self.run_with(steps, |_,_,_| { true })
+        self.run_with(steps, |_, _, _| true)
     }
 
     /// Runs a simulation on this scene.
     ///
     /// If callback returns `false`, the simulation is interrupted.
-    pub fn run_with(&self, steps: u64, callback: impl Fn(u64, SolveResult, Mesh) -> bool) -> Result<(), SceneError> {
+    pub fn run_with(
+        &self,
+        steps: u64,
+        callback: impl Fn(u64, SolveResult, Mesh) -> bool,
+    ) -> Result<(), SceneError> {
         let mesh = self.scene.build_mesh()?;
         let mut solver_builder = SolverBuilder::new(self.sim_params.clone());
         solver_builder
@@ -381,7 +426,7 @@ impl SceneConfig {
                 if next_keyframe > frame {
                     let prev_pos = &self.scene.animation[keyframe_index - 1].positions;
                     let t = (frame - prev_keyframe) as f64 / (next_keyframe - prev_keyframe) as f64;
-                    for (out_p, prev, ) in animated_positions.iter_mut().zip(prev_pos.iter()) {
+                    for (out_p, prev) in animated_positions.iter_mut().zip(prev_pos.iter()) {
                         for i in 0..3 {
                             out_p[i] *= t;
                             out_p[i] += prev[i] * (t - 1.0);

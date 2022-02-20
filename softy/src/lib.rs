@@ -13,7 +13,6 @@ macro_rules! add_time {
     }};
 }
 
-pub mod scene;
 mod attrib_defines;
 mod constraint;
 mod constraints;
@@ -26,6 +25,7 @@ pub mod io;
 pub mod mask_iter;
 mod matrix;
 pub mod objects;
+pub mod scene;
 
 // TODO: This should be feature gated. Unfortunately this makes it tedious to
 // run tests without passing the feature explicitly via the `--features` flag.

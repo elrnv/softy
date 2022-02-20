@@ -1,8 +1,8 @@
-use std::path::PathBuf;
 use std::io::Write;
+use std::path::PathBuf;
 
-use structopt::StructOpt;
 use anyhow::Result;
+use structopt::StructOpt;
 
 const ABOUT: &str = "
 Softy is a 3D FEM soft body and cloth simulation engine with two-way frictional contact coupling.";
@@ -51,18 +51,27 @@ pub fn main() -> Result<()> {
     let file_stem = if let Some(file_stem) = opt.output.file_stem() {
         file_stem.to_string_lossy().to_string()
     } else {
-        anyhow::bail!("Missing output file name in output path: {}", opt.output.display())
+        anyhow::bail!(
+            "Missing output file name in output path: {}",
+            opt.output.display()
+        )
     };
     let ext = if let Some(ext) = opt.output.extension().and_then(|x| x.to_str()) {
         ext
     } else {
-        anyhow::bail!("Missing file extension in output path: {}", opt.output.display())
+        anyhow::bail!(
+            "Missing file extension in output path: {}",
+            opt.output.display()
+        )
     };
 
     let config_ext = if let Some(ext) = opt.config.extension().and_then(|x| x.to_str()) {
         ext
     } else {
-        anyhow::bail!("Missing file extension in config path: {}", opt.config.display())
+        anyhow::bail!(
+            "Missing file extension in config path: {}",
+            opt.config.display()
+        )
     };
 
     // Pre-emptively create the log file. This way we can fail early.
@@ -75,7 +84,6 @@ pub fn main() -> Result<()> {
         // "ron" => softy::scene::SceneConfig::load_from_ron(opt.config)?,
         _ => anyhow::bail!("Unsupported config extension: '.{}'", config_ext),
     };
-
 
     match ext {
         "gltf" | "glb" => anyhow::bail!("glTF output is not currently supported"),
@@ -101,7 +109,8 @@ pub fn main() -> Result<()> {
                     }
                     let mut out_file_name = file_stem.clone();
                     out_file_name.push_str(&format!("{}", frame));
-                    geo::io::save_mesh(&mesh, out_path.join(out_file_name).with_extension(ext)).is_ok()
+                    geo::io::save_mesh(&mesh, out_path.join(out_file_name).with_extension(ext))
+                        .is_ok()
                 })?;
             }
         }

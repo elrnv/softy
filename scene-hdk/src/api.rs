@@ -237,10 +237,7 @@ fn get_frictional_contacts<'a>(
 }
 
 #[inline]
-pub(crate) fn new_scene(
-    mesh: Option<Mesh>,
-    params: SimParams,
-) -> Result<SceneConfig, Error> {
+pub(crate) fn new_scene(mesh: Option<Mesh>, params: SimParams) -> Result<SceneConfig, Error> {
     // Build a basic solver with a solid material.
     let mut scene = if let Some(mesh) = mesh {
         SceneConfig::new((&params).into(), mesh)
@@ -271,10 +268,7 @@ pub(crate) fn add_keyframe(
 }
 
 #[inline]
-pub(crate) fn save(
-    scene: &SceneConfig,
-    path: impl AsRef<std::path::Path>,
-) -> CookResult {
+pub(crate) fn save(scene: &SceneConfig, path: impl AsRef<std::path::Path>) -> CookResult {
     match scene.save_as_bin(path) {
         Ok(()) => CookResult::Success(String::new()),
         Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),

@@ -4,8 +4,8 @@ use rayon::prelude::*;
 
 use crate::Real;
 use num_traits::Float;
+use serde::{Deserialize, Serialize};
 use tensr::*;
-use serde::{Serialize, Deserialize};
 
 use crate::friction::FrictionParams;
 use crate::matrix::MatrixElementIndex;

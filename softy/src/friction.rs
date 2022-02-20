@@ -8,7 +8,7 @@ pub mod proj_solver;
 #[cfg(feature = "optsolver")]
 pub mod solver;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use tensr::{Chunked3, Sparse};
 
 use crate::contact::ContactBasis;

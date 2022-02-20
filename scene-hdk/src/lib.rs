@@ -227,7 +227,6 @@ impl Into<Option<SceneConfig>> for SoftyScene {
     }
 }
 
-
 /// Gets a valid solver and performs one step of the solve.
 impl SoftyScene {
     fn add_keyframe<'a>(
@@ -243,24 +242,19 @@ impl SoftyScene {
             }
         } else {
             hdkrs::interop::CookResult::Error("Missing scene".to_string())
-        }.into();
-        AddKeyframeResult {
-            cook_result
         }
+        .into();
+        AddKeyframeResult { cook_result }
     }
 
     /// Perform one step of the solve given a solver.
-    pub fn save(
-        self: Pin<&SoftyScene>,
-        path: &str,
-    ) -> SaveResult {
+    pub fn save(self: Pin<&SoftyScene>, path: &str) -> SaveResult {
         let cook_result = if let Some(scene) = self.scene.as_ref() {
             api::save(scene, path)
         } else {
             hdkrs::interop::CookResult::Error("Missing scene".to_string())
-        }.into();
-        SaveResult {
-            cook_result
         }
+        .into();
+        SaveResult { cook_result }
     }
 }

@@ -465,7 +465,7 @@ impl<T: Real64> NLProblem<T> {
     }
 
     /// Update the fixed vertex state with the given vertex positions.
-    pub fn update_vertex_positions(&mut self, pos: &[[f64;3]]) -> Result<(), crate::Error> {
+    pub fn update_vertex_positions(&mut self, pos: &[[f64; 3]]) -> Result<(), crate::Error> {
         let new_pos = Chunked3::from_array_slice(pos);
         self.state
             .borrow_mut()

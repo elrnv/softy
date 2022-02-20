@@ -39,6 +39,9 @@ struct Opt {
 }
 
 pub fn main() -> Result<()> {
+    let _ = env_logger::Builder::from_env("SOFTY_LOG")
+        .try_init();
+
     use terminal_size::{terminal_size, Width};
     let app = Opt::clap().set_term_width(if let Some((Width(w), _)) = terminal_size() {
         w as usize
@@ -81,7 +84,8 @@ pub fn main() -> Result<()> {
 
     let scene_config = match config_ext {
         "bin" => softy::scene::SceneConfig::load_from_bin(opt.config)?,
-        // "ron" => softy::scene::SceneConfig::load_from_ron(opt.config)?,
+        "ron" => softy::scene::SceneConfig::load_from_ron(opt.config)?,
+        "json" => softy::scene::SceneConfig::load_from_json(opt.config)?,
         _ => anyhow::bail!("Unsupported config extension: '.{}'", config_ext),
     };
 
@@ -89,7 +93,10 @@ pub fn main() -> Result<()> {
         "gltf" | "glb" => anyhow::bail!("glTF output is not currently supported"),
         "vtu" | "vtk" => {
             let mut indexed_digits = file_stem.rmatch_indices(|x| char::is_ascii_digit(&x));
-            if let Some((prev_i, first_digit)) = indexed_digits.next() {
+            let mut num_digits = 0;
+            let mut first_frame: u64 = 0;
+            if let Some((mut prev_i, first_digit)) = indexed_digits.next() {
+                // Determine the digits of the last numeric value.
                 let mut num_str = format!("{}", first_digit);
                 for (i, d) in indexed_digits {
                     if i == prev_i - 1 {
@@ -97,22 +104,24 @@ pub fn main() -> Result<()> {
                     } else {
                         break;
                     }
+                    prev_i = i;
                 }
-                dbg!(num_str);
-            } else {
-                let out_path = opt.output.parent().unwrap().to_path_buf();
-                let logfile = opt.logfile.as_ref();
-                scene_config.run_with(opt.steps, |frame, result, mesh| {
-                    if let Some(ref logfile) = logfile {
-                        let mut f = std::fs::File::options().append(true).open(logfile).unwrap();
-                        writeln!(f, "\nFrame {}:\n{}", frame, result).unwrap();
-                    }
-                    let mut out_file_name = file_stem.clone();
-                    out_file_name.push_str(&format!("{}", frame));
-                    geo::io::save_mesh(&mesh, out_path.join(out_file_name).with_extension(ext))
-                        .is_ok()
-                })?;
+                let num_str = num_str.chars().rev().collect::<String>();
+                num_digits = num_str.len();
+                first_frame = num_str.parse()?;
             }
+            let out_path = opt.output.parent().unwrap().to_path_buf();
+            let logfile = opt.logfile.as_ref();
+            scene_config.run_with(opt.steps, |frame, result, mesh| {
+                if let Some(ref logfile) = logfile {
+                    let mut f = std::fs::File::options().append(true).open(logfile).unwrap();
+                    writeln!(f, "\nFrame {}:\n{}", frame, result).unwrap();
+                }
+                let mut out_file_name = file_stem.clone();
+                out_file_name.push_str(&format!("{:01$}", first_frame + frame, num_digits));
+                geo::io::save_mesh(&mesh, out_path.join(out_file_name).with_extension(ext))
+                    .is_ok()
+            })?;
         }
         _ => anyhow::bail!("Unsupported output file extension: '.{}'", ext),
     }

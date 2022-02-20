@@ -11,5 +11,6 @@ path = "src/main.rs"
 structopt = "0.3"
 anyhow = "1.0"
 terminal_size = "0.1"
-softy = { path = "../softy", features = ["bincode"] }
+env_logger = "0.9"
 geo = { path = "../geo" }
+softy = { path = "../softy", features = ["bincode", "serde_json"] }

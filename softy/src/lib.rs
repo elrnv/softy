@@ -13,6 +13,7 @@ macro_rules! add_time {
     }};
 }
 
+pub mod scene;
 mod attrib_defines;
 mod constraint;
 mod constraints;

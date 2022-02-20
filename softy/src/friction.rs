@@ -8,9 +8,11 @@ pub mod proj_solver;
 #[cfg(feature = "optsolver")]
 pub mod solver;
 
+use serde::{Serialize, Deserialize};
+use tensr::{Chunked3, Sparse};
+
 use crate::contact::ContactBasis;
 use crate::Real;
-use tensr::{Chunked3, Sparse};
 //pub use elastic_solver::*;
 //pub use polar_solver::*;
 
@@ -25,7 +27,7 @@ pub struct FrictionSolveResult {
     pub iterations: u32,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FrictionParams {
     pub smoothing_weight: f64,
     pub friction_forwarding: f64,

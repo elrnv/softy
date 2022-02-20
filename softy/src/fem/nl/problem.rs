@@ -459,9 +459,14 @@ impl<T: Real64> NLProblem<T> {
     //            .unwrap();
     //        }
 
-    /// Update the state with the given points.
+    /// Update the fixed vertex state with the given points.
     pub fn update_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
-        let new_pos = Chunked3::from_array_slice(pts.vertex_positions());
+        self.update_vertex_positions(pts.vertex_positions())
+    }
+
+    /// Update the fixed vertex state with the given vertex positions.
+    pub fn update_vertex_positions(&mut self, pos: &[[f64;3]]) -> Result<(), crate::Error> {
+        let new_pos = Chunked3::from_array_slice(pos);
         self.state
             .borrow_mut()
             .update_fixed_vertices(new_pos.view(), self.time_step())
@@ -2957,7 +2962,7 @@ impl<T: Real64> NLProblem<T> {
             jac
         };
 
-        self.check_objective_gradient(x, perturb_initial);
+        self.check_objective_gradient(x, perturb_initial)?;
 
         // Check Jacobian and compute autodiff Jacobian.
 

@@ -763,7 +763,6 @@ where
         // let mut jprod_ls_time = Duration::new(0, 0);
         let mut residual_time = Duration::new(0, 0);
         let mut assist_time = Duration::new(0, 0);
-        let mut total_solve_time = Duration::new(0, 0);
         self.problem.timings().clear();
         let t_begin_solve = Instant::now();
 
@@ -1370,7 +1369,7 @@ where
             merit_cur = merit_next;
         };
 
-        total_solve_time = Instant::now() - t_begin_solve;
+        let total_solve_time = Instant::now() - t_begin_solve;
 
         log::debug!("Line search assist time: {}ms", assist_time.as_millis());
         log::debug!(

@@ -882,6 +882,11 @@ where
         self.problem_mut().update_vertices(pts)
     }
 
+    /// Update the solid meshes with the given points.
+    pub fn update_vertex_positions(&mut self, pos: impl AsRef<[[f64; 3]]>) -> Result<(), Error> {
+        self.problem_mut().update_vertex_positions(pos.as_ref())
+    }
+
     /// Returns the solved positions of the vertices in original order.
     pub fn vertex_positions(&self) -> Vec<[T; 3]> {
         self.problem().vertex_positions()

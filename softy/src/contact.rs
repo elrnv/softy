@@ -5,20 +5,21 @@ use rayon::prelude::*;
 use crate::Real;
 use num_traits::Float;
 use tensr::*;
+use serde::{Serialize, Deserialize};
 
 use crate::friction::FrictionParams;
 use crate::matrix::MatrixElementIndex;
 use crate::Index;
 pub use solver::ContactSolver;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContactType {
     LinearizedPoint,
     Point,
     PenaltyPoint,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FrictionalContactParams {
     pub kernel: implicits::KernelType,
     pub contact_type: ContactType,

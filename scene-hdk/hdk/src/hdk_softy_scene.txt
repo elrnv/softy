@@ -1,0 +1,23 @@
+#type: node
+#context: sop
+#internal: softy_scene
+#largeicon: /nodes/sop/SOP_hdk_softy_scene.png
+
+#tags: file
+
+= Softy Scene =
+
+""" Saves an input animation sequence to be used by Softy. """
+
+@parameters
+
+Scene File:
+    #channels: /scenefile
+    Path to the output scene file.
+
+Frame Range:
+    #channels: /framerange
+    The range of frames defining the animation sequence to be saved.
+
+@related
+- [Node:sop/softy]

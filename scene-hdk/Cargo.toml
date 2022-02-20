@@ -1,0 +1,24 @@
+[package]
+name = "scene-hdk"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+edition = "2021"
+
+[lib]
+name = "scenehdk"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+geo = { path = "../geo" }
+utils = { path = "../utils" }
+softy = { path = "../softy" }
+libc = "*"
+hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }
+log = "0.4"
+env_logger = "0.9"
+cxx = "1.0"
+thiserror = "1.0.16"
+
+[build-dependencies]
+cxx-build = "1.0"
+cmake = { git = "https://github.com/elrnv/cmake-rs.git" }

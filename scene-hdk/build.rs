@@ -1,7 +1,7 @@
 use cxx_build::CFG;
 
 fn main() {
-    CFG.include_prefix = "softy";
+    CFG.include_prefix = "scene";
 
     let build = cxx_build::bridge("src/lib.rs");
     cmake::Config::new(".")

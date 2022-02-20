@@ -194,6 +194,7 @@ fn get_frictional_contacts<'a>(
                 contact_offset,
                 use_fixed,
                 dynamic_cof,
+                friction_profile,
             } = *frictional_contact;
             let radius_multiplier = f64::from(radius_multiplier);
             let tolerance = f64::from(smoothness_tolerance);
@@ -224,6 +225,10 @@ fn get_frictional_contacts<'a>(
                             inner_iterations: 0,
                             tolerance: 0.0,
                             print_level: 0,
+                            friction_profile: match friction_profile {
+                                FrictionProfile::Quadratic => softy::FrictionProfile::Quadratic,
+                                _ => softy::FrictionProfile::Stabilized,
+                            },
                         })
                     },
                 },
@@ -239,7 +244,8 @@ fn get_frictional_contacts<'a>(
 #[inline]
 pub(crate) fn new_scene(mesh: Option<Mesh>, params: SimParams) -> Result<SceneConfig, Error> {
     // Build a basic solver with a solid material.
-    let mut scene = if let Some(mesh) = mesh {
+    let mut scene = if let Some(mut mesh) = mesh {
+        mesh.reverse_if(|_, cell_type| matches!(cell_type, geo::mesh::CellType::Triangle));
         SceneConfig::new((&params).into(), mesh)
     } else {
         return Err(Error::MissingMesh);
@@ -269,8 +275,23 @@ pub(crate) fn add_keyframe(
 
 #[inline]
 pub(crate) fn save(scene: &SceneConfig, path: impl AsRef<std::path::Path>) -> CookResult {
-    match scene.save_as_bin(path) {
-        Ok(()) => CookResult::Success(String::new()),
-        Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
+    let path = path.as_ref();
+    match path.extension().and_then(|x| x.to_str()) {
+        Some("bin") => match scene.save_as_bin(path) {
+            Ok(()) => CookResult::Success(String::new()),
+            Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
+        },
+        Some("ron") => match scene.save_as_ron(path) {
+            Ok(()) => CookResult::Success(String::new()),
+            Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
+        },
+        Some("json") => match scene.save_as_json(path) {
+            Ok(()) => CookResult::Success(String::new()),
+            Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
+        },
+        Some(ext) => CookResult::Error(format!("Unsupported scene file extension: '.{}'", ext)),
+        None => CookResult::Error(format!(
+            "Scene file is missing an extension: one of '.bin', '.ron' or '.json'."
+        )),
     }
 }

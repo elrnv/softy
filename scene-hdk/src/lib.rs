@@ -57,6 +57,12 @@ mod ffi {
     }
 
     #[derive(Debug)]
+    pub enum FrictionProfile {
+        Stabilized,
+        Quadratic,
+    }
+
+    #[derive(Debug)]
     pub struct MaterialProperties {
         pub object_type: ObjectType,
         pub elasticity_model: ElasticityModel,
@@ -81,6 +87,7 @@ mod ffi {
         pub dynamic_cof: f32,
         // pub friction_tolerance: f32,
         // pub friction_inner_iterations: u32,
+        pub friction_profile: FrictionProfile,
     }
 
     #[derive(Debug)]

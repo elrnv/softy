@@ -11,7 +11,7 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 geo = { path = "../geo" }
 utils = { path = "../utils" }
-softy = { path = "../softy" }
+softy = { path = "../softy", features = ["bincode", "serde_json"] }
 libc = "*"
 hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }
 log = "0.4"

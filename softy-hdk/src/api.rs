@@ -407,6 +407,7 @@ fn get_frictional_contacts<'a>(
                 smoothing_weight,
                 friction_forwarding,
                 dynamic_cof,
+                friction_profile,
                 friction_tolerance,
                 friction_inner_iterations,
             } = *frictional_contact;
@@ -443,6 +444,10 @@ fn get_frictional_contacts<'a>(
                             inner_iterations: friction_inner_iterations as usize,
                             tolerance: f64::from(friction_tolerance),
                             print_level: 0,
+                            friction_profile: match friction_profile {
+                                FrictionProfile::Quadratic => softy::FrictionProfile::Quadratic,
+                                _ => softy::FrictionProfile::Stabilized,
+                            }
                         })
                     },
                 },

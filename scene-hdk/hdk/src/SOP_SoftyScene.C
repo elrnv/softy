@@ -445,6 +445,17 @@ static const char *theDsFile = R"THEDSFILE(
             default { "5" }
             range { 0 50 }
         }
+        parm {
+            name "frictionprofile"
+            cppname "FrictionProfile"
+            label "Friction Profile"
+            type ordinal
+            default { "0" }
+            menu {
+                "stabilized" "Stabilized"
+                "quadratic" "Quadratic"
+            }
+        }
     }
 
 }
@@ -646,6 +657,15 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftySceneParms &so
         fc_params.contact_offset = sop_fc.contactoffset;
         fc_params.use_fixed = sop_fc.usefixed;
         fc_params.dynamic_cof = sop_fc.dynamiccof;
+        switch (static_cast<SOP_SoftySceneEnums::FrictionProfile>(sopparms.getFrictionProfile()))
+        {
+            case SOP_SoftySceneEnums::FrictionProfile::STABILIZED:
+                fc_params.friction_profile = softy::FrictionProfile::Stabilized;
+                break;
+            case SOP_SoftySceneEnums::FrictionProfile::QUADRATIC:
+                fc_params.friction_profile = softy::FrictionProfile::Quadratic;
+                break;
+        }
         sim_params.frictional_contacts.push_back(fc_params);
     }
 

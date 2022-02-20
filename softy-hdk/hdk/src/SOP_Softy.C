@@ -535,6 +535,17 @@ static const char *theDsFile = R"THEDSFILE(
             range { 0 50 }
             hidewhen "{ solvertype == ipopt }"
         }
+        parm {
+            name "frictionprofile"
+            cppname "FrictionProfile"
+            label "Friction Profile"
+            type ordinal
+            default { "0" }
+            menu {
+                "stabilized" "Stabilized"
+                "quadratic" "Quadratic"
+            }
+        }
 
         groupcollapsible {
             name    "ipoptoptions"
@@ -805,6 +816,15 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
             fc_params.friction_forwarding = sop_fc.frictionforwarding;
             fc_params.dynamic_cof = sop_fc.dynamiccof;
             fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
+            switch (static_cast<SOP_SoftyEnums::FrictionProfile>(sopparms.getFrictionProfile()))
+            {
+                case SOP_SoftyEnums::FrictionProfile::STABILIZED:
+                    fc_params.friction_profile = softy::FrictionProfile::Stabilized;
+                    break;
+                case SOP_SoftyEnums::FrictionProfile::QUADRATIC:
+                    fc_params.friction_profile = softy::FrictionProfile::Quadratic;
+                    break;
+            }
         }
         else
         {

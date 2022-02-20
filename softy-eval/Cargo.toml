@@ -1,0 +1,15 @@
+[package]
+name = "softy-eval"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "softy"
+path = "src/main.rs"
+
+[dependencies]
+structopt = "0.3"
+anyhow = "1.0"
+terminal_size = "0.1"
+softy = { path = "../softy", features = ["bincode"] }
+geo = { path = "../geo" }

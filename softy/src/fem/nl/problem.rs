@@ -1,5 +1,5 @@
 use std::cell::{Ref, RefCell, RefMut};
-use std::time::Duration;
+use std::time::{Instant};
 
 use autodiff as ad;
 use flatk::*;
@@ -17,7 +17,7 @@ use crate::contact::ContactJacobianView;
 use crate::energy::{Energy, EnergyGradient, EnergyHessian, EnergyHessianTopology};
 use crate::energy_models::{gravity::*, inertia::*};
 use crate::matrix::*;
-use crate::nl_fem::{state, TimeIntegration};
+use crate::nl_fem::{ResidualTimings, state, TimeIntegration};
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
 use crate::Mesh;
@@ -112,23 +112,6 @@ pub struct LineSearchWorkspace<T> {
     pub f2vtx: Chunked3<Vec<T>>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Timings {
-    pub energy_gradient: Duration,
-    pub prepare_contact: Duration,
-    pub contact_force: Duration,
-    pub friction_force: Duration,
-}
-
-impl Timings {
-    pub fn clear(&mut self) {
-        self.energy_gradient = Duration::new(0, 0);
-        self.prepare_contact = Duration::new(0, 0);
-        self.contact_force = Duration::new(0, 0);
-        self.friction_force = Duration::new(0, 0);
-    }
-}
-
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
 #[derive(Clone, Debug)]
@@ -183,7 +166,7 @@ pub struct NLProblem<T: Real> {
 
     pub debug_friction: RefCell<Vec<T>>,
 
-    pub timings: RefCell<Timings>,
+    pub timings: RefCell<ResidualTimings>,
 }
 
 impl<T: Real> NLProblem<T> {
@@ -1611,7 +1594,7 @@ impl<T: Real64> NLProblem<T> {
         //let epsilon = self.epsilon as f32;
 
         // Compute contact potential and lagged friction potential
-        let ResidualState { cur, next, r: _r } = state;
+        let ResidualState { next, .. } = state;
         for fc in frictional_contacts.iter() {
             let mut fc_constraint = fc.constraint.borrow_mut();
             fc_constraint.update_state(Chunked3::from_flat(next.pos));
@@ -2091,7 +2074,7 @@ impl<T: Real64> NLProblem<T> {
                 .count();
         }
 
-        let State { vtx, .. } = &*self.state.borrow();
+        // let State { vtx, .. } = &*self.state.borrow();
 
         // Add Non-symmetric friction Jacobian entries.
         for fc in self.frictional_contact_constraints.iter() {
@@ -2426,7 +2409,7 @@ impl<T: Real64> NLProblem<T> {
 
 /// An api for a non-linear problem.
 pub trait NonLinearProblem<T: Real> {
-    fn timings(&self) -> RefMut<'_, Timings>;
+    fn residual_timings(&self) -> RefMut<'_, ResidualTimings>;
 
     fn debug_friction(&self) -> Ref<'_, Vec<T>>;
 
@@ -2530,7 +2513,7 @@ pub trait MixedComplementarityProblem<T: Real>: NonLinearProblem<T> {
 
 /// Prepare the problem for Newton iterations.
 impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
-    fn timings(&self) -> RefMut<'_, Timings> {
+    fn residual_timings(&self) -> RefMut<'_, ResidualTimings> {
         self.timings.borrow_mut()
     }
     fn debug_friction(&self) -> Ref<'_, Vec<T>> {
@@ -2661,7 +2644,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         }
 
         let state = &*self.state.borrow_mut();
-        let vel_next = state.vtx.next.vel.view();
+        // let vel_next = state.vtx.next.vel.view();
         assert_eq!(vel.len(), search_dir.len());
         for fc in self.frictional_contact_constraints.iter() {
             let mut fc_constraint = fc.constraint.borrow_mut();
@@ -2676,7 +2659,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
                     state.vtx.cur.pos.view(),
                     pos_next.view(),
                     self.delta as f32,
-                    self.epsilon as f32,
+                    // self.epsilon as f32,
                 ),
             );
         }
@@ -2779,6 +2762,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
     #[inline]
     fn residual(&self, dq: &[T], r: &mut [T]) {
+        let t_begin = Instant::now();
         {
             self.integrate_step(dq);
             let state = &mut *self.state.borrow_mut();
@@ -2792,6 +2776,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         // Transfer residual to degrees of freedom.
         let state = &*self.state.borrow();
         state.dof_residual_from_vertices(r);
+        self.timings.borrow_mut().total += Instant::now() - t_begin;
     }
 
     #[inline]
@@ -2916,7 +2901,7 @@ impl<T: Real64> NLProblem<T> {
                 f2vtx: Chunked3::default(),
                 dq: Vec::new(),
             }),
-            timings: RefCell::new(Timings::default()),
+            timings: RefCell::new(ResidualTimings::default()),
         }
     }
 
@@ -2990,7 +2975,7 @@ impl<T: Real64> NLProblem<T> {
                     jac[row][col],
                     r[row].deriv(),
                     max_relative = 1e-6,
-                    epsilon = 1e-7, // * avg_deriv
+                    epsilon = 1e-7 * avg_deriv
                 );
                 jac_ad[row][col] = r[row].deriv();
                 if !res {

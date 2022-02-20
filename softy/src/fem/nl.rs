@@ -10,6 +10,8 @@ pub mod trust_region;
 
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
+use std::fmt::{Display, Formatter};
+use std::time::Duration;
 use thiserror::Error;
 
 pub use mcp::*;
@@ -103,13 +105,92 @@ pub enum Status {
     Interrupted,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct ResidualTimings {
+    pub total: Duration,
+    pub energy_gradient: Duration,
+    pub prepare_contact: Duration,
+    pub contact_force: Duration,
+    pub friction_force: Duration,
+}
+
+impl ResidualTimings {
+    pub fn clear(&mut self) {
+        self.total = Duration::new(0, 0);
+        self.energy_gradient = Duration::new(0, 0);
+        self.prepare_contact = Duration::new(0, 0);
+        self.contact_force = Duration::new(0, 0);
+        self.friction_force = Duration::new(0, 0);
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct Timings {
+    line_search_assist: Duration,
+    residual: ResidualTimings,
+    linear_solve: Duration,
+    jacobian_product: Duration,
+    line_search: Duration,
+    total: Duration,
+}
+
+impl Display for Timings {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Line search assist time: {}ms", self.line_search_assist.as_millis())?;
+        writeln!(f,
+            "Balance equation computation time: {}ms",
+            self.residual.total.as_millis()
+        )?;
+        writeln!(f,
+            "   Energy gradient time: {}ms",
+            self.residual.energy_gradient.as_millis()
+        )?;
+        writeln!(f,
+            "   Contact prep time: {}ms",
+            self.residual.prepare_contact.as_millis()
+        )?;
+        writeln!(f,
+            "   Contact force time: {}ms",
+            self.residual.contact_force.as_millis()
+        )?;
+        writeln!(f,
+            "   Friction force time: {}ms",
+            self.residual.friction_force.as_millis()
+        )?;
+        writeln!(f, "Linear solve time: {}ms", self.linear_solve.as_millis())?;
+        writeln!(f,
+            "   Jacobian product time: {}ms",
+            self.jacobian_product.as_millis()
+        )?;
+        writeln!(f, "Line search time: {}ms", self.line_search.as_millis())?;
+        writeln!(f, "Total solve time {}ms", self.total.as_millis())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SolveResult {
     /// Number of successful iterations.
     pub iterations: u32,
     /// Solve status.
     pub status: Status,
+    /// Timing results.
+    pub timings: Timings,
+    /// Iteration info.
+    pub stats: Vec<IterationInfo>,
 }
+
+impl std::fmt::Display for SolveResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", IterationInfo::header())?;
+        for info in self.stats.iter() {
+            writeln!(f, "{}", info)?;
+        }
+        writeln!(f, "Status:           {:?}", self.status)?;
+        writeln!(f, "Total iterations: {}", self.iterations)?;
+        writeln!(f, "Timings:\n{}", self.timings)
+    }
+}
+
 
 pub trait NLSolver<P, T> {
     /// Gets a reference to the outer callback function.

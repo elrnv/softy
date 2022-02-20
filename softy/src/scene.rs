@@ -3,13 +3,16 @@
 // TODO: Save only fixed vertices.
 // TODO: Enable more sophisticated interpolation.
 
-use flatk::IntoStorage;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
 
 use geo::attrib::Attrib;
 use geo::topology::{CellIndex, VertexIndex};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use flatk::IntoStorage;
 
 use crate::nl_fem::{SimParams, SolveResult, SolverBuilder};
 use crate::{FrictionalContactParams, Material, Mesh};
@@ -24,6 +27,8 @@ pub enum SceneError {
     Attribute(#[from] geo::attrib::Error),
     #[error("Solver error")]
     Solver(#[from] crate::Error),
+    #[error("This library was compiled without JSON support.")]
+    JSONUnsupported,
 }
 
 /// An enum defining all attribute types supported by the solver.
@@ -345,32 +350,119 @@ impl SceneConfig {
     /// Saves this scene configuration to the given path interpreted as a RON file.
     pub fn save_as_ron(&self, path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
         let path = path.as_ref();
-        std::fs::File::create(path)
+        File::create(path)
             .map_err(SceneError::from)
             .and_then(|f| {
-                ron::ser::to_writer_pretty(f, self, ron::ser::PrettyConfig::new())
+                let mut writer = BufWriter::new(f);
+                ron::ser::to_writer_pretty(&mut writer, self, ron::ser::PrettyConfig::new())
                     .map_err(|_| SceneError::Serialize)
             })
             .into()
+    }
+
+    /// Saves this scene configuration to the given path interpreted as a JSON file.
+    ///
+    /// This function works only if one of `simd-json` or `serde_json` features are enabled.
+    /// If both are enabled, `simd-json` will be used.
+    /// If none are enabled, this function will return an error.
+    pub fn save_as_json(&self, _path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
+        #[cfg(feature = "simd-json")] {
+            let path = _path.as_ref();
+            File::create(path)
+                .map_err(SceneError::from)
+                .and_then(|f| {
+                    let mut writer = BufWriter::new(f);
+                    simd_json::serde::to_writer_pretty(&mut writer, self)
+                        .map_err(|_| SceneError::Serialize)
+                })
+                .into()
+        }
+        #[cfg(not(feature = "simd-json"))] {
+            #[cfg(feature = "serde_json")] {
+                let path = _path.as_ref();
+                File::create(path)
+                    .map_err(SceneError::from)
+                    .and_then(|f| {
+                        let mut writer = BufWriter::new(f);
+                        serde_json::to_writer_pretty(&mut writer, self)
+                            .map_err(|_| SceneError::Serialize)
+                    })
+                    .into()
+            }
+            #[cfg(not(feature = "serde_json"))] {
+                Err(SceneError::JSONUnsupported)
+            }
+        }
     }
 
     /// Saves this scene configuration to the given path interpreted as a binary file using `bincode`.
     #[cfg(feature = "bincode")]
     pub fn save_as_bin(&self, path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
         let path = path.as_ref();
-        std::fs::File::create(path)
+        File::create(path)
             .map_err(SceneError::from)
-            .and_then(|f| bincode::serialize_into(f, self).map_err(|_| SceneError::Serialize))
+            .and_then(|f| {
+                let mut writer = BufWriter::new(f);
+                bincode::serialize_into(&mut writer, self).map_err(|_| SceneError::Serialize)
+            })
             .into()
+    }
+
+    /// Loads the scene from a `RON` file.
+    pub fn load_from_ron(path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
+        let path = path.as_ref();
+        File::open(path)
+            .map_err(SceneError::from)
+            .and_then(|f| {
+                let reader = BufReader::new(f);
+                ron::de::from_reader(reader).map_err(|_| SceneError::Serialize)
+            })
+            .into()
+    }
+
+    /// Loads the scene from a `JSON` file.
+    ///
+    /// This function works only if one of `simd-json` or `serde_json` features are enabled.
+    /// If both are enabled, `simd-json` will be used.
+    /// If none are enabled, this function will return an error.
+    pub fn load_from_json(_path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
+        #[cfg(feature = "simd-json")] {
+            let path = _path.as_ref();
+            File::open(path)
+                .map_err(SceneError::from)
+                .and_then(|f| {
+                    let reader = BufReader::new(f);
+                    simd_json::serde::from_reader(reader).map_err(|_| SceneError::Serialize)
+                })
+                .into()
+        }
+        #[cfg(not(feature = "simd-json"))] {
+            #[cfg(feature = "serde_json")] {
+                let path = _path.as_ref();
+                File::open(path)
+                    .map_err(SceneError::from)
+                    .and_then(|f| {
+                        let reader = BufReader::new(f);
+                        serde_json::from_reader(reader).map_err(|_| SceneError::Serialize)
+                    })
+                    .into()
+            }
+            #[cfg(not(feature = "serde_json"))] {
+                Err(SceneError::JSONUnsupported)
+            }
+        }
     }
 
     /// Loads the scene from a `bincode` binary file.
     #[cfg(feature = "bincode")]
     pub fn load_from_bin(path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
         let path = path.as_ref();
-        std::fs::File::open(path)
+        File::open(path)
             .map_err(SceneError::from)
-            .and_then(|f| bincode::deserialize_from(f).map_err(|_| SceneError::Serialize))
+            .and_then(|f| {
+                let reader = BufReader::new(f);
+                bincode::deserialize_from(reader).map_err(|_| SceneError::Serialize)
+            })
             .into()
     }
 

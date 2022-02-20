@@ -704,7 +704,7 @@ impl SolverBuilder {
                 dq: Vec::new(),
             }),
             debug_friction: RefCell::new(Vec::new()),
-            timings: RefCell::new(crate::fem::nl::Timings::default()),
+            timings: RefCell::new(crate::fem::nl::ResidualTimings::default()),
         })
     }
 

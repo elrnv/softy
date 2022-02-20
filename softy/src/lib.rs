@@ -45,6 +45,7 @@ pub type TetMeshExt = geo::mesh::TetMeshExt<f64>;
 pub type TriMeshExt = geo::mesh::TriMeshExt<f64>;
 
 pub use self::contact::*;
+pub use self::constraints::FrictionProfile;
 pub use self::fem::nl as nl_fem;
 #[cfg(feature = "optsolver")]
 pub use self::fem::opt as opt_fem;

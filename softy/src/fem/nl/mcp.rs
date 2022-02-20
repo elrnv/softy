@@ -1,6 +1,6 @@
 use std::cell::{Ref, RefCell, RefMut};
 
-use crate::nl_fem::Timings;
+use crate::nl_fem::ResidualTimings;
 use num_traits::Float;
 use rayon::prelude::*;
 use tensr::*;
@@ -29,8 +29,8 @@ where
     T: Real,
     P: MixedComplementarityProblem<T>,
 {
-    fn timings(&self) -> RefMut<'_, Timings> {
-        self.problem.timings()
+    fn residual_timings(&self) -> RefMut<'_, ResidualTimings> {
+        self.problem.residual_timings()
     }
     fn debug_friction(&self) -> Ref<'_, Vec<T>> {
         self.problem.debug_friction()

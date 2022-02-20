@@ -20,8 +20,14 @@ impl Default for Status {
 
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 pub struct SolveResult {
+    /// Number of iterations of an iterative solver.
     pub iterations: u32,
+    /// Absoulte residual 2-norm.
     pub residual: f64,
+    /// Relative residual 2-norm.
+    ///
+    /// Residual divided by the norm of the right-hand-side.
     pub error: f64,
+    /// Final status of the linear solve.
     pub status: Status,
 }

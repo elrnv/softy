@@ -1,5 +1,6 @@
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
+use std::fmt::{Display, Formatter};
+use std::time::{Instant};
 
 #[cfg(target_os = "macos")]
 use accelerate::*;
@@ -14,6 +15,7 @@ use super::linsolve::*;
 use super::problem::NonLinearProblem;
 use super::{Callback, CallbackArgs, NLSolver, SolveResult, Status};
 use crate::Index;
+use crate::nl_fem::Timings;
 use crate::Real;
 
 // Parameters for the Newton solver.
@@ -31,12 +33,6 @@ pub struct NewtonParams {
     pub linsolve: LinearSolver,
     /// Line search method.
     pub line_search: LineSearch,
-}
-
-impl std::fmt::Display for SolveResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Error)]
@@ -474,6 +470,7 @@ pub enum LinearSolverWorkspace<T: Real> {
 }
 
 impl<T: Real> LinearSolverWorkspace<T> {
+    #[allow(dead_code)]
     fn iterative_tolerance(&self) -> f32 {
         if let LinearSolverWorkspace::Iterative(bicgstab) = self {
             bicgstab.tol
@@ -749,21 +746,19 @@ where
     /// This version of [`solve`] does not rely on the `initial_point` method of
     /// the problem definition. Instead the given `x` is used as the initial point.
     fn solve_with(&mut self, x: &mut [T], update_jacobian_indices: bool) -> SolveResult {
+        let mut stats = Vec::new();
+        let mut timings = Timings::default();
+
         if x.is_empty() {
             return SolveResult {
                 iterations: 0,
                 status: Status::NothingToSolve,
+                timings,
+                stats,
             };
         }
 
-        // Timing stats
-        let mut linsolve_time = Duration::new(0, 0);
-        let mut ls_time = Duration::new(0, 0);
-        let mut jprod_linsolve_time = Duration::new(0, 0);
-        // let mut jprod_ls_time = Duration::new(0, 0);
-        let mut residual_time = Duration::new(0, 0);
-        let mut assist_time = Duration::new(0, 0);
-        self.problem.timings().clear();
+        self.problem.residual_timings().clear();
         let t_begin_solve = Instant::now();
 
         {
@@ -774,7 +769,7 @@ where
             let NewtonWorkspace { r, .. } = &mut *workspace.borrow_mut();
 
             // Initialize the residual.
-            add_time!(residual_time; problem.residual(x, r.as_mut_slice()));
+            problem.residual(x, r.as_mut_slice());
         }
 
         if update_jacobian_indices {
@@ -799,9 +794,10 @@ where
             x_prev,
             r,
             p,
-            jp,
+            //jp,
             r_cur,
             r_next,
+            ..
         } = &mut *workspace.borrow_mut();
 
         // let SparseJacobian {
@@ -835,11 +831,13 @@ where
 
         let mut linsolve_result = super::linsolve::SolveResult::default();
 
-        let sigma = linsolve.iterative_tolerance();
+        //let sigma = linsolve.iterative_tolerance();
         //let orig_sigma = sigma;
 
-        log_debug_stats_header();
-        log_debug_stats(0, 0, linsolve_result, 1.0, f64::INFINITY, &r, x, &x_prev);
+        log::debug!("{}", IterationInfo::header());
+        let info = IterationInfo::new(0, 0, linsolve_result, 1.0, f64::INFINITY, &r, &x_prev, x);
+        log::debug!("{}", info);
+        stats.push(info);
 
         // Prepare initial Jacobian used in the merit function.
         problem.jacobian_values(
@@ -870,6 +868,8 @@ where
                     return SolveResult {
                         iterations,
                         status: Status::LinearSolveError(err.into()),
+                        timings,
+                        stats,
                     }
                 }
                 Ok(_) => {}
@@ -904,7 +904,7 @@ where
         //         .zip(jinv_r.iter())
         //         .fold(0.0, |acc, (&jinv_jp, &jinv_r)| acc + jinv_jp * jinv_r)
         // };
-        let merit_jac_prod = |_: &P, jp: &[T], r: &[T], _: &SparseDirectSolver| {
+        let merit_jac_prod = |_: &P, _: &[T], r: &[T], _: &SparseDirectSolver| {
             r.as_tensor().norm_squared().to_f64().unwrap()
             // jp.iter()
             //     .zip(r.iter())
@@ -924,7 +924,7 @@ where
             id[i] = T::one();
         }
 
-        let result = loop {
+        let (iterations, status) = loop {
             //log::trace!("Previous r norm: {}", r_prev_norm);
             //log::trace!("Current  r norm: {}", r_cur_norm);
             if !(outer_callback.borrow_mut())(CallbackArgs {
@@ -933,19 +933,19 @@ where
                 x,
                 problem,
             }) {
-                break SolveResult {
+                break (
                     iterations,
-                    status: Status::Interrupted,
-                };
+                    Status::Interrupted,
+                );
             }
 
             //log::trace!("r = {:?}", &r);
 
             if !merit_cur.is_finite() {
-                break SolveResult {
+                break (
                     iterations,
-                    status: Status::Diverged,
-                };
+                    Status::Diverged,
+                );
             }
 
             let t_begin_linsolve = Instant::now();
@@ -976,7 +976,7 @@ where
                             let t_begin_jprod = Instant::now();
                             problem.jacobian_product(x, p, r_cur, out);
                             //sparse_jacobian.compute_product(p, out);
-                            jprod_linsolve_time += Instant::now() - t_begin_jprod;
+                            timings.jacobian_product += Instant::now() - t_begin_jprod;
                             inner_callback.borrow_mut()(CallbackArgs {
                                 residual: r_cur.as_slice(),
                                 x,
@@ -1082,10 +1082,10 @@ where
                     let result = sparse_solver.solve_with_values(&r, j.storage());
                     let r64 = match result {
                         Err(err) => {
-                            break SolveResult {
+                            break (
                                 iterations,
-                                status: Status::LinearSolveError(err.into()),
-                            }
+                                Status::LinearSolveError(err.into()),
+                            )
                         }
                         Ok(r) => r,
                     };
@@ -1109,15 +1109,15 @@ where
 
             //log::trace!("p = {:?}", &r);
 
-            linsolve_time += Instant::now() - t_begin_linsolve;
+            timings.linear_solve += Instant::now() - t_begin_linsolve;
 
             // The solve converts the rhs r into the unknown negative search direction p.
 
             if !p.as_tensor().norm_squared().is_finite() {
-                break SolveResult {
+                break (
                     iterations,
-                    status: Status::StepTooLarge,
-                };
+                    Status::StepTooLarge,
+                );
             }
 
             // Update previous step.
@@ -1129,12 +1129,10 @@ where
             *x.as_mut_tensor() += p.as_tensor();
 
             // Compute the residual for the full step.
-            let t_begin_residual = Instant::now();
             problem.residual(&x, r_next.as_mut_slice());
-            residual_time += Instant::now() - t_begin_residual;
 
             let (ls_count, alpha) = add_time! {
-                ls_time;
+                timings.line_search;
                 if rho >= 1.0 {
                     merit_next = merit(problem, x, r_next, init_sparse_solver);
                     (1, 1.0)
@@ -1164,7 +1162,7 @@ where
 
                     if params.line_search.is_assisted() {
                         add_time!(
-                            assist_time;
+                            timings.line_search_assist;
                             alpha = problem
                                 .assist_line_search(T::from(alpha).unwrap(), p, x_prev, r_cur, r_next)
                                 .to_f64()
@@ -1213,7 +1211,7 @@ where
                         });
 
                         // Compute the candidate residual.
-                        add_time!(residual_time; problem.residual(x, r_next.as_mut_slice()));
+                        problem.residual(x, r_next.as_mut_slice());
 
                         ls_count += 1;
                     }
@@ -1326,16 +1324,9 @@ where
 
             iterations += 1;
 
-            log_debug_stats(
-                iterations,
-                ls_count,
-                linsolve_result,
-                alpha as f32,
-                merit_next,
-                &r_next,
-                x,
-                &x_prev,
-            );
+            let info = IterationInfo::new(iterations, ls_count, linsolve_result, alpha as f32, merit_next, &r_next, &x_prev, x);
+            log::debug!("{}", &info);
+            stats.push(info);
 
             // Check the convergence condition.
             if problem.converged(
@@ -1347,18 +1338,18 @@ where
                 params.r_tol,
                 params.a_tol,
             ) {
-                break SolveResult {
+                break (
                     iterations,
-                    status: Status::Success,
-                };
+                    Status::Success,
+                );
             }
 
             // Check that we are running no more than the maximum allowed iterations.
             if iterations >= params.max_iter {
-                break SolveResult {
+                break (
                     iterations,
-                    status: Status::MaximumIterationsExceeded,
-                };
+                    Status::MaximumIterationsExceeded,
+                );
             }
 
             // Reset r to be a valid residual for the next iteration.
@@ -1369,84 +1360,103 @@ where
             merit_cur = merit_next;
         };
 
-        let total_solve_time = Instant::now() - t_begin_solve;
+        timings.total = Instant::now() - t_begin_solve;
+        timings.residual = *self.problem.residual_timings();
 
-        log::debug!("Line search assist time: {}ms", assist_time.as_millis());
-        log::debug!(
-            "Balance equation computation time: {}ms",
-            residual_time.as_millis()
-        );
-        log::debug!(
-            "   Energy gradient time: {}ms",
-            self.problem.timings().energy_gradient.as_millis()
-        );
-        log::debug!(
-            "   Contact prep time: {}ms",
-            self.problem.timings().prepare_contact.as_millis()
-        );
-        log::debug!(
-            "   Contact force time: {}ms",
-            self.problem.timings().contact_force.as_millis()
-        );
-        log::debug!(
-            "   Friction force time: {}ms",
-            self.problem.timings().friction_force.as_millis()
-        );
-        log::debug!("Linear solve time: {}ms", linsolve_time.as_millis());
-        log::debug!(
-            "   Jacobian product time: {}ms",
-            jprod_linsolve_time.as_millis()
-        );
-        log::debug!("Line search time: {}ms", ls_time.as_millis());
-        // log::debug!("   Jacobian product time: {}ms", jprod_ls_time.as_millis());
-        log::debug!("Total solve time {}ms", total_solve_time.as_millis());
-        result
+        log::debug!("{}", timings);
+
+        SolveResult {
+            iterations,
+            status,
+            timings,
+            stats,
+        }
     }
 }
 
-/*
- * Status print routines.
- * i       - iteration number
- * res-2   - 2-norm of the residual
- * merit   - Merit function
- * res-inf - inf-norm of the residual
- * d-inf   - inf-norm of the step vector
- * x-inf   - inf-norm of the variable vector
- * lin #   - number of linear solver iterations
- * ls #    - number of line search steps
- */
-fn log_debug_stats_header() {
-    log::debug!(
-        "    i |  res-inf   |   merit    |    d-2     |    x-2     | lin # |  lin err   |   alpha    | ls # "
-    );
-    log::debug!(
-        "------+------------+------------+------------+------------+-------+------------+------------+------"
-    );
-}
-fn log_debug_stats<T: Real>(
-    iterations: u32,
+/// Information about each iteration.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct IterationInfo {
+    /// Iteration counter.
+    iteration: u32,
+    /// Number of line search steps taken.
     ls_steps: u32,
+    /// Linear solve result for this iteration.
     linsolve_result: super::linsolve::SolveResult,
+    /// Fraction of the Newton step taken.
+    ///
+    /// Damping parameter of damped Newton.
     alpha: f32,
+    /// Merit function value.
     merit: f64,
-    r: &[T],
-    x: &[T],
-    x_prev: &[T],
-) {
-    log::debug!(
-        "{i:>5} | {resinf:10.3e} | {merit:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {alpha:10.3e} | {ls:>4} ",
-        i = iterations,
-        resinf = r.as_tensor().lp_norm(LpNorm::Inf).to_f64().unwrap(),
-        merit = merit,
-        di = x_prev.iter().zip(x.iter()).map(|(&a, &b)| (a - b)*(a-b)).sum::<T>()
-            .to_f64()
-            .unwrap().sqrt(),
-        xi = x.as_tensor().norm().to_f64().unwrap(),
-        lin = linsolve_result.iterations,
-        linerr = linsolve_result.error,
-        alpha = alpha,
-        ls = ls_steps
-    );
+    /// Infinity norm of the residual.
+    r_inf: f64,
+    /// 2-norm of the current velocity.
+    x_2: f64,
+    /// 2-norm of the step vector
+    d_2: f64,
+}
+
+impl IterationInfo {
+    /// Constructs a new iteration info struct.
+    pub fn new<T: Real>(
+        iteration: u32,
+        ls_steps: u32,
+        linsolve_result: super::linsolve::SolveResult,
+        alpha: f32,
+        merit: f64,
+        r: &[T],
+        x_prev: &[T],
+        x: &[T],
+    ) -> Self {
+        IterationInfo {
+            iteration,
+            ls_steps,
+            linsolve_result,
+            alpha,
+            merit,
+            r_inf: r.as_tensor().lp_norm(LpNorm::Inf).to_f64().unwrap(),
+            x_2: x.as_tensor().norm().to_f64().unwrap(),
+            d_2: x_prev.iter().zip(x.iter()).map(|(&a, &b) | (a - b) * (a - b)).sum::<T>()
+                .to_f64()
+                .unwrap().sqrt(),
+        }
+    }
+
+    /// Header for info printed by this struct.
+    ///
+    /// ```verbatim
+    /// i       - iteration number
+    /// merit   - Merit function
+    /// res-inf - inf-norm of the residual
+    /// d-2     - 2-norm of the step vector
+    /// x-2     - 2-norm of the variable vector
+    /// lin #   - number of linear solver iterations
+    /// lin err - linear solver error (residual 2-norm divided by rhs 2-norm)
+    /// alpha   - Fraction of the step taken
+    /// ls #    - number of line search steps
+    /// ```
+    pub fn header() -> &'static str {
+        "    i |  res-inf   |   merit    |    d-2     |    x-2     | lin # |  lin err   |   alpha    | ls # \n\
+         ------+------------+------------+------------+------------+-------+------------+------------+------"
+    }
+}
+
+impl Display for IterationInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f,
+            "{i:>5} | {resinf:10.3e} | {merit:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {alpha:10.3e} | {ls:>4} ",
+            i = self.iteration,
+            resinf = self.r_inf,
+            merit = self.merit,
+            di = self.d_2,
+            xi = self.x_2,
+            lin = self.linsolve_result.iterations,
+            linerr = self.linsolve_result.error,
+            alpha = self.alpha,
+            ls = self.ls_steps
+        )
+    }
 }
 
 /// Solves a dense potentially indefinite system `Ax = b`.

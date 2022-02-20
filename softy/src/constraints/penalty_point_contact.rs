@@ -24,6 +24,7 @@ use tensr::{
     IntoData, IntoExpr, IntoTensor, Matrix, Matrix2, Matrix3, MulExpr, Multiplication, Scalar,
     Tensor, Vector2, Vector3,
 };
+use serde::{Serialize, Deserialize};
 
 pub type DistanceGradient<T = f64> = Tensor![T; S S 3 1];
 
@@ -59,11 +60,12 @@ fn clone_cast_ssblock_mtx<T: Real, S: Real>(jac: &Tensor![T; S S 3 3]) -> Tensor
 }
 
 /*
- * Functions defining the friction presliding profile
+ * Functions defining the friction presliding profile.
  */
 
 /// Antiderivative of the stabilized sliding profile multiplied by x.
 /// This is used to implement the lagged friction potential.
+#[inline]
 fn stabilized_sliding_potential<T: Real>(x: T, epsilon: T) -> T {
     //   x - εlog(ε + x) + εlog(2ε)
     // = x + εlog(2ε / (ε + x))
@@ -72,6 +74,7 @@ fn stabilized_sliding_potential<T: Real>(x: T, epsilon: T) -> T {
 
 /// Antiderivative of the quadratic sliding profile multiplied by x.
 /// This is used to implement the lagged friction potential.
+#[inline]
 fn quadratic_sliding_potential<T: Real>(x: T, epsilon: T) -> T {
     let three = T::from(3.0).unwrap();
     if x < epsilon {
@@ -88,6 +91,7 @@ fn quadratic_sliding_potential<T: Real>(x: T, epsilon: T) -> T {
 ///
 /// The division is done for numerical stability to avoid division by zero.
 /// `s(x) = 1 / (x + 0.1 * eps)`
+#[inline]
 fn stabilized_sliding_profile<T: Real>(x: T, epsilon: T) -> T {
     // Note that denominator is always >= 0.1eps since x > 0.
     T::one() / (x + T::from(0.1).unwrap() * epsilon)
@@ -99,6 +103,7 @@ fn stabilized_sliding_profile<T: Real>(x: T, epsilon: T) -> T {
 /// and the friction force magnitude (the output).
 ///
 /// `s(x) = 2/eps - x/eps^2 if x < eps and 1 otherwise`
+#[inline]
 fn quadratic_sliding_profile<T: Real>(x: T, epsilon: T) -> T {
     // Quadratic smoothing function with compact support.
     // `s(x) = 2/eps - x/eps^2`
@@ -110,12 +115,14 @@ fn quadratic_sliding_profile<T: Real>(x: T, epsilon: T) -> T {
 }
 
 /// Derivative of the sliding profile.
+#[inline]
 fn stabilized_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
     let denom = x + T::from(0.1).unwrap() * epsilon;
     -T::one() / (denom * denom)
 }
 
 /// Derivative of the quadratic sliding profile.
+#[inline]
 fn quadratic_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
     // `s(x) = -1/eps^2`
     if x < epsilon {
@@ -128,33 +135,74 @@ fn quadratic_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
 /// The sliding potential.
 ///
 /// This is the antiderivative of the function eta in the paper.
-pub fn eta_int<T: Real>(v: Vector2<T>, factor: T, epsilon: T) -> T {
-    factor * quadratic_sliding_potential(v.norm(), epsilon)
+#[inline]
+pub fn eta_int<T: Real>(v: Vector2<T>, factor: T, epsilon: T, is: impl FnOnce(T, T) -> T) -> T {
+    factor * is(v.norm(), epsilon)
 }
 
 /// The full sliding profile including 1D direction.
 ///
 /// This is the function eta in the paper.
-pub fn eta<T: Real>(v: Vector2<T>, factor: T, epsilon: T) -> Vector2<T> {
+#[inline]
+pub fn eta<T: Real>(v: Vector2<T>, factor: T, epsilon: T, s: impl FnOnce(T, T) -> T) -> Vector2<T> {
     // This is similar to function s but with the norm of v multiplied through to avoid
     // degeneracies.
     // let s = |x| stabilized_sliding_profile(x, epsilon);
-    let s = |x| quadratic_sliding_profile(x, epsilon);
-    v * (factor * s(v.norm()))
+    v * (factor * s(v.norm(), epsilon))
 }
 
 /// Jacobian of the full directional 1D sliding profile
-pub fn eta_jac<T: Real>(v: Vector2<T>, factor: T, epsilon: T) -> Matrix2<T> {
+#[inline]
+pub fn eta_jac<T: Real>(v: Vector2<T>, factor: T, epsilon: T, s: impl FnOnce(T, T) -> T, ds: impl FnOnce(T, T) -> T) -> Matrix2<T> {
     // let s = |x| stabilized_sliding_profile(x, epsilon);
     // let ds = |x| stabilized_sliding_profile_derivative(x, epsilon);
-    let s = |x| quadratic_sliding_profile(x, epsilon);
-    let ds = |x| quadratic_sliding_profile_derivative(x, epsilon);
+    let s = |x| s(x, epsilon);
+    let ds = |x| ds(x, epsilon);
     let norm_v = v.norm();
     let mut out = Matrix2::identity() * (s(norm_v) * factor);
     if norm_v > T::zero() {
         out += v * (ds(norm_v) / norm_v) * (v.transpose() * factor);
     }
     out
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum FrictionProfile {
+    Stabilized,
+    Quadratic,
+}
+
+impl FrictionProfile {
+    /// The sliding potential.
+    ///
+    /// This is the antiderivative of the function eta in the paper.
+    #[inline]
+    pub fn potential<T: Real>(self, v: Vector2<T>, factor: T, epsilon: T) -> T {
+        match self {
+            FrictionProfile::Stabilized => eta_int(v, factor, epsilon, stabilized_sliding_potential::<T>),
+            FrictionProfile::Quadratic => eta_int(v, factor, epsilon, quadratic_sliding_potential::<T>),
+        }
+    }
+
+    /// The full sliding profile including 1D direction.
+    ///
+    /// This is the function eta in the paper.
+    #[inline]
+    pub fn profile<T: Real>(self, v: Vector2<T>, factor: T, epsilon: T) -> Vector2<T> {
+        match self {
+            FrictionProfile::Stabilized => eta(v, factor, epsilon, stabilized_sliding_profile::<T>),
+            FrictionProfile::Quadratic => eta(v, factor, epsilon, quadratic_sliding_profile::<T>),
+        }
+    }
+
+    /// Jacobian of the full directional 1D sliding profile
+    #[inline]
+    pub fn jacobian<T: Real>(self, v: Vector2<T>, factor: T, epsilon: T) -> Matrix2<T> {
+        match self {
+            FrictionProfile::Stabilized => eta_jac(v, factor, epsilon, stabilized_sliding_profile::<T>, stabilized_sliding_profile_derivative::<T>),
+            FrictionProfile::Quadratic => eta_jac(v, factor, epsilon, quadratic_sliding_profile::<T>, quadratic_sliding_profile_derivative::<T>),
+        }
+    }
 }
 
 type SSBlock3<T> = Tensor![T; S S 3 3];
@@ -212,6 +260,8 @@ where
     /// Indices of original vertices for the collider.
     pub collider_vertex_indices: Vec<usize>,
 
+    pub eta: FrictionProfile,
+
     pub(crate) lambda: Vec<T>,
     pub distance_potential: Vec<T>,
     pub distance_potential_alt: Vec<T>,
@@ -262,6 +312,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             contact_gradient,
             friction_jacobian_workspace: FrictionJacobianWorkspace::default(),
             force_workspace: std::cell::RefCell::new(Vec::new()),
+            eta: self.eta,
         }
     }
 
@@ -305,6 +356,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             distance_potential_alt: Vec::new(),
             force_workspace: std::cell::RefCell::new(Vec::new()),
             friction_jacobian_workspace: FrictionJacobianWorkspace::default(),
+            eta: friction_params.map(|x| x.friction_profile).unwrap_or(FrictionProfile::Stabilized),
         };
 
         penalty_constraint.update_distance_potential();
@@ -700,19 +752,18 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         pos_cur: Chunked3<&[T]>,
         pos_next: Chunked3<&[T]>,
         delta: f32,
-        epsilon: f32,
     ) -> T {
         if self.point_constraint.friction_workspace.is_none() {
             return alpha;
         }
         let delta = T::from(delta).unwrap();
-        self.update_state(pos_cur);
-        self.update_distance_potential();
-        {
-            let d1 = &mut self.distance_potential_alt;
-            d1.resize(self.distance_potential.len(), T::zero());
-            d1.copy_from_slice(&self.distance_potential);
-        }
+        // self.update_state(pos_cur);
+        // self.update_distance_potential();
+        // {
+        //     let d1 = &mut self.distance_potential_alt;
+        //     d1.resize(self.distance_potential.len(), T::zero());
+        //     d1.copy_from_slice(&self.distance_potential);
+        // }
 
         self.update_state(pos_next);
         self.update_distance_potential();
@@ -753,15 +804,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let vc = (jac.view().into_tensor() * vel.into_tensor()).into_data();
         let pc = (jac.view().into_tensor() * p.into_tensor()).into_data();
 
-        let d1 = &self.distance_potential_alt;
+        // let d1 = &self.distance_potential_alt;
         let d2 = &self.distance_potential;
         // eprintln!("alpha before: {alpha}");
 
-        for (i, ((&d1, &d2), (p, v))) in d1
-            .iter()
-            .zip(d2.iter())
-            .zip(pc.iter().zip(vc.iter()))
-            .enumerate()
+        for (i, (&d2, (p, v))) in d2.iter().zip(pc.iter().zip(vc.iter())) .enumerate()
         {
             if d2 <= delta {
                 let vtx_idx = self.collider_vertex_indices[active_constraint_indices[i]];
@@ -877,6 +924,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
         // Compute sliding bases velocity product.
 
+        let eta = self.eta;
         let friction_potential = vc
             .iter()
             .zip(lambda.iter())
@@ -886,7 +934,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 //dbg!(i, [v0, v1, v2]);
                 let vc_t = [v1, v2].into_tensor();
                 //dbg!(&lambda);
-                eta_int(vc_t, *lambda, T::from(epsilon).unwrap())
+                eta.potential(vc_t, *lambda, T::from(epsilon).unwrap())
             })
             .sum();
 
@@ -1006,6 +1054,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         // Compute sliding bases velocity product.
 
         // Compute `vc <- H(B'(x) vc) λ(x)`.
+        let eta = self.eta;
         vc.view_mut()
             .into_iter()
             .zip(lambda.iter())
@@ -1015,7 +1064,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 //dbg!(i, [v0, v1, v2]);
                 let vc_t = [v1, v2].into_tensor();
                 //dbg!(&lambda);
-                let vc_t_smoothed = eta(vc_t, *lambda, T::from(epsilon).unwrap()).into_data();
+                let vc_t_smoothed = eta.profile(vc_t, *lambda, T::from(epsilon).unwrap()).into_data();
                 *vc = [T::zero(), vc_t_smoothed[0], vc_t_smoothed[1]];
             });
         Some(vc)
@@ -1334,6 +1383,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         kappa: f32,
         epsilon: f32,
         dqdv: T,
+        eta: FrictionProfile,
     ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a {
         //assert_eq!(constraint_jac.len(), contact_jac.into_tensor().num_cols());
 
@@ -1358,7 +1408,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         vc.view_mut().iter_mut().enumerate().for_each(|(i, vc)| {
             let [_, v1, v2] = contact_basis.to_contact_coordinates(*vc, i);
             let vc_t = [v1, v2].into_tensor();
-            let vc_t_smoothed = eta(vc_t, mu, T::from(epsilon).unwrap()).into_data();
+            let vc_t_smoothed = eta.profile(vc_t, mu, T::from(epsilon).unwrap()).into_data();
             //dbg!(eta(vc_t, T::one(), T::from(1e-5).unwrap()).into_data());
             *vc = contact_basis
                 .from_contact_coordinates([T::zero(), vc_t_smoothed[0], vc_t_smoothed[1]], i)
@@ -1436,6 +1486,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         max_index: usize,
         recompute_contact_jacobian: bool,
     ) -> Option<impl Iterator<Item = (usize, usize, T)> + 'a> {
+        let eta = self.eta;
+
         // TODO: Refactor this monstrosity of a function.
         self.update_constraint_gradient();
 
@@ -1569,6 +1621,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 kappa,
                 epsilon,
                 dqdv,
+                self.eta
             );
 
             let surf = &self.point_constraint.implicit_surface;
@@ -1653,7 +1706,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                     let [_, v1, v2] = pc_ws
                         .contact_basis
                         .to_contact_coordinates(vc[constraint_idx], constraint_idx);
-                    let mtx = eta_jac([v1, v2].into(), T::one(), T::from(epsilon).unwrap())
+                    let mtx = eta.jacobian([v1, v2].into(), T::one(), T::from(epsilon).unwrap())
                         * lambda[constraint_idx];
                     std::iter::once([T::zero(); 3])
                         .chain(std::iter::once([T::zero(), mtx[0][0], mtx[0][1]]))

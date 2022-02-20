@@ -10,6 +10,7 @@ pub mod solver;
 
 use serde::{Deserialize, Serialize};
 use tensr::{Chunked3, Sparse};
+use crate::constraints::FrictionProfile;
 
 use crate::contact::ContactBasis;
 use crate::Real;
@@ -35,6 +36,7 @@ pub struct FrictionParams {
     pub inner_iterations: usize,
     pub tolerance: f64,
     pub print_level: u8,
+    pub friction_profile: FrictionProfile,
 }
 
 #[derive(Clone, Debug, PartialEq)]

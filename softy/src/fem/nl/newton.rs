@@ -389,15 +389,15 @@ impl SparseDirectSolver {
         // Update values and refactor
         let t_begin = Instant::now();
         self.update_rhs(&r);
-        let t_update_rhs = Instant_now();
+        let t_update_rhs = Instant::now();
         let values: Vec<_> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
-        let t_values = Instant_now();
+        let t_values = Instant::now();
         self.solver
             .refactor(values.as_slice(), mkl::dss::Definiteness::Indefinite)?;
-        let t_refactor = Instant_now();
+        let t_refactor = Instant::now();
         self.solver
             .solve_into(&mut self.sol, &mut self.buf, &mut self.r64)?;
-        let t_solve = Instant_now();
+        let t_solve = Instant::now();
         log::debug!("Update time:   {}ms", (t_update_rhs - t_begin).as_millis());
         log::debug!("Values time:   {}ms", (t_values - t_update_rhs).as_millis());
         log::debug!("Refactor time: {}ms", (t_refactor - t_values).as_millis());

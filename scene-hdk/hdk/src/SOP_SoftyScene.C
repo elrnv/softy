@@ -703,7 +703,6 @@ void SOP_SoftySceneVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
     // Create mesh from first frame.
     auto mesh = softy::new_mesh();
-    std::cerr << "new mesh" << std::endl;
 
     const GU_Detail *input0 = cookparms.inputGeo(0);
     if (!input0)
@@ -711,7 +710,6 @@ void SOP_SoftySceneVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         // No inputs, nothing to do.
         return;
     }
-    std::cerr << "done mesh" << std::endl;
 
     mesh->set(*input0);
 
@@ -724,7 +722,6 @@ void SOP_SoftySceneVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     if (!add_cook_result_message(scene_result.cook_result)) {
         return;
     }
-    std::cerr << "done scene" << std::endl;
 
     auto scene = std::move(scene_result.scene);
 
@@ -732,8 +729,6 @@ void SOP_SoftySceneVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     auto frame_range = cookparms.parms<SOP_SoftySceneParms>().getFrameRange();
     int begin_frame = frame_range[0];
     int end_frame = frame_range[1];
-
-    std::cerr << "begin keyframes" << std::endl;
 
     std::vector<UT_Vector3> prev_pos;
     prev_pos.reserve(input0->getNumPoints());
@@ -779,7 +774,6 @@ void SOP_SoftySceneVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
             return;
         }
     }
-    std::cerr << "done with keyframes" << std::endl;
 
     auto scene_path = cookparms.parms<SOP_SoftySceneParms>().getSceneFile().c_str();
     auto save_result = scene->save(scene_path);

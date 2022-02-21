@@ -320,7 +320,7 @@ impl SparseDirectSolver {
         let symbolic_factorization = mtx.structure().symbolic_factor(SparseFactorizationType::QR);
         let t_end_symbolic = Instant::now();
         log::debug!(
-            "Symbolic time: {}ms",
+            "Symbolic factor time: {}ms",
             (t_end_symbolic - t_begin_symbolic).as_millis()
         );
         Some(SparseDirectSolver {
@@ -387,12 +387,21 @@ impl SparseDirectSolver {
         values: &[T],
     ) -> Result<&[f64], SparseDirectSolveError> {
         // Update values and refactor
+        let t_begin = Instant::now();
         self.update_rhs(&r);
+        let t_update_rhs = Instant_now();
         let values: Vec<_> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
+        let t_values = Instant_now();
         self.solver
             .refactor(values.as_slice(), mkl::dss::Definiteness::Indefinite)?;
+        let t_refactor = Instant_now();
         self.solver
             .solve_into(&mut self.sol, &mut self.buf, &mut self.r64)?;
+        let t_solve = Instant_now();
+        log::debug!("Update time:   {}ms", (t_update_rhs - t_begin).as_millis());
+        log::debug!("Values time:   {}ms", (t_values - t_update_rhs).as_millis());
+        log::debug!("Refactor time: {}ms", (t_refactor - t_values).as_millis());
+        log::debug!("Solve time:    {}ms", (t_solve - t_refactor).as_millis());
         Ok(&self.sol)
     }
 
@@ -402,24 +411,28 @@ impl SparseDirectSolver {
         r: &[T],
         values: &[T],
     ) -> Result<&[f64], SparseDirectSolveError> {
+        let t_begin = Instant::now();
         self.update_values(values);
+        let t_update_values = Instant::now();
         self.refactor()?;
+        let t_refactor = Instant::now();
         self.update_rhs(&r);
-        self.solve()
+        let t_update_rhs = Instant::now();
+        let result = self.solve();
+        let t_solve = Instant::now();
+        log::debug!("Update time:   {}ms", (t_update_rhs - t_refactor).as_millis());
+        log::debug!("Values time:   {}ms", (t_update_values - t_begin).as_millis());
+        log::debug!("Refactor time: {}ms", (t_refactor - t_update_values).as_millis());
+        log::debug!("Solve time:    {}ms", (t_solve - t_refactor).as_millis());
+        result
     }
 }
 
 pub struct DirectSolver<T: Real> {
     /// Mapping from original triplets given by the `j_*` members to the final
     /// compressed sparse matrix.
-    #[cfg(not(target_os = "macos"))]
     j_mapping: Vec<Index>,
-    #[cfg(target_os = "macos")]
-    j_t_mapping: Vec<Index>,
-    #[cfg(not(target_os = "macos"))]
     j: DSMatrix<T>,
-    #[cfg(target_os = "macos")]
-    j_t: DSMatrix<T>,
     //#[cfg(target_os = "macos")]
     //j_sparse: LazyCell<SparseMatrixF64<'static>>,
     sparse_solver: LazyCell<SparseDirectSolver>,
@@ -484,7 +497,7 @@ pub struct NewtonWorkspace<T: Real> {
     sparse_jacobian: SparseJacobian<T>,
     init_sparse_jacobian_vals: Vec<T>,
     init_sparse_solver: LazyCell<SparseDirectSolver>,
-    init_j_t_mapping: Vec<Index>,
+    init_j_mapping: Vec<Index>,
     x_prev: Vec<T>,
     r: Vec<T>,
     p: Vec<T>,
@@ -510,11 +523,15 @@ pub struct Newton<P, T: Real> {
 }
 
 fn sparse_matrix_and_mapping<T: Real>(
-    rows: &[usize],
-    cols: &[usize],
+    mut rows: &[usize],
+    mut cols: &[usize],
     vals: &[T],
     mtx_size: usize,
+    transpose: bool
 ) -> (DSMatrix<T>, Vec<Index>) {
+    if transpose {
+        std::mem::swap(&mut rows, &mut cols);
+    }
     let nnz = rows.len();
     assert_eq!(nnz, cols.len());
     assert_eq!(nnz, vals.len());
@@ -579,16 +596,10 @@ where
             LinearSolver::Direct => {
                 log::debug!("DIRECT SOLVE");
                 LinearSolverWorkspace::Direct(DirectSolver {
-                    #[cfg(not(target_os = "macos"))]
                     j: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
-                    #[cfg(target_os = "macos")]
-                    j_t: DSMatrix::from_triplets_iter(std::iter::empty(), 0, 0),
                     //#[cfg(target_os = "macos")]
                     //j_sparse: LazyCell::new(),
-                    #[cfg(not(target_os = "macos"))]
                     j_mapping: Vec::new(),
-                    #[cfg(target_os = "macos")]
-                    j_t_mapping: Vec::new(),
                     sparse_solver: LazyCell::new(),
                     //#[cfg(target_os = "macos")]
                     //sparse_iterative_solver: LazyCell::new(),
@@ -608,7 +619,7 @@ where
                 sparse_jacobian: SparseJacobian::default(),
                 init_sparse_jacobian_vals: Vec::new(),
                 init_sparse_solver: LazyCell::new(),
-                init_j_t_mapping: Vec::new(),
+                init_j_mapping: Vec::new(),
                 x_prev,
                 r,
                 p,
@@ -623,7 +634,7 @@ where
         sparse_jacobian: &mut SparseJacobian<T>,
         init_sparse_jacobian_vals: &mut Vec<T>,
         init_sparse_solver: &mut LazyCell<SparseDirectSolver>,
-        init_j_t_mapping: &mut Vec<Index>,
+        init_j_mapping: &mut Vec<Index>,
         linsolve: &mut LinearSolverWorkspace<T>,
     ) {
         // Construct the sparse Jacobian.
@@ -635,48 +646,29 @@ where
         sparse_jacobian.j_rows = j_rows;
         sparse_jacobian.j_cols = j_cols;
         sparse_jacobian.j_vals.resize(j_nnz, T::zero());
-        let (j_t, j_t_mapping) = sparse_matrix_and_mapping(
+        let (j, j_mapping) = sparse_matrix_and_mapping(
             &sparse_jacobian.j_cols,
             &sparse_jacobian.j_rows,
             &sparse_jacobian.j_vals,
             n,
         );
-        init_sparse_solver.replace(SparseDirectSolver::new(j_t.view()).unwrap());
-        *init_j_t_mapping = j_t_mapping;
-        init_sparse_jacobian_vals.clone_from(j_t.storage());
+        init_sparse_solver.replace(SparseDirectSolver::new(j.view()).unwrap());
+        *init_j_mapping = j_mapping;
+        init_sparse_jacobian_vals.clone_from(j.storage());
         if let LinearSolverWorkspace::Direct(ds) = linsolve {
-            //let (j, j_mapping) = sparse_matrix_and_mapping(&j_rows, &j_cols, &sj.j_vals, n);
-            #[cfg(not(target_os = "macos"))]
             let (j, j_mapping) = sparse_matrix_and_mapping(
                 &sparse_jacobian.j_rows,
                 &sparse_jacobian.j_cols,
                 &sparse_jacobian.j_vals,
                 n,
-            );
-            #[cfg(target_os = "macos")]
-            let (j_t, j_t_mapping) = sparse_matrix_and_mapping(
-                &sparse_jacobian.j_cols,
-                &sparse_jacobian.j_rows,
-                &sparse_jacobian.j_vals,
-                n,
+                #[cfg(not(target_os = "macos"))] false,
+                #[cfg(not(target_os = "macos"))] true,
             );
 
             //#[cfg(target_os = "macos")]
             //ds.j_sparse.replace(new_sparse(j_t.view(), true));
-            #[cfg(target_os = "macos")]
-            {
-                ds.j_t = j_t;
-                ds.j_t_mapping = j_t_mapping;
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                ds.j = j;
-                ds.j_mapping = j_mapping;
-            }
-            #[cfg(target_os = "macos")]
-            ds.sparse_solver
-                .replace(SparseDirectSolver::new(ds.j_t.view()).unwrap());
-            #[cfg(not(target_os = "macos"))]
+            ds.j = j;
+            ds.j_mapping = j_mapping;
             ds.sparse_solver
                 .replace(SparseDirectSolver::new(ds.j.view()).unwrap());
             //#[cfg(target_os = "macos")]
@@ -718,7 +710,7 @@ where
             sparse_jacobian: sj,
             init_sparse_jacobian_vals,
             init_sparse_solver,
-            init_j_t_mapping,
+            init_j_mapping,
             linsolve,
             ..
         } = &mut *self.workspace.borrow_mut();
@@ -727,7 +719,7 @@ where
             sj,
             init_sparse_jacobian_vals,
             init_sparse_solver,
-            init_j_t_mapping,
+            init_j_mapping,
             linsolve,
         );
     }
@@ -790,7 +782,7 @@ where
             sparse_jacobian,
             init_sparse_jacobian_vals,
             init_sparse_solver,
-            init_j_t_mapping,
+            init_j_mapping,
             x_prev,
             r,
             p,
@@ -853,7 +845,7 @@ where
         init_sparse_jacobian_vals
             .iter_mut()
             .for_each(|x| *x = T::zero());
-        for (&pos, &j_val) in init_j_t_mapping.iter().zip(sparse_jacobian.j_vals.iter()) {
+        for (&pos, &j_val) in init_j_mapping.iter().zip(sparse_jacobian.j_vals.iter()) {
             if let Some(pos) = pos.into_option() {
                 init_sparse_jacobian_vals[pos] += j_val;
             }
@@ -986,14 +978,8 @@ where
                     );
                 }
                 LinearSolverWorkspace::Direct(DirectSolver {
-                    #[cfg(not(target_os = "macos"))]
                     j_mapping,
-                    #[cfg(not(target_os = "macos"))]
                     j,
-                    #[cfg(target_os = "macos")]
-                        j_t_mapping: j_mapping,
-                    #[cfg(target_os = "macos")]
-                        j_t: j,
                     sparse_solver,
                     ..
                 }) => {

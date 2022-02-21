@@ -522,9 +522,9 @@ pub struct Newton<P, T: Real> {
     pub workspace: RefCell<NewtonWorkspace<T>>,
 }
 
-fn sparse_matrix_and_mapping<T: Real>(
-    mut rows: &[usize],
-    mut cols: &[usize],
+fn sparse_matrix_and_mapping<'a, T: Real>(
+    mut rows: &'a [usize],
+    mut cols: &'a [usize],
     vals: &[T],
     mtx_size: usize,
     transpose: bool
@@ -651,6 +651,8 @@ where
             &sparse_jacobian.j_rows,
             &sparse_jacobian.j_vals,
             n,
+            #[cfg(target_os = "macos")] true,
+            #[cfg(not(target_os = "macos"))] false,
         );
         init_sparse_solver.replace(SparseDirectSolver::new(j.view()).unwrap());
         *init_j_mapping = j_mapping;
@@ -661,8 +663,8 @@ where
                 &sparse_jacobian.j_cols,
                 &sparse_jacobian.j_vals,
                 n,
+                #[cfg(target_os = "macos")] true,
                 #[cfg(not(target_os = "macos"))] false,
-                #[cfg(not(target_os = "macos"))] true,
             );
 
             //#[cfg(target_os = "macos")]

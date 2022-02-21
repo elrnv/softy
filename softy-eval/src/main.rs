@@ -50,7 +50,7 @@ pub fn main() -> Result<()> {
 
     let opt = Opt::from_clap(&app.get_matches());
 
-    let file_stem = if let Some(file_stem) = opt.output.file_stem() {
+    let mut file_stem = if let Some(file_stem) = opt.output.file_stem() {
         file_stem.to_string_lossy().to_string()
     } else {
         anyhow::bail!(
@@ -108,6 +108,7 @@ pub fn main() -> Result<()> {
                 let num_str = num_str.chars().rev().collect::<String>();
                 num_digits = num_str.len();
                 first_frame = num_str.parse()?;
+                file_stem.truncate(file_stem.len() - num_digits);
             }
             let out_path = opt.output.parent().unwrap().to_path_buf();
             let logfile = opt.logfile.as_ref();

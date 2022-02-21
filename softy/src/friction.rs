@@ -8,9 +8,9 @@ pub mod proj_solver;
 #[cfg(feature = "optsolver")]
 pub mod solver;
 
+use crate::constraints::FrictionProfile;
 use serde::{Deserialize, Serialize};
 use tensr::{Chunked3, Sparse};
-use crate::constraints::FrictionProfile;
 
 use crate::contact::ContactBasis;
 use crate::Real;

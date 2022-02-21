@@ -39,8 +39,7 @@ struct Opt {
 }
 
 pub fn main() -> Result<()> {
-    let _ = env_logger::Builder::from_env("SOFTY_LOG")
-        .try_init();
+    let _ = env_logger::Builder::from_env("SOFTY_LOG").try_init();
 
     use terminal_size::{terminal_size, Width};
     let app = Opt::clap().set_term_width(if let Some((Width(w), _)) = terminal_size() {
@@ -119,8 +118,7 @@ pub fn main() -> Result<()> {
                 }
                 let mut out_file_name = file_stem.clone();
                 out_file_name.push_str(&format!("{:01$}", first_frame + frame, num_digits));
-                geo::io::save_mesh(&mesh, out_path.join(out_file_name).with_extension(ext))
-                    .is_ok()
+                geo::io::save_mesh(&mesh, out_path.join(out_file_name).with_extension(ext)).is_ok()
             })?;
         }
         _ => anyhow::bail!("Unsupported output file extension: '.{}'", ext),

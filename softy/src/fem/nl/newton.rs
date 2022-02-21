@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
-use std::time::{Instant};
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use accelerate::*;
@@ -14,8 +14,8 @@ use thiserror::Error;
 use super::linsolve::*;
 use super::problem::NonLinearProblem;
 use super::{Callback, CallbackArgs, NLSolver, SolveResult, Status};
-use crate::Index;
 use crate::nl_fem::Timings;
+use crate::Index;
 use crate::Real;
 
 // Parameters for the Newton solver.
@@ -834,7 +834,9 @@ where
         //let sigma = linsolve.iterative_tolerance();
         //let orig_sigma = sigma;
 
-        log::debug!("{}", IterationInfo::header());
+        let header = IterationInfo::header();
+        log::debug!("{}", header[0]);
+        log::debug!("{}", header[1]);
         let info = IterationInfo::new(0, 0, linsolve_result, 1.0, f64::INFINITY, &r, &x_prev, x);
         log::debug!("{}", info);
         stats.push(info);
@@ -933,19 +935,13 @@ where
                 x,
                 problem,
             }) {
-                break (
-                    iterations,
-                    Status::Interrupted,
-                );
+                break (iterations, Status::Interrupted);
             }
 
             //log::trace!("r = {:?}", &r);
 
             if !merit_cur.is_finite() {
-                break (
-                    iterations,
-                    Status::Diverged,
-                );
+                break (iterations, Status::Diverged);
             }
 
             let t_begin_linsolve = Instant::now();
@@ -1081,12 +1077,7 @@ where
                         .expect("Uninitialized iterative sparse solver.");
                     let result = sparse_solver.solve_with_values(&r, j.storage());
                     let r64 = match result {
-                        Err(err) => {
-                            break (
-                                iterations,
-                                Status::LinearSolveError(err.into()),
-                            )
-                        }
+                        Err(err) => break (iterations, Status::LinearSolveError(err.into())),
                         Ok(r) => r,
                     };
 
@@ -1114,10 +1105,7 @@ where
             // The solve converts the rhs r into the unknown negative search direction p.
 
             if !p.as_tensor().norm_squared().is_finite() {
-                break (
-                    iterations,
-                    Status::StepTooLarge,
-                );
+                break (iterations, Status::StepTooLarge);
             }
 
             // Update previous step.
@@ -1324,7 +1312,16 @@ where
 
             iterations += 1;
 
-            let info = IterationInfo::new(iterations, ls_count, linsolve_result, alpha as f32, merit_next, &r_next, &x_prev, x);
+            let info = IterationInfo::new(
+                iterations,
+                ls_count,
+                linsolve_result,
+                alpha as f32,
+                merit_next,
+                &r_next,
+                &x_prev,
+                x,
+            );
             log::debug!("{}", &info);
             stats.push(info);
 
@@ -1338,18 +1335,12 @@ where
                 params.r_tol,
                 params.a_tol,
             ) {
-                break (
-                    iterations,
-                    Status::Success,
-                );
+                break (iterations, Status::Success);
             }
 
             // Check that we are running no more than the maximum allowed iterations.
             if iterations >= params.max_iter {
-                break (
-                    iterations,
-                    Status::MaximumIterationsExceeded,
-                );
+                break (iterations, Status::MaximumIterationsExceeded);
             }
 
             // Reset r to be a valid residual for the next iteration.
@@ -1363,7 +1354,13 @@ where
         timings.total = Instant::now() - t_begin_solve;
         timings.residual = *self.problem.residual_timings();
 
-        log::debug!("{}", timings);
+        log::debug!("Status:           {:?}", status);
+        log::debug!("Total Iterations: {:?}", iterations);
+
+        log::debug!("Timings:");
+        for line in format!("{}", timings).split('\n') {
+            log::debug!("{}", line);
+        }
 
         SolveResult {
             iterations,
@@ -1417,9 +1414,14 @@ impl IterationInfo {
             merit,
             r_inf: r.as_tensor().lp_norm(LpNorm::Inf).to_f64().unwrap(),
             x_2: x.as_tensor().norm().to_f64().unwrap(),
-            d_2: x_prev.iter().zip(x.iter()).map(|(&a, &b) | (a - b) * (a - b)).sum::<T>()
+            d_2: x_prev
+                .iter()
+                .zip(x.iter())
+                .map(|(&a, &b)| (a - b) * (a - b))
+                .sum::<T>()
                 .to_f64()
-                .unwrap().sqrt(),
+                .unwrap()
+                .sqrt(),
         }
     }
 
@@ -1436,15 +1438,17 @@ impl IterationInfo {
     /// alpha   - Fraction of the step taken
     /// ls #    - number of line search steps
     /// ```
-    pub fn header() -> &'static str {
-        "    i |  res-inf   |   merit    |    d-2     |    x-2     | lin # |  lin err   |   alpha    | ls # \n\
-         ------+------------+------------+------------+------------+-------+------------+------------+------"
+    pub fn header() -> [&'static str; 2] {
+        [
+            "    i |  res-inf   |   merit    |    d-2     |    x-2     | lin # |  lin err   |   alpha    | ls # ",
+            "------+------------+------------+------------+------------+-------+------------+------------+------"
+        ]
     }
 }
 
 impl Display for IterationInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f,
+        write!(f,
             "{i:>5} | {resinf:10.3e} | {merit:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {alpha:10.3e} | {ls:>4} ",
             i = self.iteration,
             resinf = self.r_inf,

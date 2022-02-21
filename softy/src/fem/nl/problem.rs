@@ -1,5 +1,5 @@
 use std::cell::{Ref, RefCell, RefMut};
-use std::time::{Instant};
+use std::time::Instant;
 
 use autodiff as ad;
 use flatk::*;
@@ -17,7 +17,7 @@ use crate::contact::ContactJacobianView;
 use crate::energy::{Energy, EnergyGradient, EnergyHessian, EnergyHessianTopology};
 use crate::energy_models::{gravity::*, inertia::*};
 use crate::matrix::*;
-use crate::nl_fem::{ResidualTimings, state, TimeIntegration};
+use crate::nl_fem::{state, ResidualTimings, TimeIntegration};
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
 use crate::Mesh;

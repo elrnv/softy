@@ -366,7 +366,8 @@ impl SceneConfig {
     /// If both are enabled, `simd-json` will be used.
     /// If none are enabled, this function will return an error.
     pub fn save_as_json(&self, _path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
-        #[cfg(feature = "simd-json")] {
+        #[cfg(feature = "simd-json")]
+        {
             let path = _path.as_ref();
             File::create(path)
                 .map_err(SceneError::from)
@@ -377,8 +378,10 @@ impl SceneConfig {
                 })
                 .into()
         }
-        #[cfg(not(feature = "simd-json"))] {
-            #[cfg(feature = "serde_json")] {
+        #[cfg(not(feature = "simd-json"))]
+        {
+            #[cfg(feature = "serde_json")]
+            {
                 let path = _path.as_ref();
                 File::create(path)
                     .map_err(SceneError::from)
@@ -389,7 +392,8 @@ impl SceneConfig {
                     })
                     .into()
             }
-            #[cfg(not(feature = "serde_json"))] {
+            #[cfg(not(feature = "serde_json"))]
+            {
                 Err(SceneError::JSONUnsupported)
             }
         }
@@ -426,7 +430,8 @@ impl SceneConfig {
     /// If both are enabled, `simd-json` will be used.
     /// If none are enabled, this function will return an error.
     pub fn load_from_json(_path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
-        #[cfg(feature = "simd-json")] {
+        #[cfg(feature = "simd-json")]
+        {
             let path = _path.as_ref();
             File::open(path)
                 .map_err(SceneError::from)
@@ -436,8 +441,10 @@ impl SceneConfig {
                 })
                 .into()
         }
-        #[cfg(not(feature = "simd-json"))] {
-            #[cfg(feature = "serde_json")] {
+        #[cfg(not(feature = "simd-json"))]
+        {
+            #[cfg(feature = "serde_json")]
+            {
                 let path = _path.as_ref();
                 File::open(path)
                     .map_err(SceneError::from)
@@ -447,7 +454,8 @@ impl SceneConfig {
                     })
                     .into()
             }
-            #[cfg(not(feature = "serde_json"))] {
+            #[cfg(not(feature = "serde_json"))]
+            {
                 Err(SceneError::JSONUnsupported)
             }
         }

@@ -1010,7 +1010,6 @@ where
             first_iteration = false;
             /*******************************/
 
-            log::debug!("Solve Result: {}", &result);
             match result.status {
                 Status::Success | Status::MaximumIterationsExceeded => {
                     // Compute contact violation.

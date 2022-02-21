@@ -19,12 +19,12 @@ use lazycell::LazyCell;
 use num_traits::Zero;
 use rayon::iter::Either;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use tensr::{
     AsMutTensor, AsTensor, BlockDiagonalMatrix3, CwiseBinExprImpl, Expr, ExprMut, IndexedExpr,
     IntoData, IntoExpr, IntoTensor, Matrix, Matrix2, Matrix3, MulExpr, Multiplication, Scalar,
     Tensor, Vector2, Vector3,
 };
-use serde::{Serialize, Deserialize};
 
 pub type DistanceGradient<T = f64> = Tensor![T; S S 3 1];
 
@@ -153,7 +153,13 @@ pub fn eta<T: Real>(v: Vector2<T>, factor: T, epsilon: T, s: impl FnOnce(T, T) -
 
 /// Jacobian of the full directional 1D sliding profile
 #[inline]
-pub fn eta_jac<T: Real>(v: Vector2<T>, factor: T, epsilon: T, s: impl FnOnce(T, T) -> T, ds: impl FnOnce(T, T) -> T) -> Matrix2<T> {
+pub fn eta_jac<T: Real>(
+    v: Vector2<T>,
+    factor: T,
+    epsilon: T,
+    s: impl FnOnce(T, T) -> T,
+    ds: impl FnOnce(T, T) -> T,
+) -> Matrix2<T> {
     // let s = |x| stabilized_sliding_profile(x, epsilon);
     // let ds = |x| stabilized_sliding_profile_derivative(x, epsilon);
     let s = |x| s(x, epsilon);
@@ -179,8 +185,12 @@ impl FrictionProfile {
     #[inline]
     pub fn potential<T: Real>(self, v: Vector2<T>, factor: T, epsilon: T) -> T {
         match self {
-            FrictionProfile::Stabilized => eta_int(v, factor, epsilon, stabilized_sliding_potential::<T>),
-            FrictionProfile::Quadratic => eta_int(v, factor, epsilon, quadratic_sliding_potential::<T>),
+            FrictionProfile::Stabilized => {
+                eta_int(v, factor, epsilon, stabilized_sliding_potential::<T>)
+            }
+            FrictionProfile::Quadratic => {
+                eta_int(v, factor, epsilon, quadratic_sliding_potential::<T>)
+            }
         }
     }
 
@@ -199,8 +209,20 @@ impl FrictionProfile {
     #[inline]
     pub fn jacobian<T: Real>(self, v: Vector2<T>, factor: T, epsilon: T) -> Matrix2<T> {
         match self {
-            FrictionProfile::Stabilized => eta_jac(v, factor, epsilon, stabilized_sliding_profile::<T>, stabilized_sliding_profile_derivative::<T>),
-            FrictionProfile::Quadratic => eta_jac(v, factor, epsilon, quadratic_sliding_profile::<T>, quadratic_sliding_profile_derivative::<T>),
+            FrictionProfile::Stabilized => eta_jac(
+                v,
+                factor,
+                epsilon,
+                stabilized_sliding_profile::<T>,
+                stabilized_sliding_profile_derivative::<T>,
+            ),
+            FrictionProfile::Quadratic => eta_jac(
+                v,
+                factor,
+                epsilon,
+                quadratic_sliding_profile::<T>,
+                quadratic_sliding_profile_derivative::<T>,
+            ),
         }
     }
 }
@@ -356,7 +378,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             distance_potential_alt: Vec::new(),
             force_workspace: std::cell::RefCell::new(Vec::new()),
             friction_jacobian_workspace: FrictionJacobianWorkspace::default(),
-            eta: friction_params.map(|x| x.friction_profile).unwrap_or(FrictionProfile::Stabilized),
+            eta: friction_params
+                .map(|x| x.friction_profile)
+                .unwrap_or(FrictionProfile::Stabilized),
         };
 
         penalty_constraint.update_distance_potential();
@@ -808,8 +832,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let d2 = &self.distance_potential;
         // eprintln!("alpha before: {alpha}");
 
-        for (i, (&d2, (p, v))) in d2.iter().zip(pc.iter().zip(vc.iter())) .enumerate()
-        {
+        for (i, (&d2, (p, v))) in d2.iter().zip(pc.iter().zip(vc.iter())).enumerate() {
             if d2 <= delta {
                 let vtx_idx = self.collider_vertex_indices[active_constraint_indices[i]];
                 let f1 = f1[vtx_idx];
@@ -1064,7 +1087,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 //dbg!(i, [v0, v1, v2]);
                 let vc_t = [v1, v2].into_tensor();
                 //dbg!(&lambda);
-                let vc_t_smoothed = eta.profile(vc_t, *lambda, T::from(epsilon).unwrap()).into_data();
+                let vc_t_smoothed = eta
+                    .profile(vc_t, *lambda, T::from(epsilon).unwrap())
+                    .into_data();
                 *vc = [T::zero(), vc_t_smoothed[0], vc_t_smoothed[1]];
             });
         Some(vc)
@@ -1621,7 +1646,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 kappa,
                 epsilon,
                 dqdv,
-                self.eta
+                self.eta,
             );
 
             let surf = &self.point_constraint.implicit_surface;

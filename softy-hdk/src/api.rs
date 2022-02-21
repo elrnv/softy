@@ -447,7 +447,7 @@ fn get_frictional_contacts<'a>(
                             friction_profile: match friction_profile {
                                 FrictionProfile::Quadratic => softy::FrictionProfile::Quadratic,
                                 _ => softy::FrictionProfile::Stabilized,
-                            }
+                            },
                         })
                     },
                 },

@@ -136,29 +136,39 @@ pub struct Timings {
 
 impl Display for Timings {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Line search assist time: {}ms", self.line_search_assist.as_millis())?;
-        writeln!(f,
+        writeln!(
+            f,
+            "Line search assist time: {}ms",
+            self.line_search_assist.as_millis()
+        )?;
+        writeln!(
+            f,
             "Balance equation computation time: {}ms",
             self.residual.total.as_millis()
         )?;
-        writeln!(f,
+        writeln!(
+            f,
             "   Energy gradient time: {}ms",
             self.residual.energy_gradient.as_millis()
         )?;
-        writeln!(f,
+        writeln!(
+            f,
             "   Contact prep time: {}ms",
             self.residual.prepare_contact.as_millis()
         )?;
-        writeln!(f,
+        writeln!(
+            f,
             "   Contact force time: {}ms",
             self.residual.contact_force.as_millis()
         )?;
-        writeln!(f,
+        writeln!(
+            f,
             "   Friction force time: {}ms",
             self.residual.friction_force.as_millis()
         )?;
         writeln!(f, "Linear solve time: {}ms", self.linear_solve.as_millis())?;
-        writeln!(f,
+        writeln!(
+            f,
             "   Jacobian product time: {}ms",
             self.jacobian_product.as_millis()
         )?;
@@ -181,7 +191,9 @@ pub struct SolveResult {
 
 impl std::fmt::Display for SolveResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", IterationInfo::header())?;
+        let header = IterationInfo::header();
+        writeln!(f, "{}", header[0])?;
+        writeln!(f, "{}", header[1])?;
         for info in self.stats.iter() {
             writeln!(f, "{}", info)?;
         }
@@ -190,7 +202,6 @@ impl std::fmt::Display for SolveResult {
         writeln!(f, "Timings:\n{}", self.timings)
     }
 }
-
 
 pub trait NLSolver<P, T> {
     /// Gets a reference to the outer callback function.

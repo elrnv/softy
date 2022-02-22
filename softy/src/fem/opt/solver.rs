@@ -1446,8 +1446,7 @@ impl Solver {
                 "Relative threshold for constraint violation: {}",
                 relative_tolerance
             );
-            // NOTE: Ipopt can't detect constraint values below 1e-7 in absolute value. It seems to
-            // be a hardcoded threshold.
+            // NOTE: Ipopt can't detect constraint values below 1e-7 in absolute value.
             if constraint_violation > 1e-7_f64.max(relative_tolerance) {
                 // intersecting objects detected (allow leeway via relative_tolerance)
                 if self.max_step < step {

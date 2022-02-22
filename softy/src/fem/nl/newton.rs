@@ -398,10 +398,10 @@ impl SparseDirectSolver {
         self.solver
             .solve_into(&mut self.sol, &mut self.buf, &mut self.r64)?;
         let t_solve = Instant::now();
-        log::debug!("Update time:   {}ms", (t_update_rhs - t_begin).as_millis());
-        log::debug!("Values time:   {}ms", (t_values - t_update_rhs).as_millis());
-        log::debug!("Refactor time: {}ms", (t_refactor - t_values).as_millis());
-        log::debug!("Solve time:    {}ms", (t_solve - t_refactor).as_millis());
+        log::trace!("Update time:   {}ms", (t_update_rhs - t_begin).as_millis());
+        log::trace!("Values time:   {}ms", (t_values - t_update_rhs).as_millis());
+        log::trace!("Refactor time: {}ms", (t_refactor - t_values).as_millis());
+        log::trace!("Solve time:    {}ms", (t_solve - t_refactor).as_millis());
         Ok(&self.sol)
     }
 
@@ -420,10 +420,10 @@ impl SparseDirectSolver {
         let t_update_rhs = Instant::now();
         let result = self.solve();
         let t_solve = Instant::now();
-        log::debug!("Update time:   {}ms", (t_update_rhs - t_refactor).as_millis());
-        log::debug!("Values time:   {}ms", (t_update_values - t_begin).as_millis());
-        log::debug!("Refactor time: {}ms", (t_refactor - t_update_values).as_millis());
-        log::debug!("Solve time:    {}ms", (t_solve - t_refactor).as_millis());
+        log::trace!("Update time:   {}ms", (t_update_rhs - t_refactor).as_millis());
+        log::trace!("Values time:   {}ms", (t_update_values - t_begin).as_millis());
+        log::trace!("Refactor time: {}ms", (t_refactor - t_update_values).as_millis());
+        log::trace!("Solve time:    {}ms", (t_solve - t_refactor).as_millis());
         result
     }
 }
@@ -755,6 +755,10 @@ where
         self.problem.residual_timings().clear();
         let t_begin_solve = Instant::now();
 
+        if update_jacobian_indices {
+            self.update_jacobian_indices();
+        }
+
         {
             let Self {
                 problem, workspace, ..
@@ -764,10 +768,6 @@ where
 
             // Initialize the residual.
             problem.residual(x, r.as_mut_slice());
-        }
-
-        if update_jacobian_indices {
-            self.update_jacobian_indices();
         }
 
         let Self {
@@ -985,6 +985,7 @@ where
                     sparse_solver,
                     ..
                 }) => {
+                    let t_begin_solve = Instant::now();
                     problem.jacobian_values(
                         x,
                         &r_cur,
@@ -992,6 +993,7 @@ where
                         &sparse_jacobian.j_cols,
                         sparse_jacobian.j_vals.as_mut_slice(),
                     );
+                    let t_jacobian_values = Instant::now();
                     log::trace!("Condition number: {:?}", {
                         let j_dense_ad = j_dense_ad.borrow_mut_with(|| {
                             ChunkedN::from_flat_with_stride(
@@ -1041,7 +1043,7 @@ where
                         // }
                         condition_number(j_dense.view())
                     });
-                    //jprod_time += Instant::now() - before_j;
+                    let t_linsolve_debug_info = Instant::now();
 
                     ////log::trace!("j_vals = {:?}", &j_vals);
 
@@ -1080,6 +1082,9 @@ where
                     // eprintln!("jp_check = {:?}", &jp);
 
                     //log::trace!("linsolve result: {:?}", linsolve_result);
+                    timings.direct_solve += Instant::now() - t_linsolve_debug_info;
+                    timings.jacobian_values += t_jacobian_values - t_begin_solve;
+                    timings.linsolve_debug_info += t_linsolve_debug_info - t_jacobian_values;
                 }
             }
 
@@ -1345,7 +1350,6 @@ where
         log::debug!("Status:           {:?}", status);
         log::debug!("Total Iterations: {:?}", iterations);
 
-        log::debug!("Timings:");
         for line in format!("{}", timings).split('\n') {
             log::debug!("{}", line);
         }

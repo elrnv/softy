@@ -29,6 +29,7 @@ where
     T: Real,
     P: MixedComplementarityProblem<T>,
 {
+    fn precompute_contact_jacobian(&self) { self.problem.precompute_contact_jacobian() }
     fn residual_timings(&self) -> RefMut<'_, ResidualTimings> {
         self.problem.residual_timings()
     }

@@ -19,6 +19,7 @@ pub use newton::*;
 pub use problem::*;
 pub use solver::*;
 pub use trust_region::*;
+use crate::constraints::FrictionTimings;
 
 /// Time integration method.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -111,7 +112,8 @@ pub struct ResidualTimings {
     pub energy_gradient: Duration,
     pub prepare_contact: Duration,
     pub contact_force: Duration,
-    pub friction_force: Duration,
+    pub contact_jacobian: Duration,
+    pub friction_force: FrictionTimings,
 }
 
 impl ResidualTimings {
@@ -120,7 +122,8 @@ impl ResidualTimings {
         self.energy_gradient = Duration::new(0, 0);
         self.prepare_contact = Duration::new(0, 0);
         self.contact_force = Duration::new(0, 0);
-        self.friction_force = Duration::new(0, 0);
+        self.contact_jacobian = Duration::new(0, 0);
+        self.friction_force.clear();
     }
 }
 
@@ -129,51 +132,96 @@ pub struct Timings {
     line_search_assist: Duration,
     residual: ResidualTimings,
     linear_solve: Duration,
+    direct_solve: Duration,
     jacobian_product: Duration,
+    jacobian_values: Duration,
+    linsolve_debug_info: Duration,
     line_search: Duration,
     total: Duration,
 }
 
 impl Display for Timings {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Timings (ms):")?;
         writeln!(
             f,
-            "Line search assist time: {}ms",
+            "  Line search assist time:    {}",
             self.line_search_assist.as_millis()
         )?;
         writeln!(
             f,
-            "Balance equation computation time: {}ms",
+            "  Balance equation time:      {}",
             self.residual.total.as_millis()
         )?;
         writeln!(
             f,
-            "   Energy gradient time: {}ms",
+            "    Energy gradient time:     {}",
             self.residual.energy_gradient.as_millis()
         )?;
         writeln!(
             f,
-            "   Contact prep time: {}ms",
+            "    Contact prep time:        {}",
             self.residual.prepare_contact.as_millis()
         )?;
         writeln!(
             f,
-            "   Contact force time: {}ms",
+            "    Contact force time:       {}",
             self.residual.contact_force.as_millis()
         )?;
         writeln!(
             f,
-            "   Friction force time: {}ms",
-            self.residual.friction_force.as_millis()
+            "    Friction force time:      {}",
+            self.residual.friction_force.total.as_millis()
         )?;
-        writeln!(f, "Linear solve time: {}ms", self.linear_solve.as_millis())?;
         writeln!(
             f,
-            "   Jacobian product time: {}ms",
+            "      Jac + basis mul time:   {}",
+            self.residual.friction_force.jac_basis_mul.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Contact vel prep time:  {}",
+            self.residual.friction_force.contact_velocity.prep.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Contact Jacobian time:  {}",
+            self.residual.friction_force.contact_velocity.contact_jac.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Contact velocity time:  {}",
+            self.residual.friction_force.contact_velocity.velocity.as_millis()
+        )?;
+        writeln!(
+            f,
+            "  Linear solve time:          {}", self.linear_solve.as_millis())?;
+        writeln!(
+            f,
+            "    Jacobian product time:    {}",
             self.jacobian_product.as_millis()
         )?;
-        writeln!(f, "Line search time: {}ms", self.line_search.as_millis())?;
-        writeln!(f, "Total solve time {}ms", self.total.as_millis())
+        writeln!(
+            f,
+            "    Jacobian values time:     {}",
+            self.jacobian_values.as_millis()
+        )?;
+        writeln!(
+            f,
+            "    Direct solve time:        {}",
+            self.direct_solve.as_millis()
+        )?;
+        writeln!(
+            f,
+            "    Debug info time:          {}",
+            self.linsolve_debug_info.as_millis()
+        )?;
+        writeln!(
+            f,
+            "  Line search time:           {}", self.line_search.as_millis())?;
+        writeln!(
+            f,
+            "  Total solve time            {}", self.total.as_millis())
     }
 }
 

@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::ops::AddAssign;
+use std::time::{Duration, Instant};
 use super::point_contact::PointContactConstraint;
 use crate::constraints::{ContactConstraint, ContactSurface};
 use crate::matrix::MatrixElementIndex;
@@ -6,10 +9,7 @@ use crate::{
     FrictionWorkspace, Index, Real, TriMesh, TripletContactJacobian, ORIGINAL_VERTEX_INDEX_ATTRIB,
 };
 use autodiff as ad;
-use flatk::{
-    Chunked, Chunked1, Chunked3, CloneWithStorage, Offsets, Select, Set, Sparse, Storage,
-    StorageMut, SubsetView, UniChunked, View, U1, U3,
-};
+use flatk::{Chunked, Chunked1, Chunked3, CloneWithStorage, Offsets, Select, Set, Sparse, Storage, StorageMut, SubsetView, UniChunked, View, U1, U3, Isolate};
 use geo::attrib::Attrib;
 use geo::index::CheckedIndex;
 use geo::mesh::VertexMesh;
@@ -30,10 +30,90 @@ pub type DistanceGradient<T = f64> = Tensor![T; S S 3 1];
 
 #[derive(Clone, Debug)]
 pub struct MappedDistanceGradient<T: Scalar> {
-    /// Compressed sparse sparse row sparse column gradient matrix.
+    /// Compressed sparse row sparse column gradient matrix.
     pub matrix: DistanceGradient<T>,
     /// A Mapping from original triplets to the final compressed sparse matrix.
     pub mapping: Vec<Index>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MappedContactJacobian<T> {
+    /// Compressed sparse row sparse column contact surface Jacobian matrix.
+    pub surf_jac: ContactJacobian<T>,
+    /// A Mapping from original triplets to the final compressed sparse matrix.
+    pub mapping: Vec<Index>,
+}
+
+impl<T: Real> MappedContactJacobian<T> {
+    fn from_triplets(triplet_jac: TripletContactJacobian<T>) -> Self {
+        debug_assert!(triplet_jac.block_indices.windows(2).all(|w| w[0].0 <= w[1].0 || w[0].1 <= w[1].1));
+        let blocks = Chunked3::from_flat(triplet_jac.blocks.data.view().into_arrays()).into_arrays();
+
+        let mut mapping = vec![Index::INVALID; blocks.len()];
+
+        let triplet_iter = triplet_jac.block_indices
+            .iter().zip(blocks.iter())
+            .map(|((row, col), block)| (*row, *col, *block));
+
+        let uncompressed = tensr::SSBlockMatrix3::from_block_triplets_iter_uncompressed(
+            triplet_iter,
+            triplet_jac.num_rows,
+            triplet_jac.num_cols,
+        );
+
+        // Compress the CSR matrix.
+        let matrix = uncompressed.pruned_with(
+            |_, _, _| true,
+            |src, dst| {
+                mapping[src] = Index::new(dst);
+            },
+        );
+
+        MappedContactJacobian {
+            surf_jac: matrix.into_data(),
+            mapping,
+        }
+    }
+
+    fn update_values(&mut self, triplet_jac: &TripletContactJacobian<T>) {
+        let MappedContactJacobian {
+            surf_jac,
+            mapping,
+        } = self;
+
+        surf_jac.storage_mut().fill(T::zero()); // Clear jacobian values.
+
+        // Update blocks according to the predetermined mapping.
+        for (&pos, block) in mapping.iter().zip(triplet_jac.blocks.iter()) {
+            if let Some(pos) = pos.into_option() {
+                *surf_jac.source.data.source.view_mut().isolate(pos).into_arrays().as_mut_tensor() += *block.into_arrays().as_tensor();
+            }
+        }
+    }
+
+    fn mul(&self, v: Chunked3<&[T]>, constrained_collider_vertices: &[usize], implicit_surface_vertex_indices: &[usize], collider_vertex_indices: &[usize]) -> Chunked3<Vec<T>> {
+        let surf_v = SubsetView::from_unique_ordered_indices(implicit_surface_vertex_indices, v);
+        let mut vc = (self.surf_jac.view().into_tensor() * surf_v.into_tensor()).into_data();
+        let col_v = SubsetView::from_unique_ordered_indices(collider_vertex_indices, v);
+        *&mut vc.expr_mut() -= SubsetView::from_unique_ordered_indices(constrained_collider_vertices, col_v).expr();
+        vc
+    }
+
+    fn transpose_mul(&self, vc: Chunked3<&[T]>, constrained_collider_vertices: &[usize], implicit_surface_vertex_indices: &[usize], collider_vertex_indices: &[usize], num_variables: usize) -> Chunked3<Vec<T>> {
+        let surf_v = (self.surf_jac.view().into_tensor().transpose() * vc.into_tensor()).into_data();
+        let mut v = Chunked3::from_flat(vec![T::zero(); num_variables]);
+        for (&i, &[v0, v1, v2]) in implicit_surface_vertex_indices.iter().zip(surf_v.iter()) {
+            v[i] = [-v0, -v1, -v2];
+        }
+        for (&i, &[v0, v1, v2]) in constrained_collider_vertices.iter().zip(vc.iter()) {
+            v[collider_vertex_indices[i]] = [-v0, -v1, -v2];
+        }
+        v
+    }
+
+    fn num_rows(&self) -> usize {
+        self.surf_jac.view().into_tensor().num_rows()
+    }
 }
 
 impl<T: Real> MappedDistanceGradient<T> {
@@ -178,6 +258,12 @@ pub enum FrictionProfile {
     Quadratic,
 }
 
+impl Default for FrictionProfile {
+    fn default() -> Self {
+        FrictionProfile::Stabilized
+    }
+}
+
 impl FrictionProfile {
     /// The sliding potential.
     ///
@@ -232,8 +318,6 @@ type SSBlock3<T> = Tensor![T; S S 3 3];
 #[derive(Clone, Debug)]
 struct FrictionJacobianWorkspace<T> {
     bc: Chunked3<Vec<T>>,
-    active_constraint_indices: Vec<usize>,
-    constrained_query_points: Vec<Index>,
     lambda: Vec<T>,
     contact_gradient_basis_eta_jac_basis_contact_jac: SSBlock3<T>,
     contact_gradient_basis_eta_jac_basis_jac_contact_jac: SSBlock3<T>,
@@ -253,14 +337,58 @@ impl<T: Real> Default for FrictionJacobianWorkspace<T> {
         );
         FrictionJacobianWorkspace {
             bc: Default::default(),
-            active_constraint_indices: Vec::new(),
-            constrained_query_points: Vec::new(),
             lambda: Vec::new(),
             contact_gradient_basis_eta_jac_basis_contact_jac: mtx.clone(),
             contact_gradient_basis_eta_jac_basis_jac_contact_jac: mtx.clone(),
             contact_gradient_basis_eta_jac_basis_jac: mtx.clone(),
             contact_gradient_jac_basis: mtx,
         }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct ContactVelocityTimings {
+    pub prep: Duration,
+    pub contact_jac: Duration,
+    pub velocity: Duration,
+}
+
+impl ContactVelocityTimings {
+    pub fn clear(&mut self) {
+        self.prep = Duration::new(0, 0);
+        self.contact_jac = Duration::new(0, 0);
+        self.velocity = Duration::new(0, 0);
+    }
+}
+
+impl AddAssign<ContactVelocityTimings> for ContactVelocityTimings{
+    fn add_assign(&mut self, rhs: ContactVelocityTimings) {
+        self.prep += rhs.prep;
+        self.contact_jac += rhs.contact_jac;
+        self.velocity += rhs.velocity;
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct FrictionTimings {
+    pub total: Duration,
+    pub contact_velocity: ContactVelocityTimings,
+    pub jac_basis_mul: Duration,
+}
+
+impl AddAssign<FrictionTimings> for FrictionTimings {
+    fn add_assign(&mut self, rhs: FrictionTimings) {
+        self.total += rhs.total;
+        self.contact_velocity += rhs.contact_velocity;
+        self.jac_basis_mul += rhs.jac_basis_mul;
+    }
+}
+
+impl FrictionTimings {
+    pub fn clear(&mut self) {
+        self.total = Duration::new(0, 0);
+        self.jac_basis_mul = Duration::new(0, 0);
+        self.contact_velocity.clear();
     }
 }
 
@@ -289,11 +417,20 @@ where
     pub distance_potential_alt: Vec<T>,
     force_workspace: std::cell::RefCell<Vec<Vec<T>>>,
 
-    contact_jacobian: LazyCell<ContactJacobian<T>>,
+    contact_jacobian: Option<MappedContactJacobian<T>>,
     contact_gradient: LazyCell<ContactGradient<T>>,
     distance_gradient: LazyCell<MappedDistanceGradient<T>>,
 
     friction_jacobian_workspace: FrictionJacobianWorkspace<T>,
+
+    /// Collider vertex indices for each active constraint.
+    constrained_collider_vertices: Vec<usize>,
+    /// Constraint indices for each collider vertex.
+    ///
+    /// Unconstrained vertices are set to `INVALID`.
+    collider_vertex_constraints: Vec<Index>,
+
+    pub timings: std::cell::RefCell<FrictionTimings>,
 }
 
 impl<T: Real> PenaltyPointContactConstraint<T> {
@@ -302,11 +439,12 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         if self.distance_gradient.filled() {
             distance_gradient.replace(self.distance_gradient.borrow().unwrap().clone_cast::<S>());
         }
-        let mut contact_jacobian = LazyCell::new();
-        if self.contact_jacobian.filled() {
-            contact_jacobian.replace(clone_cast_ssblock_mtx::<T, S>(
-                self.contact_jacobian.borrow().unwrap(),
-            ));
+        let mut contact_jacobian = None;
+        if let Some(self_contact_jacobian) = self.contact_jacobian.as_ref() {
+            contact_jacobian.replace(MappedContactJacobian {
+                mapping: self_contact_jacobian.mapping.clone(),
+                surf_jac: clone_cast_ssblock_mtx::<T, S>(&self_contact_jacobian.surf_jac)
+            });
         }
         let mut contact_gradient = LazyCell::new();
         if self.contact_gradient.filled() {
@@ -334,7 +472,10 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             contact_gradient,
             friction_jacobian_workspace: FrictionJacobianWorkspace::default(),
             force_workspace: std::cell::RefCell::new(Vec::new()),
+            constrained_collider_vertices: Vec::new(),
+            collider_vertex_constraints: Vec::new(),
             eta: self.eta,
+            timings: RefCell::new(FrictionTimings::default())
         }
     }
 
@@ -371,16 +512,19 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             implicit_surface_vertex_indices,
             collider_vertex_indices,
             distance_gradient: LazyCell::new(),
-            contact_jacobian: LazyCell::new(),
+            contact_jacobian: None,
             contact_gradient: LazyCell::new(),
             lambda: Vec::new(),
             distance_potential: Vec::new(),
             distance_potential_alt: Vec::new(),
-            force_workspace: std::cell::RefCell::new(Vec::new()),
+            force_workspace: RefCell::new(Vec::new()),
             friction_jacobian_workspace: FrictionJacobianWorkspace::default(),
+            constrained_collider_vertices: Vec::new(),
+            collider_vertex_constraints: Vec::new(),
             eta: friction_params
                 .map(|x| x.friction_profile)
                 .unwrap_or(FrictionProfile::Stabilized),
+            timings: RefCell::new(FrictionTimings::default())
         };
 
         penalty_constraint.update_distance_potential();
@@ -516,53 +660,54 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         }
     }
 
-    pub(crate) fn contact_jacobian<'a>(
-        contact_jacobian: &'a mut LazyCell<ContactJacobian<T>>,
+    pub(crate) fn precompute_contact_jacobian<'a>(
+        &mut self,
+    ) {
+        let pc = &mut self.point_constraint;
+
+        if pc.friction_workspace.is_none() {
+            return;
+        }
+
+        self.constrained_collider_vertices =
+            self.point_constraint.active_constraint_indices();
+
+        self.collider_vertex_constraints =
+            vec![Index::invalid(); self.point_constraint.collider_vertex_positions.len()];
+        for (constraint_idx, &query_idx) in self
+            .constrained_collider_vertices
+            .iter()
+            .enumerate()
+        {
+            self.collider_vertex_constraints[query_idx] =
+                constraint_idx.into();
+        }
+
+        let constrained_collider_vertices = &self.constrained_collider_vertices;
+        let constrained_collider_vertex_positions = Select::new(constrained_collider_vertices.as_slice(), self.point_constraint.collider_vertex_positions.view());
+
+        let jac_triplets = TripletContactJacobian::from_selection(
+            &self.point_constraint.implicit_surface,
+            constrained_collider_vertex_positions.view(),
+        );
+
+        self.contact_jacobian = Some(MappedContactJacobian::from_triplets(jac_triplets));
+    }
+
+    pub(crate) fn update_contact_jacobian<'a>(
+        contact_jacobian: &'a mut MappedContactJacobian<T>,
         surf: &QueryTopo<T>,
         query_points: Chunked3<&[T]>,
-        active_contact_indices: &'a [usize],
-        query_points_in_contact: &'a [Index],
-        implicit_surface_vertex_indices: &'a [usize],
-        collider_vertex_indices: &'a [usize],
-        num_vertices: usize,
-        force_recompute: bool,
-    ) -> &'a ContactJacobian<T> {
+        constrained_collider_vertices: &'a [usize],
+    ) {
         //assert!(!force_recompute);
-        let active_contact_points = Select::new(active_contact_indices, query_points.view());
+        let constrained_collider_vertex_positions = Select::new(constrained_collider_vertices, query_points.view());
 
-        // Compute contact Jacobian
-        if force_recompute {
-            let jac_triplets = TripletContactJacobian::from_selection_reindexed(
-                &surf,
-                active_contact_points,
-                query_points_in_contact,
-                implicit_surface_vertex_indices,
-                collider_vertex_indices,
-                num_vertices,
-            );
-            let jac: ContactJacobian<T> = jac_triplets.into_jacobian();
-            contact_jacobian.replace(
-                jac.into_tensor()
-                    .pruned(|_, _, block| !block.is_zero())
-                    .into_data(),
-            );
-            contact_jacobian.borrow().unwrap()
-        } else {
-            contact_jacobian.borrow_with(|| {
-                let jac_triplets = TripletContactJacobian::from_selection_reindexed(
-                    &surf,
-                    active_contact_points,
-                    query_points_in_contact,
-                    implicit_surface_vertex_indices,
-                    collider_vertex_indices,
-                    num_vertices,
-                );
-                let jac: ContactJacobian<T> = jac_triplets.into_jacobian();
-                jac.into_tensor()
-                    .pruned(|_, _, block| !block.is_zero())
-                    .into_data()
-            })
-        }
+        let jac_triplets = TripletContactJacobian::from_selection(
+            &surf,
+            constrained_collider_vertex_positions,
+        );
+        contact_jacobian.update_values(&jac_triplets);
     }
 
     pub(crate) fn contact_gradient<'a>(
@@ -580,7 +725,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
         // Compute contact Jacobian
         if force_recompute {
-            let jac_triplets = TripletContactJacobian::from_selection_reindexed(
+            let jac_triplets = TripletContactJacobian::from_selection_reindexed_full(
                 &surf,
                 active_contact_points,
                 query_points_in_contact,
@@ -597,7 +742,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             contact_gradient.borrow().unwrap()
         } else {
             contact_gradient.borrow_with(|| {
-                let jac_triplets = TripletContactJacobian::from_selection_reindexed(
+                let jac_triplets = TripletContactJacobian::from_selection_reindexed_full(
                     &surf,
                     active_contact_points,
                     query_points_in_contact,
@@ -677,8 +822,6 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     /// This function assumes that the `constraint_gradient` field sparsity has already been
     /// initialized.
     pub fn update_constraint_gradient(&mut self) {
-        use flatk::Isolate;
-
         let MappedDistanceGradient { matrix, mapping } = self
             .distance_gradient
             .borrow_mut()
@@ -773,7 +916,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         vel: Chunked3<&[T]>,
         f1: Chunked3<&[T]>,
         f2: Chunked3<&[T]>,
-        pos_cur: Chunked3<&[T]>,
+        _pos_cur: Chunked3<&[T]>,
         pos_next: Chunked3<&[T]>,
         delta: f32,
     ) -> T {
@@ -800,20 +943,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         // self.subtract_friction_force(f2.view_mut(), vel_next, epsilon);
         // let epsilon = T::from(epsilon).unwrap();
 
-        let active_constraint_indices = &self.friction_jacobian_workspace.active_constraint_indices;
-        let constrained_query_points = &self.friction_jacobian_workspace.constrained_query_points;
+        let constrained_collider_vertices = self.constrained_collider_vertices.as_slice();
 
-        let jac = Self::contact_jacobian(
-            &mut self.contact_jacobian,
-            &self.point_constraint.implicit_surface,
-            self.point_constraint.collider_vertex_positions.view(),
-            active_constraint_indices,
-            constrained_query_points,
-            &self.implicit_surface_vertex_indices,
-            &self.collider_vertex_indices,
-            pos_cur.len(),
-            false,
-        );
+        let jac = self.contact_jacobian.as_ref().unwrap();
 
         let contact_basis = &self
             .point_constraint
@@ -823,10 +955,12 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .contact_basis;
 
         // Compute relative velocity at the point of contact: `vc = J(x)v`
-        assert_eq!(jac.view().into_tensor().num_cols(), vel.len());
+        // assert_eq!(jac.view().into_tensor().num_cols(), vel.len());
         assert_eq!(p.len(), vel.len());
-        let vc = (jac.view().into_tensor() * vel.into_tensor()).into_data();
-        let pc = (jac.view().into_tensor() * p.into_tensor()).into_data();
+        //let vc = (jac.view().into_tensor() * vel.into_tensor()).into_data();
+        let vc = jac.mul(vel, constrained_collider_vertices, &self.implicit_surface_vertex_indices, &self.collider_vertex_indices);
+        //let pc = (jac.view().into_tensor() * p.into_tensor()).into_data();
+        let pc = jac.mul(p, constrained_collider_vertices, &self.implicit_surface_vertex_indices, &self.collider_vertex_indices);
 
         // let d1 = &self.distance_potential_alt;
         let d2 = &self.distance_potential;
@@ -834,7 +968,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
         for (i, (&d2, (p, v))) in d2.iter().zip(pc.iter().zip(vc.iter())).enumerate() {
             if d2 <= delta {
-                let vtx_idx = self.collider_vertex_indices[active_constraint_indices[i]];
+                let vtx_idx = self.collider_vertex_indices[constrained_collider_vertices[i]];
                 let f1 = f1[vtx_idx];
                 let f2 = f2[vtx_idx];
                 // eprintln!("contact {} is sliding at vtx {}", i, vtx_idx);
@@ -902,8 +1036,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     pub fn lagged_friction_potential(&mut self, v: Chunked3<&[T]>, epsilon: f32) -> T {
         // Compute friction potential.
         let lambda = &self.lambda;
-        let active_constraint_indices = &self.friction_jacobian_workspace.active_constraint_indices;
-        let constrained_query_points = &self.friction_jacobian_workspace.constrained_query_points;
+        let constrained_collider_vertices = self.constrained_collider_vertices.as_slice();
         let pc = &mut self.point_constraint;
 
         if pc.friction_workspace.is_none() {
@@ -915,19 +1048,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         assert_eq!(normals.len(), lambda.len());
 
         // Contact Jacobian is defined for object vertices only. Contact Jacobian for collider vertices is trivial.
-        let jac = Self::contact_jacobian(
-            &mut self.contact_jacobian,
-            &pc.implicit_surface,
-            pc.collider_vertex_positions.view(),
-            active_constraint_indices,
-            constrained_query_points,
-            &self.implicit_surface_vertex_indices,
-            &self.collider_vertex_indices,
-            v.len(),
-            false,
-        );
+        let jac = self.contact_jacobian.as_ref().unwrap();
 
-        assert_eq!(jac.len(), lambda.len());
+        assert_eq!(jac.surf_jac.len(), lambda.len());
 
         let FrictionWorkspace {
             contact_basis,
@@ -940,8 +1063,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         contact_basis.update_from_normals(normals.into());
 
         // Compute relative velocity at the point of contact: `vc = J(x)v`
-        assert_eq!(jac.view().into_tensor().num_cols(), v.len());
-        let vc = (jac.view().into_tensor() * v.into_tensor()).into_data();
+        // assert_eq!(jac.view().into_tensor().num_cols(), v.len());
+        // let vc = (jac.view().into_tensor() * v.into_tensor()).into_data();
+        let vc = jac.mul(v, constrained_collider_vertices, &self.implicit_surface_vertex_indices, &self.collider_vertex_indices);
 
         assert_eq!(lambda.len(), vc.len());
 
@@ -1030,9 +1154,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         epsilon: f32,
         recompute_jacobian: bool,
     ) -> Option<Chunked3<Vec<T>>> {
+        let t_begin = Instant::now();
         let lambda = &self.lambda;
-        let active_constraint_indices = &self.friction_jacobian_workspace.active_constraint_indices;
-        let constrained_query_points = &self.friction_jacobian_workspace.constrained_query_points;
+        let constrained_collider_vertices = &self.constrained_collider_vertices;
         let pc = &mut self.point_constraint;
 
         if pc.friction_workspace.is_none() {
@@ -1042,21 +1166,23 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         // Construct contact (or "sliding") basis.
         let normals = pc.contact_normals();
         assert_eq!(normals.len(), lambda.len());
+        let t_prep = Instant::now();
 
         // Contact Jacobian is defined for object vertices only. Contact Jacobian for collider vertices is trivial.
-        let jac = Self::contact_jacobian(
-            &mut self.contact_jacobian,
-            &pc.implicit_surface,
-            pc.collider_vertex_positions.view(),
-            active_constraint_indices,
-            constrained_query_points,
-            &self.implicit_surface_vertex_indices,
-            &self.collider_vertex_indices,
-            v.len(),
-            recompute_jacobian,
-        );
+        if recompute_jacobian {
+            Self::update_contact_jacobian(
+                self.contact_jacobian.as_mut().unwrap(),
+                &pc.implicit_surface,
+                pc.collider_vertex_positions.view(),
+                constrained_collider_vertices,
+            );
+        }
 
-        assert_eq!(jac.len(), lambda.len());
+        let jac = self.contact_jacobian.as_ref().unwrap();
+
+        let t_contact_jac = Instant::now();
+
+        assert_eq!(jac.num_rows(), lambda.len());
 
         let FrictionWorkspace {
             contact_basis,
@@ -1069,8 +1195,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         contact_basis.update_from_normals(normals.into());
 
         // Compute relative velocity at the point of contact: `vc = J(x)v`
-        assert_eq!(jac.view().into_tensor().num_cols(), v.len());
-        let mut vc = (jac.view().into_tensor() * v.into_tensor()).into_data();
+        //assert_eq!(jac.num_cols() + pc.collider_vertex_positions.len(), v.len());
+        let mut vc = jac.mul(v, constrained_collider_vertices, &self.implicit_surface_vertex_indices, &self.collider_vertex_indices);
 
         assert_eq!(lambda.len(), vc.len());
 
@@ -1092,6 +1218,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                     .into_data();
                 *vc = [T::zero(), vc_t_smoothed[0], vc_t_smoothed[1]];
             });
+        let t_velocity = Instant::now();
+        let timings = &mut *self.timings.borrow_mut();
+        timings.contact_velocity.prep += t_prep - t_begin;
+        timings.contact_velocity.contact_jac += t_contact_jac - t_prep;
+        timings.contact_velocity.velocity += t_velocity - t_contact_jac;
         Some(vc)
     }
 
@@ -1106,41 +1237,17 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         v: Chunked3<&[T]>,
         epsilon: f32,
     ) -> Option<Chunked3<Vec<T>>> {
-        // let (active_constraint_subset, active_contact_indices, _, query_points_in_contact, lambda) =
-        //     self.point_constraint.in_contact_indices(lambda, dist);
-        self.friction_jacobian_workspace.active_constraint_indices =
-            self.point_constraint.active_constraint_indices();
-
-        self.friction_jacobian_workspace.constrained_query_points =
-            vec![Index::invalid(); self.point_constraint.collider_vertex_positions.len()];
-        for (constraint_idx, &query_idx) in self
-            .friction_jacobian_workspace
-            .active_constraint_indices
-            .iter()
-            .enumerate()
-        {
-            self.friction_jacobian_workspace.constrained_query_points[query_idx] =
-                constraint_idx.into();
-        }
+        let t_begin = Instant::now();
 
         //dbg!(&v);
 
         // Computes `b(x,v) = H(T(x)'v)λ(x)`.
         let mut vc = self.compute_constraint_friction_force(v, epsilon, true)?;
 
+        let t_vc = Instant::now();
         //dbg!(&vc);
 
-        let jac = Self::contact_jacobian(
-            &mut self.contact_jacobian,
-            &self.point_constraint.implicit_surface,
-            self.point_constraint.collider_vertex_positions.view(),
-            &self.friction_jacobian_workspace.active_constraint_indices,
-            &self.friction_jacobian_workspace.constrained_query_points,
-            &self.implicit_surface_vertex_indices,
-            &self.collider_vertex_indices,
-            v.len(),
-            false,
-        );
+        let jac = self.contact_jacobian.as_ref().unwrap();
 
         let FrictionWorkspace {
             contact_basis,
@@ -1158,7 +1265,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         //dbg!(&vc);
 
         // Compute object force (compute `f = J'(x)vc`)
-        let f = jac.view().into_tensor().transpose() * vc.view().into_tensor();
+        let f = jac.transpose_mul(vc.view(), &self.constrained_collider_vertices, &self.implicit_surface_vertex_indices, &self.collider_vertex_indices, v.len()*3);
+        let t_vc_jac = Instant::now();
+        let timings = &mut *self.timings.borrow_mut();
+        timings.total += t_vc_jac - t_begin;
+        timings.jac_basis_mul += t_vc_jac - t_vc;
         //dbg!(&f.view().storage());
         Some(f.into_data())
     }
@@ -1286,7 +1397,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         surf: &implicits::QueryTopo<T>,
         contact_basis: &ContactBasis<T>,
         query_points: Chunked3<&'a [T]>,
-        constrained_query_points: &[Index],
+        collider_vertex_constraints: &[Index],
         multipliers: &[[T; 3]],
         implicit_surface_vertex_indices: &[usize],
         collider_vertex_indices: &[usize],
@@ -1297,7 +1408,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let (indices, blocks): (Vec<_>, Vec<_>) = Self::contact_basis_matrix_jacobian_product(
             surf,
             query_points,
-            constrained_query_points,
+            collider_vertex_constraints,
             implicit_surface_vertex_indices,
             collider_vertex_indices,
             contact_basis,
@@ -1343,7 +1454,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     pub fn build_contact_jacobian_gradient_product<'a>(
         surf: &implicits::QueryTopo<T>,
         query_points: &[[T; 3]],
-        constrained_query_points: &[Index],
+        collider_vertex_constraints: &[Index],
         multipliers: &[[T; 3]],
         num_vertices: usize,
         num_contacts: usize,
@@ -1355,7 +1466,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             )?
             .filter(|(_, col, _)| col < &num_vertices)
             .filter_map(|(row, col, mtx)| {
-                constrained_query_points[row]
+                collider_vertex_constraints[row]
                     .into_option()
                     .map(|contact_idx| (contact_idx, col, mtx))
             })
@@ -1520,21 +1631,6 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             return None;
         }
 
-        self.friction_jacobian_workspace.active_constraint_indices =
-            self.point_constraint.active_constraint_indices();
-
-        self.friction_jacobian_workspace.constrained_query_points =
-            vec![Index::invalid(); self.point_constraint.collider_vertex_positions.len()];
-        for (constraint_idx, &query_idx) in self
-            .friction_jacobian_workspace
-            .active_constraint_indices
-            .iter()
-            .enumerate()
-        {
-            self.friction_jacobian_workspace.constrained_query_points[query_idx] =
-                constraint_idx.into();
-        }
-
         let num_vertices = max_index;
         let num_constraints = self.constraint_size();
 
@@ -1552,27 +1648,17 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         //       also but this way we avoid doing any new allocations. This is left as a todo since
         //       we need to profile if this is actually worthwhile.
         // Contact Jacobian is defined for object vertices only. Contact Jacobian for collider vertices is trivial.
-        let contact_jacobian = Self::contact_jacobian(
-            &mut self.contact_jacobian,
-            &self.point_constraint.implicit_surface,
-            self.point_constraint.collider_vertex_positions.view(),
-            &self.friction_jacobian_workspace.active_constraint_indices,
-            &self.friction_jacobian_workspace.constrained_query_points,
-            &self.implicit_surface_vertex_indices,
-            &self.collider_vertex_indices,
-            v.len(),
-            false,
-        );
+        let contact_jacobian = self.contact_jacobian.as_ref().unwrap();
         assert_eq!(
-            contact_jacobian.view().into_tensor().num_rows(),
+            contact_jacobian.num_rows(),
             num_constraints
         );
         let contact_gradient = Self::contact_gradient(
             &mut self.contact_gradient,
             &self.point_constraint.implicit_surface,
             self.point_constraint.collider_vertex_positions.view(),
-            &self.friction_jacobian_workspace.active_constraint_indices,
-            &self.friction_jacobian_workspace.constrained_query_points,
+            &self.constrained_collider_vertices,
+            &self.collider_vertex_constraints,
             &self.implicit_surface_vertex_indices,
             &self.collider_vertex_indices,
             v.len(),
@@ -1630,7 +1716,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             }
 
             // Compute relative velocity at the point of contact: `vc = J(x)v`
-            let vc = (contact_jacobian.view().into_tensor() * v.into_tensor()).into_data();
+            let vc = contact_jacobian.mul(v, &self.constrained_collider_vertices, &self.implicit_surface_vertex_indices, &self.collider_vertex_indices);
             assert_eq!(vc.len(), num_constraints);
 
             // Derivative of lambda term.
@@ -1683,8 +1769,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                     .unwrap()
                     .contact_basis,
                 query_points.view(),
-                self.friction_jacobian_workspace
-                    .constrained_query_points
+                self.collider_vertex_constraints
                     .view(),
                 c.view().into_arrays(),
                 &self.implicit_surface_vertex_indices,
@@ -1746,8 +1831,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 surf,
                 &pc_ws.contact_basis,
                 query_points.view(),
-                self.friction_jacobian_workspace
-                    .constrained_query_points
+                self.collider_vertex_constraints
                     .view(),
                 vc.view().into_arrays(),
                 &self.implicit_surface_vertex_indices,
@@ -1793,8 +1877,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             let mut jac_contact_jacobian = Self::build_contact_jacobian_gradient_product(
                 surf,
                 query_points.view().into_arrays(),
-                self.friction_jacobian_workspace
-                    .constrained_query_points
+                self.collider_vertex_constraints
                     .view(),
                 v0vec.view(),
                 self.implicit_surface_vertex_indices.len(),
@@ -2378,44 +2461,53 @@ mod tests {
 
     #[test]
     fn eta_derivative() {
-        let factor = 1.0;
-        let epsilon = 0.1;
-        let x = [-0.1, 0.9].into_tensor();
-        let df_dv = eta_jac(x, factor, epsilon);
-        let mut v = x.mapd(|x| F1::cst(x));
-        v[0] = F1::var(v[0]);
-        let f = eta(v, factor.into(), epsilon.into());
-        let df_dv0_ad = f.mapd(|x| x.deriv());
-        assert_relative_eq!(df_dv0_ad[0], df_dv[0][0]);
-        assert_relative_eq!(df_dv0_ad[1], df_dv[1][0]);
-        v[0] = F1::cst(v[0]);
-        v[1] = F1::var(v[1]);
-        let f = eta(v, factor.into(), epsilon.into());
-        let df_dv1_ad = f.mapd(|x| x.deriv());
-        assert_relative_eq!(df_dv1_ad[0], df_dv[0][1]);
-        assert_relative_eq!(df_dv1_ad[1], df_dv[1][1]);
+        let eta_jac_tester = |friction_profile: FrictionProfile| {
+            let factor = 1.0;
+            let epsilon = 0.1;
+            let x = [-0.1, 0.9].into_tensor();
+            let df_dv = friction_profile.jacobian(x, factor, epsilon);
+            let mut v = x.mapd(|x| F1::cst(x));
+            v[0] = F1::var(v[0]);
+            let f = friction_profile.profile(v, factor.into(), epsilon.into());
+            let df_dv0_ad = f.mapd(|x| x.deriv());
+            assert_relative_eq!(df_dv0_ad[0], df_dv[0][0]);
+            assert_relative_eq!(df_dv0_ad[1], df_dv[1][0]);
+            v[0] = F1::cst(v[0]);
+            v[1] = F1::var(v[1]);
+            let f = friction_profile.profile(v, factor.into(), epsilon.into());
+            let df_dv1_ad = f.mapd(|x| x.deriv());
+            assert_relative_eq!(df_dv1_ad[0], df_dv[0][1]);
+            assert_relative_eq!(df_dv1_ad[1], df_dv[1][1]);
+        };
+
+        eta_jac_tester(FrictionProfile::Stabilized);
+        eta_jac_tester(FrictionProfile::Quadratic);
     }
 
     #[test]
     fn eta_derivative_near_zero() {
         let factor = 1.0;
         let epsilon = 0.1;
-        for i in 0..10 {
-            let x = [0.0 + 0.0001 * i as f64, 0.0].into_tensor();
-            let df_dv = eta_jac(x, factor, epsilon);
-            let mut v = x.mapd(|x| F1::cst(x));
-            v[0] = F1::var(v[0]);
-            let f = eta(v, factor.into(), epsilon.into());
-            let df_dv0_ad = f.mapd(|x| x.deriv());
-            assert_relative_eq!(df_dv0_ad[0], df_dv[0][0]);
-            assert_relative_eq!(df_dv0_ad[1], df_dv[1][0]);
-            v[0] = F1::cst(v[0]);
-            v[1] = F1::var(v[1]);
-            let f = eta(v, factor.into(), epsilon.into());
-            let df_dv1_ad = f.mapd(|x| x.deriv());
-            assert_relative_eq!(df_dv1_ad[0], df_dv[0][1]);
-            assert_relative_eq!(df_dv1_ad[1], df_dv[1][1]);
-        }
+        let eta_jac_tester = |fp: FrictionProfile| {
+            for i in 0..10 {
+                let x = [0.0 + 0.0001 * i as f64, 0.0].into_tensor();
+                let df_dv = fp.jacobian(x, factor, epsilon);
+                let mut v = x.mapd(|x| F1::cst(x));
+                v[0] = F1::var(v[0]);
+                let f = fp.profile(v, factor.into(), epsilon.into());
+                let df_dv0_ad = f.mapd(|x| x.deriv());
+                assert_relative_eq!(df_dv0_ad[0], df_dv[0][0]);
+                assert_relative_eq!(df_dv0_ad[1], df_dv[1][0]);
+                v[0] = F1::cst(v[0]);
+                v[1] = F1::var(v[1]);
+                let f = fp.profile(v, factor.into(), epsilon.into());
+                let df_dv1_ad = f.mapd(|x| x.deriv());
+                assert_relative_eq!(df_dv1_ad[0], df_dv[0][1]);
+                assert_relative_eq!(df_dv1_ad[1], df_dv[1][1]);
+            }
+        };
+        eta_jac_tester(FrictionProfile::Stabilized);
+        eta_jac_tester(FrictionProfile::Quadratic);
     }
 
     #[test]
@@ -2515,6 +2607,7 @@ mod tests {
                 inner_iterations: 50,
                 tolerance: 1e-10,
                 print_level: 0,
+                friction_profile: FrictionProfile::default()
             }),
         };
 

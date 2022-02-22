@@ -530,6 +530,8 @@ impl<T: Real64> NLProblem<T> {
             changed |= fc.constraint.borrow_mut().update_neighbors(pos_ad.view());
         }
 
+        self.precompute_contact_jacobian();
+
         // TODO: REMOVE THE BELOW DEBUG CODE
         //for fc in frictional_contact_constraints.iter() {
         //    let mut fc_constraint = fc.constraint.borrow_mut();
@@ -1642,12 +1644,14 @@ impl<T: Real64> NLProblem<T> {
                 fc_constraint.update_distance_potential();
                 fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
             });
-            add_time!(timings.contact_force; fc_constraint.subtract_constraint_force_par(Chunked3::from_flat(r)));
-            add_time!(timings.friction_force; fc_constraint.subtract_friction_force(
+            add_time!(timings.contact_force; fc_constraint.subtract_constraint_force(Chunked3::from_flat(r)));
+            fc_constraint.timings.borrow_mut().clear();
+            fc_constraint.subtract_friction_force(
                 Chunked3::from_flat(r),
                 Chunked3::from_flat(vel),
                 self.epsilon as f32,
-            ));
+            );
+            timings.friction_force += *fc_constraint.timings.borrow();
             // fc_constraint.subtract_constraint_force(Chunked3::from_flat(f.as_mut_slice()));
             // fc_constraint.subtract_friction_force(
             //     Chunked3::from_flat(f.as_mut_slice()),
@@ -2384,6 +2388,7 @@ impl<T: Real64> NLProblem<T> {
     }
 
     fn jacobian_product_autodiff(&self, v: &[T], p: &[T], jp: &mut [T]) {
+        let t_begin = Instant::now();
         {
             let State { dof, .. } = &mut *self.state.borrow_mut();
             let dq_ad = &mut dof.storage_mut().next_ad.dq;
@@ -2404,11 +2409,14 @@ impl<T: Real64> NLProblem<T> {
         for (jp, r_ad) in jp.iter_mut().zip(dof.storage_mut().r_ad.iter()) {
             *jp = T::from(r_ad.deriv()).unwrap();
         }
+        self.timings.borrow_mut().total += Instant::now() - t_begin;
     }
 }
 
 /// An api for a non-linear problem.
 pub trait NonLinearProblem<T: Real> {
+    fn precompute_contact_jacobian(&self);
+
     fn residual_timings(&self) -> RefMut<'_, ResidualTimings>;
 
     fn debug_friction(&self) -> Ref<'_, Vec<T>>;
@@ -2513,6 +2521,19 @@ pub trait MixedComplementarityProblem<T: Real>: NonLinearProblem<T> {
 
 /// Prepare the problem for Newton iterations.
 impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
+    fn precompute_contact_jacobian(&self) {
+        let t_begin = Instant::now();
+        for fc in self.frictional_contact_constraints.iter() {
+            let mut fc_constraint = fc.constraint.borrow_mut();
+            fc_constraint.precompute_contact_jacobian();
+        }
+        for fc in self.frictional_contact_constraints_ad.iter() {
+            let mut fc_constraint = fc.constraint.borrow_mut();
+            fc_constraint.precompute_contact_jacobian();
+        }
+        let t_contact_jac = Instant::now();
+        self.timings.borrow_mut().contact_jacobian += t_contact_jac - t_begin;
+    }
     fn residual_timings(&self) -> RefMut<'_, ResidualTimings> {
         self.timings.borrow_mut()
     }
@@ -2532,16 +2553,8 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     #[inline]
     fn objective(&self, dq: &[T]) -> T {
         {
-            let state = &mut *self.state.borrow_mut();
-            let step_state = state.step_state(dq);
-            // Integrate position.
-            match self.time_integration {
-                TimeIntegration::BE => State::be_step(step_state, self.time_step()),
-                TimeIntegration::TR => State::tr_step(step_state, self.time_step()),
-                //TimeIntegration::BDF2 => self.compute_vertex_bdf2_residual(),
-                //TimeIntegration::TRBDF2 => self.compute_vertex_trbdf2_residual(),
-            }
-            state.update_vertices(dq);
+            self.integrate_step(dq);
+            self.state.borrow_mut().update_vertices(dq);
         }
 
         match self.time_integration {
@@ -2767,9 +2780,6 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             self.integrate_step(dq);
             let state = &mut *self.state.borrow_mut();
             state.update_vertices(dq);
-            // eprintln!("lumpedMinv = ");
-            // eprintln!("{:?}", state.vtx.mass_inv.as_slice());
-            // eprintln!(";");
         }
         self.compute_vertex_residual();
 

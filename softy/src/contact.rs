@@ -510,7 +510,43 @@ impl<T: Real> TripletContactJacobian<T> {
         }
     }
 
-    pub fn from_selection_reindexed<'a>(
+    // /// Contact jacobian excluding the collider part, which is a diagonal matrix.
+    // pub fn from_selection_reindexed<'a>(
+    //     surf: &implicits::QueryTopo<T>,
+    //     constrained_collider_vertex_positions: SelectView<'a, Chunked3<&'a [T]>>,
+    //     collider_vertex_constraints: &'a [Index],
+    //     implicit_surface_vertex_indices: &'a [usize],
+    // ) -> TripletContactJacobian<T> {
+    //     let query_points = constrained_collider_vertex_positions.target;
+    //     let orig_cj_matrix_iter = surf.contact_jacobian_matrices_par_iter(query_points.into());
+    //
+    //     let (cj_indices, cj_matrices): (Vec<_>, Vec<_>) =
+    //         // Filter out entries not in active constraint points. These are deemed to be zero.
+    //         orig_cj_matrix_iter
+    //             // Surface Jacobian
+    //             .filter_map(|(row, col, matrix)| {
+    //                 collider_vertex_constraints[row]
+    //                     .into_option()
+    //                     .map(|idx| ((idx, implicit_surface_vertex_indices[col]), matrix))
+    //             }).unzip();
+    //
+    //     // Check monotonicity of rows and cols.
+    //     debug_assert!(cj_indices.iter().windows(2).all(|w| w[0].0 <= w[1].0 || w[0].1 <= w[1].1));
+    //
+    //     let blocks = Chunked3::from_flat(Chunked3::from_array_vec(
+    //         Chunked3::from_array_vec(cj_matrices).into_storage(),
+    //     ));
+    //
+    //     TripletContactJacobian {
+    //         block_indices: cj_indices,
+    //         blocks,
+    //         num_rows: constrained_collider_vertex_positions.len(),
+    //         num_cols: surf.surface_vertex_positions().len(),
+    //     }
+    // }
+
+    /// Full contact jacobian including collider part.
+    pub fn from_selection_reindexed_full<'a>(
         surf: &implicits::QueryTopo<T>,
         active_contact_points: SelectView<'a, Chunked3<&'a [T]>>,
         active_contact_point_indices: &'a [Index],
@@ -550,7 +586,6 @@ impl<T: Real> TripletContactJacobian<T> {
         }
     }
 
-    #[cfg(feature = "optsolver")]
     pub fn from_selection<'a>(
         surf: &implicits::QueryTopo<T>,
         active_contact_points: SelectView<'a, Chunked3<&'a [T]>>,
@@ -671,26 +706,26 @@ impl<T: Real> TripletContactJacobian<T> {
     }
 
     // This version sorts indices.
-    pub fn into_jacobian(self) -> ContactJacobian<T> {
-        let mut entries = (0..self.block_indices.len()).collect::<Vec<_>>();
-
-        // Sort indices into row major order
-        entries.sort_by(|&a, &b| {
-            self.block_indices[a]
-                .0
-                .cmp(&self.block_indices[b].0)
-                .then_with(|| self.block_indices[a].1.cmp(&self.block_indices[b].1))
-        });
-
-        let blocks = Chunked3::from_flat(self.blocks.data.view().into_arrays()).into_arrays();
-
-        let triplet_iter = entries
-            .iter()
-            .map(|&i| (self.block_indices[i].0, self.block_indices[i].1, blocks[i]));
-
-        SSBlockMatrix3::from_block_triplets_iter(triplet_iter, self.num_rows, self.num_cols)
-            .into_data()
-    }
+    // pub fn into_jacobian(self) -> ContactJacobian<T> {
+    //     let mut entries = (0..self.block_indices.len()).collect::<Vec<_>>();
+    //
+    //     // Sort indices into row major order
+    //     entries.sort_by(|&a, &b| {
+    //         self.block_indices[a]
+    //             .0
+    //             .cmp(&self.block_indices[b].0)
+    //             .then_with(|| self.block_indices[a].1.cmp(&self.block_indices[b].1))
+    //     });
+    //
+    //     let blocks = Chunked3::from_flat(self.blocks.data.view().into_arrays()).into_arrays();
+    //
+    //     let triplet_iter = entries
+    //         .iter()
+    //         .map(|&i| (self.block_indices[i].0, self.block_indices[i].1, blocks[i]));
+    //
+    //     SSBlockMatrix3::from_block_triplets_iter(triplet_iter, self.num_rows, self.num_cols)
+    //         .into_data()
+    // }
 
     pub fn into_gradient(self) -> ContactGradient<T> {
         let vecs: Vec<_> = self

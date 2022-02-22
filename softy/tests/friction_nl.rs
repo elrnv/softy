@@ -23,6 +23,7 @@ fn fc_params(mu: f64) -> FrictionParams {
         inner_iterations: 100,
         tolerance: 1e-6,
         print_level: 5,
+        friction_profile: FrictionProfile::default(),
     }
 }
 

@@ -100,7 +100,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
                 LinearSolver::Direct
             },
             line_search,
-            jacobian_test: derivative_test > 0,
+            derivative_test: derivative_test as u8,
             friction_tolerance,
             contact_tolerance,
             contact_iterations,

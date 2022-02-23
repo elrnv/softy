@@ -12,7 +12,7 @@ SimParams(
     //  max_iterations: 200,
     //),
     line_search: BackTracking(c: 1e-4, rho: 0.9),
-    jacobian_test: false,
+    derivative_test: 0,
     friction_tolerance: 1e-5,
     contact_tolerance: 1e-5,
     contact_iterations: 5,

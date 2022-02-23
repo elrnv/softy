@@ -1,5 +1,6 @@
 use std::cell::{Ref, RefCell, RefMut};
 
+use crate::constraints::FrictionJacobianTimings;
 use crate::nl_fem::ResidualTimings;
 use num_traits::Float;
 use rayon::prelude::*;
@@ -29,9 +30,11 @@ where
     T: Real,
     P: MixedComplementarityProblem<T>,
 {
-    fn precompute_contact_jacobian(&self) { self.problem.precompute_contact_jacobian() }
     fn residual_timings(&self) -> RefMut<'_, ResidualTimings> {
         self.problem.residual_timings()
+    }
+    fn jacobian_timings(&self) -> RefMut<'_, FrictionJacobianTimings> {
+        self.problem.jacobian_timings()
     }
     fn debug_friction(&self) -> Ref<'_, Vec<T>> {
         self.problem.debug_friction()

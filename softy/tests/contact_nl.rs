@@ -208,7 +208,7 @@ fn single_tri_push() -> Result<(), Error> {
     };
 
     let params = SimParams {
-        jacobian_test: true,
+        derivative_test: 2,
         ..static_nl_params()
     };
 
@@ -322,7 +322,7 @@ fn tet_push() -> Result<(), Error> {
 
     let params = SimParams {
         gravity: [0.0f32; 3],
-        jacobian_test: true,
+        derivative_test: 2,
         //time_step: Some(1.2),
         ..static_nl_params()
     };

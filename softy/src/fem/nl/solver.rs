@@ -705,6 +705,7 @@ impl SolverBuilder {
             }),
             debug_friction: RefCell::new(Vec::new()),
             timings: RefCell::new(crate::fem::nl::ResidualTimings::default()),
+            jac_timings: RefCell::new(FrictionJacobianTimings::default()),
         })
     }
 
@@ -979,12 +980,10 @@ where
         // Update the current vertex data using the current dof state.
         solver.problem_mut().update_cur_vertices();
 
-        if sim_params.jacobian_test {
-            solver
-                .problem()
-                .check_jacobian(solution.as_slice(), false)
-                .ok(); //?;
-        }
+        solver
+            .problem()
+            .check_jacobian(sim_params.derivative_test, solution.as_slice(), false)
+            .ok(); //?;
 
         let mut contact_iterations = sim_params.contact_iterations as i64;
 
@@ -1034,8 +1033,8 @@ where
 
                     log::debug!("Bump ratio: {}", bump_ratio);
                     log::debug!("Kappa: {}", solver.problem().kappa);
-                    let violation = 0.0_f64.max(-deepest);
-                    log::debug!("Contact violation: {}", violation);
+                    let contact_violation = 0.0_f64.max(-deepest);
+                    log::debug!("Contact violation: {}", contact_violation);
 
                     contact_iterations -= 1;
 
@@ -1048,8 +1047,16 @@ where
                         });
                     }
 
-                    if violation > 0.0 {
+                    if contact_violation > 0.0 {
                         solver.problem_mut().kappa *= bump_ratio.max(2.0);
+                    }
+
+                    let max_step_violation = solver.problem().max_step_violation();
+                    if max_step_violation {
+                        solver.problem_mut().update_constraint_set();
+                    }
+
+                    if contact_violation > 0.0 || max_step_violation {
                         continue;
                     } else {
                         // Relax kappa

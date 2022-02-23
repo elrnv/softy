@@ -12,6 +12,7 @@ use super::state::*;
 use crate::attrib_defines::*;
 use crate::constraints::{
     penalty_point_contact::PenaltyPointContactConstraint, volume::VolumeConstraint,
+    FrictionJacobianTimings,
 };
 use crate::contact::ContactJacobianView;
 use crate::energy::{Energy, EnergyGradient, EnergyHessian, EnergyHessianTopology};
@@ -167,6 +168,7 @@ pub struct NLProblem<T: Real> {
     pub debug_friction: RefCell<Vec<T>>,
 
     pub timings: RefCell<ResidualTimings>,
+    pub jac_timings: RefCell<FrictionJacobianTimings>,
 }
 
 impl<T: Real> NLProblem<T> {
@@ -501,12 +503,24 @@ impl<T: Real64> NLProblem<T> {
                 .all(|(cur, &other)| cur == other)
     }
 
+    /// Checks if the max_step is violated
+    pub fn max_step_violation(&self) -> bool {
+        let dt = self.time_step();
+        let state = self.state.borrow();
+        let vel = state.vtx.next.vel.view();
+        self.frictional_contact_constraints
+            .iter()
+            .any(|fc| fc.constraint.borrow().max_step_violated(vel, dt))
+    }
+
     /// Updates all stateful constraints with the most recent data.
     ///
     /// Return an estimate if any constraints have changed, though this estimate may have false
     /// negatives.
     pub fn update_constraint_set(&mut self) -> bool {
         let mut changed = false; // Report if anything has changed to the caller.
+
+        let dt = self.time_step();
 
         let NLProblem {
             ref mut frictional_contact_constraints,
@@ -517,20 +531,23 @@ impl<T: Real64> NLProblem<T> {
 
         let state = &*state.borrow();
         let pos = state.vtx.next.pos.view();
+        let vel = state.vtx.next.vel.view();
         let pos_ad: Chunked3<Vec<_>> = pos
             .iter()
             .map(|&[x, y, z]| [ad::F::cst(x), ad::F::cst(y), ad::F::cst(z)])
             .collect();
 
         for fc in frictional_contact_constraints.iter_mut() {
+            fc.constraint.borrow_mut().update_max_step(vel, dt);
             changed |= fc.constraint.borrow_mut().update_neighbors(pos);
         }
 
+        let vel_ad = state.vtx.next_ad.vel.view();
+
         for fc in frictional_contact_constraints_ad.iter_mut() {
+            fc.constraint.borrow_mut().update_max_step(vel_ad, dt);
             changed |= fc.constraint.borrow_mut().update_neighbors(pos_ad.view());
         }
-
-        self.precompute_contact_jacobian();
 
         // TODO: REMOVE THE BELOW DEBUG CODE
         //for fc in frictional_contact_constraints.iter() {
@@ -2296,6 +2313,7 @@ impl<T: Real64> NLProblem<T> {
 
             // let mut jac = vec![vec![0.0; n]; n];
             // Compute friction hessian second term (multipliers held constant)
+            constraint.jac_timings.borrow_mut().clear();
             let f_jac_count = constraint
                 .friction_jacobian_indexed_value_iter(
                     Chunked3::from_flat(next.vel),
@@ -2315,6 +2333,7 @@ impl<T: Real64> NLProblem<T> {
                         .count()
                 })
                 .unwrap_or(0);
+            *self.jac_timings.borrow_mut() += *constraint.jac_timings.borrow();
             count += f_jac_count;
 
             // eprintln!("FRICTION JACOBIAN:");
@@ -2415,9 +2434,8 @@ impl<T: Real64> NLProblem<T> {
 
 /// An api for a non-linear problem.
 pub trait NonLinearProblem<T: Real> {
-    fn precompute_contact_jacobian(&self);
-
     fn residual_timings(&self) -> RefMut<'_, ResidualTimings>;
+    fn jacobian_timings(&self) -> RefMut<'_, FrictionJacobianTimings>;
 
     fn debug_friction(&self) -> Ref<'_, Vec<T>>;
 
@@ -2521,21 +2539,11 @@ pub trait MixedComplementarityProblem<T: Real>: NonLinearProblem<T> {
 
 /// Prepare the problem for Newton iterations.
 impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
-    fn precompute_contact_jacobian(&self) {
-        let t_begin = Instant::now();
-        for fc in self.frictional_contact_constraints.iter() {
-            let mut fc_constraint = fc.constraint.borrow_mut();
-            fc_constraint.precompute_contact_jacobian();
-        }
-        for fc in self.frictional_contact_constraints_ad.iter() {
-            let mut fc_constraint = fc.constraint.borrow_mut();
-            fc_constraint.precompute_contact_jacobian();
-        }
-        let t_contact_jac = Instant::now();
-        self.timings.borrow_mut().contact_jacobian += t_contact_jac - t_begin;
-    }
     fn residual_timings(&self) -> RefMut<'_, ResidualTimings> {
         self.timings.borrow_mut()
+    }
+    fn jacobian_timings(&self) -> RefMut<'_, FrictionJacobianTimings> {
+        self.jac_timings.borrow_mut()
     }
     fn debug_friction(&self) -> Ref<'_, Vec<T>> {
         self.debug_friction.borrow()
@@ -2912,15 +2920,27 @@ impl<T: Real64> NLProblem<T> {
                 dq: Vec::new(),
             }),
             timings: RefCell::new(ResidualTimings::default()),
+            jac_timings: RefCell::new(FrictionJacobianTimings::default()),
         }
     }
 
     /// Checks that the given problem has a consistent Jacobian implementation.
     pub(crate) fn check_jacobian(
         &self,
+        level: u8,
         x: &[T],
         perturb_initial: bool,
     ) -> Result<(), crate::Error> {
+        if level <= 0 {
+            return Ok(());
+        }
+
+        let objective_result = self.check_objective_gradient(x, perturb_initial);
+
+        if level == 1 {
+            return objective_result;
+        }
+
         log::debug!("Checking Jacobian...");
         use ad::F1 as F;
         // Compute Jacobian
@@ -2956,8 +2976,6 @@ impl<T: Real64> NLProblem<T> {
             }
             jac
         };
-
-        self.check_objective_gradient(x, perturb_initial)?;
 
         // Check Jacobian and compute autodiff Jacobian.
 
@@ -3049,7 +3067,7 @@ impl<T: Real64> NLProblem<T> {
         }
         if success {
             log::debug!("No errors during Jacobian check.");
-            Ok(())
+            return objective_result;
         } else {
             Err(crate::Error::DerivativeCheckFailure)
         }
@@ -3152,7 +3170,7 @@ mod tests {
             .set_materials(vec![solid_material().into()]);
         let problem = solver_builder.build_problem::<f64>().unwrap();
         assert!(problem
-            .check_jacobian(&problem.initial_point(), true)
+            .check_jacobian(2, &problem.initial_point(), true)
             .is_ok());
     }
 
@@ -3165,7 +3183,7 @@ mod tests {
             .set_materials(vec![solid_material().into()]);
         let problem = solver_builder.build_problem::<f64>().unwrap();
         assert!(problem
-            .check_jacobian(&problem.initial_point(), true)
+            .check_jacobian(2, &problem.initial_point(), true)
             .is_ok());
     }
 
@@ -3191,7 +3209,7 @@ mod tests {
             max_iterations: 1,
             linsolve: LinearSolver::Direct,
             line_search: LineSearch::default_backtracking(),
-            jacobian_test: false,
+            derivative_test: 2,
             contact_tolerance: 0.001,
             friction_tolerance: 0.001,
             time_integration: TimeIntegration::default(),

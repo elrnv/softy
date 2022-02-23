@@ -14,12 +14,12 @@ use std::fmt::{Display, Formatter};
 use std::time::Duration;
 use thiserror::Error;
 
+use crate::constraints::{FrictionJacobianTimings, FrictionTimings};
 pub use mcp::*;
 pub use newton::*;
 pub use problem::*;
 pub use solver::*;
 pub use trust_region::*;
-use crate::constraints::FrictionTimings;
 
 /// Time integration method.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -58,7 +58,7 @@ pub struct SimParams {
     pub linsolve: LinearSolver,
     pub line_search: LineSearch,
     /// Test that the problem Jacobian is correct.
-    pub jacobian_test: bool,
+    pub derivative_test: u8,
     /// The velocity error tolerance for sticking between objects.
     pub friction_tolerance: f32,
     /// The distance tolerance between objects in contact.
@@ -131,6 +131,7 @@ impl ResidualTimings {
 pub struct Timings {
     line_search_assist: Duration,
     residual: ResidualTimings,
+    friction_jacobian: FrictionJacobianTimings,
     linear_solve: Duration,
     direct_solve: Duration,
     jacobian_product: Duration,
@@ -181,21 +182,35 @@ impl Display for Timings {
         writeln!(
             f,
             "      Contact vel prep time:  {}",
-            self.residual.friction_force.contact_velocity.prep.as_millis()
+            self.residual
+                .friction_force
+                .contact_velocity
+                .prep
+                .as_millis()
         )?;
         writeln!(
             f,
             "      Contact Jacobian time:  {}",
-            self.residual.friction_force.contact_velocity.contact_jac.as_millis()
+            self.residual
+                .friction_force
+                .contact_velocity
+                .contact_jac
+                .as_millis()
         )?;
         writeln!(
             f,
             "      Contact velocity time:  {}",
-            self.residual.friction_force.contact_velocity.velocity.as_millis()
+            self.residual
+                .friction_force
+                .contact_velocity
+                .velocity
+                .as_millis()
         )?;
         writeln!(
             f,
-            "  Linear solve time:          {}", self.linear_solve.as_millis())?;
+            "  Linear solve time:          {}",
+            self.linear_solve.as_millis()
+        )?;
         writeln!(
             f,
             "    Jacobian product time:    {}",
@@ -205,6 +220,61 @@ impl Display for Timings {
             f,
             "    Jacobian values time:     {}",
             self.jacobian_values.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction constraint F:  {}",
+            self.friction_jacobian.constraint_friction_force.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction contact J:     {}",
+            self.friction_jacobian.contact_jacobian.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction contact G:     {}",
+            self.friction_jacobian.contact_gradient.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction constraint J:  {}",
+            self.friction_jacobian.constraint_jacobian.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction constraint G:  {}",
+            self.friction_jacobian.constraint_gradient.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction f lambda jac:  {}",
+            self.friction_jacobian.f_lambda_jac.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction A:             {}",
+            self.friction_jacobian.a.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction B:             {}",
+            self.friction_jacobian.b.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction C:             {}",
+            self.friction_jacobian.c.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction D:             {}",
+            self.friction_jacobian.d.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Friction E:             {}",
+            self.friction_jacobian.e.as_millis()
         )?;
         writeln!(
             f,
@@ -218,10 +288,14 @@ impl Display for Timings {
         )?;
         writeln!(
             f,
-            "  Line search time:           {}", self.line_search.as_millis())?;
+            "  Line search time:           {}",
+            self.line_search.as_millis()
+        )?;
         writeln!(
             f,
-            "  Total solve time            {}", self.total.as_millis())
+            "  Total solve time            {}",
+            self.total.as_millis()
+        )
     }
 }
 

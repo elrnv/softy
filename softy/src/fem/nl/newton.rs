@@ -420,9 +420,18 @@ impl SparseDirectSolver {
         let t_update_rhs = Instant::now();
         let result = self.solve();
         let t_solve = Instant::now();
-        log::trace!("Update time:   {}ms", (t_update_rhs - t_refactor).as_millis());
-        log::trace!("Values time:   {}ms", (t_update_values - t_begin).as_millis());
-        log::trace!("Refactor time: {}ms", (t_refactor - t_update_values).as_millis());
+        log::trace!(
+            "Update time:   {}ms",
+            (t_update_rhs - t_refactor).as_millis()
+        );
+        log::trace!(
+            "Values time:   {}ms",
+            (t_update_values - t_begin).as_millis()
+        );
+        log::trace!(
+            "Refactor time: {}ms",
+            (t_refactor - t_update_values).as_millis()
+        );
         log::trace!("Solve time:    {}ms", (t_solve - t_refactor).as_millis());
         result
     }
@@ -527,7 +536,7 @@ fn sparse_matrix_and_mapping<'a, T: Real>(
     mut cols: &'a [usize],
     vals: &[T],
     mtx_size: usize,
-    transpose: bool
+    transpose: bool,
 ) -> (DSMatrix<T>, Vec<Index>) {
     if transpose {
         std::mem::swap(&mut rows, &mut cols);
@@ -651,8 +660,10 @@ where
             &sparse_jacobian.j_rows,
             &sparse_jacobian.j_vals,
             n,
-            #[cfg(target_os = "macos")] true,
-            #[cfg(not(target_os = "macos"))] false,
+            #[cfg(target_os = "macos")]
+            true,
+            #[cfg(not(target_os = "macos"))]
+            false,
         );
         init_sparse_solver.replace(SparseDirectSolver::new(j.view()).unwrap());
         *init_j_mapping = j_mapping;
@@ -663,8 +674,10 @@ where
                 &sparse_jacobian.j_cols,
                 &sparse_jacobian.j_vals,
                 n,
-                #[cfg(target_os = "macos")] true,
-                #[cfg(not(target_os = "macos"))] false,
+                #[cfg(target_os = "macos")]
+                true,
+                #[cfg(not(target_os = "macos"))]
+                false,
             );
 
             //#[cfg(target_os = "macos")]
@@ -1346,6 +1359,7 @@ where
 
         timings.total = Instant::now() - t_begin_solve;
         timings.residual = *self.problem.residual_timings();
+        timings.friction_jacobian = *self.problem.jacobian_timings();
 
         log::debug!("Status:           {:?}", status);
         log::debug!("Total Iterations: {:?}", iterations);

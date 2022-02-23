@@ -161,6 +161,14 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
+    /// Returns the max step padding.
+    pub fn max_step(&self) -> f64 {
+        match self {
+            QueryTopo::Local { surf, .. } => surf.max_step.to_f64().unwrap(),
+            QueryTopo::Global { .. } => 0.0,
+        }
+    }
+
     /// Return the surface vertex positions used by this implicit surface.
     pub fn surface_vertex_positions(&self) -> &[[T; 3]] {
         &self.base().surface_vertex_positions

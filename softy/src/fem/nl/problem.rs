@@ -235,12 +235,8 @@ impl<T: Real64> NLProblem<T> {
 
         assert!(dq.len() % 3 == 0);
         {
-            let state = &mut *self.state.borrow_mut();
-            let step_state = state.step_state(dq);
-            // Integrate position.
-            State::be_step(step_state, self.time_step());
-
-            state.update_vertices(dq);
+            self.integrate_step(dq);
+            self.state.borrow_mut().update_vertices(dq);
         }
 
         // Update positions
@@ -537,16 +533,18 @@ impl<T: Real64> NLProblem<T> {
             .map(|&[x, y, z]| [ad::F::cst(x), ad::F::cst(y), ad::F::cst(z)])
             .collect();
 
-        for fc in frictional_contact_constraints.iter_mut() {
-            fc.constraint.borrow_mut().update_max_step(vel, dt);
+        for (fc, fc_ad) in frictional_contact_constraints
+            .iter_mut()
+            .zip(frictional_contact_constraints_ad.iter_mut())
+        {
+            let new_max_step = fc.constraint.borrow_mut().compute_max_step(vel, dt);
+            fc.constraint.borrow_mut().set_max_step(new_max_step);
+            fc_ad.constraint.borrow_mut().set_max_step(new_max_step);
             changed |= fc.constraint.borrow_mut().update_neighbors(pos);
-        }
-
-        let vel_ad = state.vtx.next_ad.vel.view();
-
-        for fc in frictional_contact_constraints_ad.iter_mut() {
-            fc.constraint.borrow_mut().update_max_step(vel_ad, dt);
-            changed |= fc.constraint.borrow_mut().update_neighbors(pos_ad.view());
+            changed |= fc_ad
+                .constraint
+                .borrow_mut()
+                .update_neighbors(pos_ad.view());
         }
 
         // TODO: REMOVE THE BELOW DEBUG CODE
@@ -674,7 +672,7 @@ impl<T: Real64> NLProblem<T> {
         match self.time_integration {
             TimeIntegration::TR => State::tr_step(state.step_state(v), self.time_step()),
             TimeIntegration::BE => State::be_step(state.step_state(v), self.time_step()),
-            // or self.state.bdf2_step(v, self.time_step(), gamma);
+            TimeIntegration::BDF2 => State::bdf2_step(state.step_state(v), self.time_step()),
         }
     }
 
@@ -1676,7 +1674,7 @@ impl<T: Real64> NLProblem<T> {
             //     self.epsilon as f32,
             // );
         }
-        // let mut f_out = &mut *self.debug_friction.borrow_mut();
+        // let f_out = &mut *self.debug_friction.borrow_mut();
         // f_out.clear();
         // f_out.extend(r.iter().map(|&x| T::from(x).unwrap()));
     }
@@ -1694,6 +1692,12 @@ impl<T: Real64> NLProblem<T> {
     ) {
         let ResidualState { cur, next, r } = state;
 
+        // let mut dbg_data = vec![S::zero(); r.len()];
+
+        // for (out_pos, in_pos) in dbg_data.chunks_exact_mut(3).zip(next.pos.iter()) {
+        //     *out_pos = *in_pos;
+        // }
+
         add_time!(self.timings.borrow_mut().energy_gradient; {
             solid.elasticity().add_energy_gradient(cur.pos, next.pos, r);
             solid
@@ -1705,11 +1709,11 @@ impl<T: Real64> NLProblem<T> {
                 .add_energy_gradient(cur.pos, next.pos, r);
         });
 
-        self.subtract_constraint_forces(cur.pos, next.pos, next.vel, r, frictional_contacts);
+        let dbgdata_out = &mut *self.debug_friction.borrow_mut();
+        dbgdata_out.clear();
+        dbgdata_out.extend(r.iter().map(|&x| T::from(x).unwrap()));
 
-        // let mut f_out = &mut *self.debug_friction.borrow_mut();
-        // f_out.clear();
-        // f_out.extend(r.iter().map(|&r| T::from(r).unwrap()));
+        self.subtract_constraint_forces(cur.pos, next.pos, next.vel, r, frictional_contacts);
 
         debug_assert!(r.iter().all(|r| r.is_finite()));
     }
@@ -1821,10 +1825,63 @@ impl<T: Real64> NLProblem<T> {
             })
     }
 
+    /// Compute the backward Euler residual with automatic differentiation.
+    fn bdf2_residual_autodiff(&self) {
+        let state = &mut *self.state.borrow_mut();
+
+        {
+            // Integrate position.
+            State::bdf2_step(state.step_state_ad(), self.time_step());
+        }
+        state.update_vertices_ad();
+
+        {
+            let State {
+                vtx, solid, shell, ..
+            } = state;
+
+            // Clear residual vector.
+            vtx.residual_ad
+                .storage_mut()
+                .iter_mut()
+                .for_each(|x| *x = ad::F::zero());
+
+            self.subtract_force(
+                vtx.residual_state_ad().into_storage(),
+                solid,
+                shell,
+                self.frictional_contact_constraints_ad.as_slice(),
+            );
+        }
+
+        let mut res_state = state.vtx.residual_state_ad();
+        let r = &mut res_state.storage_mut().r;
+        *r.as_mut_tensor() *= ad::FT::cst(T::from(2.0 * self.time_step() / 3.0).unwrap());
+
+        if !self.is_static() {
+            self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
+        }
+
+        // Transfer residual to degrees of freedom.
+        state
+            .dof
+            .view_mut()
+            .isolate(VERTEX_DOFS)
+            .r_ad
+            .iter_mut()
+            .zip(state.vtx.residual_ad.storage().iter())
+            .for_each(|(dof_r, vtx_r)| {
+                *dof_r = *vtx_r;
+            })
+    }
+
     /// Update current vertex state to coincide with current dof state.
     pub fn update_cur_vertices(&mut self) {
         let state = &mut *self.state.borrow_mut();
-        state.update_cur_vertices();
+        match self.time_integration {
+            TimeIntegration::BDF2 => state.update_cur_vertices_with_bdf2(),
+            _ => state.update_cur_vertices_direct(),
+        }
     }
 
     /// Clear current velocity dofs.
@@ -1833,11 +1890,26 @@ impl<T: Real64> NLProblem<T> {
         state.clear_velocities();
     }
 
-    /// Compute the BE objective on simulated vertices.
-    pub fn compute_be_objective(&self) -> T {
+    /// Compute the objective on simulated vertices.
+    ///
+    /// This is typically the total system energy with lagged friction potential.
+    pub fn compute_objective(&self, prev_force_mul: f64) -> T {
         let State {
             vtx, solid, shell, ..
         } = &mut *self.state.borrow_mut();
+
+        if prev_force_mul > 0.0 {
+            // TR objective should have an extra term (compared to BE): h/2 grad W ^T v
+            // To activate this term prev_force_mul should be 0.5.
+
+            let mut objective: T = self
+                .prev_force
+                .iter()
+                .zip(vtx.next.vel.storage().iter())
+                .map(|(&r, &v)| r * v)
+                .sum();
+            objective *= T::from(prev_force_mul).unwrap() * self.time_step();
+        }
 
         let mut objective = self.energy(
             vtx.residual_state().into_storage(),
@@ -1852,40 +1924,11 @@ impl<T: Real64> NLProblem<T> {
         objective
     }
 
-    /// Compute the TR objective on simulated vertices.
-    pub fn compute_tr_objective(&self) -> T {
-        let State {
-            vtx, solid, shell, ..
-        } = &mut *self.state.borrow_mut();
-
-        // TR objective should have an extra term (compared to BE): h/2 grad W ^T v
-        // Compute it below
-
-        // Dot product
-        let mut objective: T = self
-            .prev_force
-            .iter()
-            .zip(vtx.next.vel.storage().iter())
-            .map(|(&r, &v)| r * v)
-            .sum();
-        objective *= T::from(0.5).unwrap() * self.time_step();
-
-        // Compute the BE objective below
-        objective += self.energy(
-            vtx.residual_state().into_storage(),
-            &solid,
-            &shell,
-            self.frictional_contact_constraints.as_slice(),
-        );
-
-        if !self.is_static() {
-            objective += self.inertia(vtx.residual_state().into_storage(), &solid, &shell);
-        }
-        objective
-    }
-
-    /// Compute the BE residual on simulated vertices.
-    fn compute_vertex_be_residual(&self) {
+    /// Compute the residual on simulated vertices.
+    ///
+    /// This function takes a current force multiplier and previous force multiplier.
+    /// For backward euler, one should pass `force_mul = 1.0` and `prev_force_mul = 0.0`.
+    fn compute_vertex_residual_impl(&self, force_mul: f64, prev_force_mul: f64) {
         let State {
             vtx, solid, shell, ..
         } = &mut *self.state.borrow_mut();
@@ -1903,97 +1946,44 @@ impl<T: Real64> NLProblem<T> {
             self.frictional_contact_constraints.as_slice(),
         );
 
-        let mut res_state = vtx.residual_state();
-        *res_state.storage_mut().r.as_mut_tensor() *= T::from(self.time_step()).unwrap();
+        let dt = self.time_step();
+
+        // If previous-force multiplier is zero, we don't need to keep track of forces between steps.
+        if prev_force_mul > 0.0 {
+            // Save the current force for when the step is advanced.
+            // At that moment prev_force is updated to be candidate_force.
+            self.candidate_force
+                .borrow_mut()
+                .clone_from(vtx.residual.storage());
+
+            // Multiply current force by the multiplier and time step.
+            *vtx.residual.storage_mut().as_mut_tensor() *= T::from(force_mul * dt).unwrap();
+
+            // Add prev force multiplied by the given multiplier.
+            vtx.residual
+                .storage_mut()
+                .iter_mut()
+                .zip(self.prev_force.iter())
+                .for_each(|(residual, &force)| {
+                    *residual += force * T::from(prev_force_mul * dt).unwrap()
+                });
+        } else {
+            *vtx.residual.storage_mut().as_mut_tensor() *= T::from(force_mul * dt).unwrap();
+        }
 
         if !self.is_static() {
+            let mut res_state = vtx.residual_state();
             self.add_momentum_diff(res_state.into_storage(), &solid, &shell);
         }
     }
 
-    /// Compute the trapezoid rule residual on simulated vertices.
-    fn compute_vertex_tr_residual(&self) {
-        let State {
-            vtx, solid, shell, ..
-        } = &mut *self.state.borrow_mut();
-
-        // Clear residual.
-        vtx.residual
-            .storage_mut()
-            .iter_mut()
-            .for_each(|x| *x = T::zero());
-
-        self.subtract_force(
-            vtx.residual_state().into_storage(),
-            &solid,
-            &shell,
-            self.frictional_contact_constraints.as_slice(),
-        );
-
-        self.candidate_force
-            .borrow_mut()
-            .clone_from(vtx.residual.storage());
-
-        // add prev force
-        vtx.residual
-            .storage_mut()
-            .iter_mut()
-            .zip(self.prev_force.iter())
-            .for_each(|(residual, &force)| *residual += force);
-
-        let mut res_state = vtx.residual_state();
-        *res_state.storage_mut().r.as_mut_tensor() *= T::from(0.5 * self.time_step()).unwrap();
-
-        if !self.is_static() {
-            self.add_momentum_diff(res_state.into_storage(), &solid, &shell);
-        }
-    }
-
-    /// Compute th bdf2 residual on simulated vertices.
-    fn compute_vertex_bdf2_residual(&self) {
-        let State {
-            vtx, solid, shell, ..
-        } = &mut *self.state.borrow_mut();
-
-        // Clear residual.
-        vtx.residual
-            .storage_mut()
-            .iter_mut()
-            .for_each(|x| *x = T::zero());
-
-        self.subtract_force(
-            vtx.residual_state().into_storage(),
-            &solid,
-            &shell,
-            self.frictional_contact_constraints.as_slice(),
-        );
-
-        self.candidate_force
-            .borrow_mut()
-            .clone_from(vtx.residual.storage());
-
-        // add prev force
-        vtx.residual
-            .storage_mut()
-            .iter_mut()
-            .zip(self.prev_force.iter())
-            .for_each(|(residual, &force)| *residual += force);
-
-        let mut res_state = vtx.residual_state();
-        *res_state.storage_mut().r.as_mut_tensor() *=
-            T::from((2.0 / 3.0) * self.time_step()).unwrap();
-
-        if !self.is_static() {
-            self.add_momentum_diff(res_state.into_storage(), &solid, &shell);
-        }
-    }
-
+    /// Compute the residual on simulated vertices.
     #[inline]
     fn compute_vertex_residual(&self) {
         match self.time_integration {
-            TimeIntegration::BE => self.compute_vertex_be_residual(),
-            TimeIntegration::TR => self.compute_vertex_tr_residual(),
-            //TimeIntegration::BDF2 => self.compute_vertex_bdf2_residual(),
+            TimeIntegration::BE => self.compute_vertex_residual_impl(1.0, 0.0),
+            TimeIntegration::TR => self.compute_vertex_residual_impl(0.5, 0.5),
+            TimeIntegration::BDF2 => self.compute_vertex_residual_impl(2.0 / 3.0, 0.0),
             //TimeIntegration::TRBDF2 => self.compute_vertex_trbdf2_residual(),
         }
     }
@@ -2161,6 +2151,18 @@ impl<T: Real64> NLProblem<T> {
     ) {
         let half_dt = T::from(0.5 * self.time_step()).unwrap();
         self.jacobian_values(dq, r, rows, cols, vals, half_dt, half_dt, State::tr_step);
+    }
+
+    fn bdf2_jacobian_values(
+        &self,
+        dq: &[T],
+        r: &[T],
+        rows: &[usize],
+        cols: &[usize],
+        vals: &mut [T],
+    ) {
+        let factor = T::from(2.0 * self.time_step() / 3.0).unwrap();
+        self.jacobian_values(dq, r, rows, cols, vals, factor, factor, State::bdf2_step);
     }
 
     fn jacobian_values<'v, F>(
@@ -2422,6 +2424,7 @@ impl<T: Real64> NLProblem<T> {
         match self.time_integration {
             TimeIntegration::BE => self.be_residual_autodiff(),
             TimeIntegration::TR => self.tr_residual_autodiff(),
+            TimeIntegration::BDF2 => self.bdf2_residual_autodiff(),
         }
 
         let State { dof, .. } = &mut *self.state.borrow_mut();
@@ -2438,6 +2441,9 @@ pub trait NonLinearProblem<T: Real> {
     fn jacobian_timings(&self) -> RefMut<'_, FrictionJacobianTimings>;
 
     fn debug_friction(&self) -> Ref<'_, Vec<T>>;
+
+    /// Returns a mesh using current state data.
+    fn mesh(&self) -> Mesh;
 
     /// Returns a mesh updated with the given velocity information.
     fn mesh_with(&self, dq: &[T]) -> Mesh;
@@ -2549,6 +2555,10 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         self.debug_friction.borrow()
     }
     #[inline]
+    fn mesh(&self) -> Mesh {
+        NLProblem::mesh(self)
+    }
+    #[inline]
     fn mesh_with(&self, dq: &[T]) -> Mesh {
         NLProblem::mesh_with(self, dq)
     }
@@ -2557,7 +2567,6 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         self.state.borrow().dof.storage().len()
     }
 
-    /// Energy objective.
     #[inline]
     fn objective(&self, dq: &[T]) -> T {
         {
@@ -2566,8 +2575,11 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         }
 
         match self.time_integration {
-            TimeIntegration::BE => self.compute_be_objective(),
-            TimeIntegration::TR => self.compute_tr_objective(),
+            TimeIntegration::BE => self.compute_objective(0.0),
+            TimeIntegration::TR => self.compute_objective(0.5),
+            // BDF2 objective is computed same as BE, but note that vtx.cur is different.
+            // vtx.cur is set in update_cur_vertices at the beginning of the step.
+            TimeIntegration::BDF2 => self.compute_objective(0.0),
         }
     }
 
@@ -2786,8 +2798,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         let t_begin = Instant::now();
         {
             self.integrate_step(dq);
-            let state = &mut *self.state.borrow_mut();
-            state.update_vertices(dq);
+            self.state.borrow_mut().update_vertices(dq);
         }
         self.compute_vertex_residual();
 
@@ -2807,7 +2818,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         match self.time_integration {
             TimeIntegration::BE => self.be_jacobian_values(v, r, rows, cols, vals),
             TimeIntegration::TR => self.tr_jacobian_values(v, r, rows, cols, vals),
-            //TimeIntegration::BDF2 => self.bdf2_jacobian_values(v, r, rows, cols, vals),
+            TimeIntegration::BDF2 => self.bdf2_jacobian_values(v, r, rows, cols, vals),
             //TimeIntegration::TRBDF2 => self.trbdf2_jacobian_values(v, r, rows, cols, vals),
         }
     }
@@ -2935,11 +2946,12 @@ impl<T: Real64> NLProblem<T> {
             return Ok(());
         }
 
-        let objective_result = self.check_objective_gradient(x, perturb_initial);
-
-        if level == 1 {
-            return objective_result;
-        }
+        let objective_result = Ok(());
+        // let objective_result = self.check_objective_gradient(x, perturb_initial);
+        //
+        // if level == 1 {
+        //     return objective_result;
+        // }
 
         log::debug!("Checking Jacobian...");
         use ad::F1 as F;

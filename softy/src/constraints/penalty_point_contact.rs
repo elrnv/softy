@@ -770,14 +770,24 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
         let radius = self.point_constraint.implicit_surface.radius();
         let cur_max_step = self.point_constraint.implicit_surface.max_step() + radius;
-        max_vel * dt > cur_max_step
+        let result = max_vel * dt > cur_max_step;
+        if result {
+            log::debug!("Max step violation: {}", max_vel * dt - cur_max_step);
+        }
+        result
     }
 
-    pub fn update_max_step(&mut self, vel: Chunked3<&[T]>, dt: f64) {
+    pub fn set_max_step(&mut self, max_step: f64) {
+        self.point_constraint
+            .implicit_surface
+            .update_max_step(T::from(max_step).unwrap());
+    }
+
+    pub fn compute_max_step(&mut self, vel: Chunked3<&[T]>, dt: f64) -> f64 {
         if self.contact_jacobian.is_none() {
             // Contact jacobian not yet initialized, just skip this step.
             // No need to increase max_step since we don't even know the velocity.
-            return;
+            return 0.0;
         }
         // Compute maximum relative velocity.
         let jac = self.contact_jacobian.as_ref().unwrap();
@@ -798,9 +808,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let radius = self.point_constraint.implicit_surface.radius();
         // The 1.5 factor ensures that the velocity has room to grow without triggering a recomputation.
         let max_step = 0.0_f64.max(1.5 * (max_vel * dt) - radius);
-        self.point_constraint
-            .implicit_surface
-            .update_max_step(T::from(max_step).unwrap());
+        log::debug!("Updating max_step to: {max_step}");
+        max_step
     }
 
     pub fn build_distance_gradient<S: Real>(

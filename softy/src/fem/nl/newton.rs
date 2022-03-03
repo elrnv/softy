@@ -1211,38 +1211,17 @@ where
                     }
 
                     // dbg!(alpha);
-                    // if ls_count > 10 {
+                    // if ls_count > 20 {
+                    //     let max_alpha = alpha;
                     //     let mut merit_data = vec![];
                     //     let mut r0 = vec![];
-                    //     let mut r1 = vec![];
-                    //     let mut r2 = vec![];
-                    //     let mut r3 = vec![];
-                    //     let mut r4 = vec![];
-                    //     let mut r5 = vec![];
-                    //     let mut r6 = vec![];
-                    //     let mut r7 = vec![];
-                    //     let mut r8 = vec![];
-                    //     let mut r9 = vec![];
-                    //     let mut r10 = vec![];
-                    //     let mut r11 = vec![];
-                    //     let mut f0 = vec![];
-                    //     let mut f1 = vec![];
-                    //     let mut f2 = vec![];
-                    //     let mut f3 = vec![];
-                    //     let mut f4 = vec![];
-                    //     let mut f5 = vec![];
-                    //     let mut f6 = vec![];
-                    //     let mut f7 = vec![];
-                    //     let mut f8 = vec![];
-                    //     let mut f9 = vec![];
-                    //     let mut f10 = vec![];
-                    //     let mut f11 = vec![];
+                    //     let mut f = vec![];
                     //
                     //     let mut xs = vec![];
                     //     let mut probe_r = vec![T::zero(); r_next.len()];
                     //     let mut probe_x = vec![T::zero(); x.len()];
                     //     for i in 0..=1000 {
-                    //         let alpha: f64 = 0.00001 * i as f64;
+                    //         let alpha: f64 = 2.0*max_alpha*0.001 * i as f64;
                     //         zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
                     //             |(x, &x0, &p)| {
                     //                 *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
@@ -1252,64 +1231,21 @@ where
                     //         if i == 0 || i == 1000 {
                     //             dbg!(&probe_r);
                     //         }
+                    //         geo::io::save_mesh(&problem.mesh(), &format!("./out/dbg_mesh_{}.vtk", i)).unwrap();
                     //         let probe_f = problem.debug_friction();
                     //         let probe = merit(problem, &probe_x, &probe_r, init_sparse_solver);
                     //         xs.push(alpha);
+                    //         f.push(probe_f.view().into_tensor().norm_squared());
                     //         merit_data.push(probe);
-                    //         r0.push(probe_r[0]);
-                    //         r1.push(probe_r[1]);
-                    //         r2.push(probe_r[2]);
-                    //         r3.push(probe_r[3]);
-                    //         r4.push(probe_r[4]);
-                    //         r5.push(probe_r[5]);
-                    //         r6.push(probe_r[30]);
-                    //         r7.push(probe_r[31]);
-                    //         r8.push(probe_r[32]);
-                    //         r9.push(probe_r[33]);
-                    //         r10.push(probe_r[34]);
-                    //         r11.push(probe_r[35]);
-                    //         f0.push(probe_f[0]);
-                    //         f1.push(probe_f[1]);
-                    //         f2.push(probe_f[2]);
-                    //         f3.push(probe_f[3]);
-                    //         f4.push(probe_f[4]);
-                    //         f5.push(probe_f[5]);
-                    //         f6.push(probe_f[30]);
-                    //         f7.push(probe_f[31]);
-                    //         f8.push(probe_f[32]);
-                    //         f9.push(probe_f[33]);
-                    //         f10.push(probe_f[34]);
-                    //         f11.push(probe_f[35]);
+                    //         r0.push(merit_jac_prod(problem, &probe_x, &probe_r, init_sparse_solver));
                     //     }
                     //     use std::io::Write;
                     //     let mut file = std::fs::File::create("./out/debug_data.jl").unwrap();
-                    //     writeln!(file, "xs = {:?}", xs);
-                    //     writeln!(file, "merit_data = {:?}", merit_data);
-                    //     writeln!(file, "r0 = {:?}", r0);
-                    //     writeln!(file, "r1 = {:?}", r1);
-                    //     writeln!(file, "r2 = {:?}", r2);
-                    //     writeln!(file, "r3 = {:?}", r3);
-                    //     writeln!(file, "r4 = {:?}", r4);
-                    //     writeln!(file, "r5 = {:?}", r5);
-                    //     writeln!(file, "r6 = {:?}", r6);
-                    //     writeln!(file, "r7 = {:?}", r7);
-                    //     writeln!(file, "r8 = {:?}", r8);
-                    //     writeln!(file, "r9 = {:?}", r9);
-                    //     writeln!(file, "r10 = {:?}", r10);
-                    //     writeln!(file, "r11 = {:?}", r11);
-                    //     writeln!(file, "f0 = {:?}", f0);
-                    //     writeln!(file, "f1 = {:?}", f1);
-                    //     writeln!(file, "f2 = {:?}", f2);
-                    //     writeln!(file, "f3 = {:?}", f3);
-                    //     writeln!(file, "f4 = {:?}", f4);
-                    //     writeln!(file, "f5 = {:?}", f5);
-                    //     writeln!(file, "f6 = {:?}", f6);
-                    //     writeln!(file, "f7 = {:?}", f7);
-                    //     writeln!(file, "f8 = {:?}", f8);
-                    //     writeln!(file, "f9 = {:?}", f9);
-                    //     writeln!(file, "f10 = {:?}", f10);
-                    //     writeln!(file, "f11 = {:?}", f11);
-                    //     writeln!(file, "xs_length = {:?}", xs.len());
+                    //     writeln!(file, "xs = {:?}", xs).unwrap();
+                    //     writeln!(file, "merit_data = {:?}", merit_data).unwrap();
+                    //     writeln!(file, "r0 = {:?}", r0).unwrap();
+                    //     writeln!(file, "f = {:?}", f).unwrap();
+                    //     writeln!(file, "xs_length = {:?}", xs.len()).unwrap();
                     //     panic!("STOP");
                     // }
                     (ls_count, alpha)

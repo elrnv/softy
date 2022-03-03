@@ -4,6 +4,7 @@ use geo::attrib::Attrib;
 use geo::mesh::{topology::*, VertexPositions};
 use num_traits::Zero;
 use tensr::*;
+use unroll::unroll_for_loops;
 
 use crate::attrib_defines::*;
 use crate::objects::tetsolid::*;
@@ -46,6 +47,30 @@ pub fn to_vertex_velocity<V: Real>(dq: ChunkedView<&[V]>, mut vtx_vel: Chunked3<
 }
 
 impl<X: Real, V: Real> ParticleState<Chunked3<&mut [X]>, Chunked3<&mut [V]>> {
+    /// Updates vertex positions from given blended degrees of freedom.
+    ///
+    /// This ensures that vertex data queried by constraint functions is current.
+    #[unroll_for_loops]
+    pub fn update_with_lerp(
+        &mut self,
+        dof0: ChunkedView<GeneralizedState<&[X], &[V]>>,
+        dof1: ChunkedView<GeneralizedState<&[X], &[V]>>,
+        a0: f64,
+        a1: f64,
+    ) {
+        let vtx_dofs0 = Chunked3::from_flat(dof0.isolate(VERTEX_DOFS));
+        let vtx_dofs1 = Chunked3::from_flat(dof1.isolate(VERTEX_DOFS));
+        for (
+            ParticleState { pos, vel },
+            (GeneralizedState { q: q0, dq: dq0 }, GeneralizedState { q: q1, dq: dq1 }),
+        ) in self.iter_mut().zip(vtx_dofs0.iter().zip(vtx_dofs1.iter()))
+        {
+            for i in 0..3 {
+                pos[i] = q1[i] * X::from(a1).unwrap() + q0[i] * X::from(a0).unwrap();
+                vel[i] = dq1[i] * V::from(a1).unwrap() + dq0[i] * V::from(a0).unwrap();
+            }
+        }
+    }
     /// Updates vertex positions from given degrees of freedom.
     ///
     /// This ensures that vertex data queried by constraint functions is current.
@@ -690,8 +715,28 @@ impl<T: Real> State<T, ad::FT<T>> {
             });
     }
 
+    pub fn update_cur_vertices_with_bdf2(&mut self) {
+        self.update_cur_vertices_with_lerp(-1.0 / 3.0, 4.0 / 3.0)
+    }
+
+    /// Set current vertex state to be some blend between previous and current degrees of freedom.
+    pub fn update_cur_vertices_with_lerp(&mut self, a0: f64, a1: f64) {
+        let Self { dof, vtx, .. } = self;
+        let dof_prev = dof.view().map_storage(|dof| GeneralizedState {
+            q: dof.prev.q,
+            dq: dof.prev.dq,
+        });
+        let dof_cur = dof.view().map_storage(|dof| GeneralizedState {
+            q: dof.cur.q,
+            dq: dof.cur.dq,
+        });
+        vtx.cur
+            .view_mut()
+            .update_with_lerp(dof_prev, dof_cur, a0, a1);
+    }
+
     /// Transfer state from degrees of freedom to vertex state.
-    pub fn update_cur_vertices(&mut self) {
+    pub fn update_cur_vertices_direct(&mut self) {
         let Self { dof, vtx, .. } = self;
         let dof_cur = dof.view().map_storage(|dof| GeneralizedState {
             q: dof.cur.q,
@@ -960,8 +1005,6 @@ impl<T: Real> State<T, ad::FT<T>> {
         let alpha = S::from(alpha).unwrap();
 
         // In static simulations, velocity is simply displacement.
-
-        // Note this code includes rigid rotation, but we will overwrite that below.
         state
             .isolate(VERTEX_DOFS)
             .into_iter()
@@ -1006,35 +1049,45 @@ impl<T: Real> State<T, ad::FT<T>> {
         //}
     }
 
-    /// Take a `gamma` parametrized BDF2 step in `q` computed in the state workspace.
+    /// Standalone BDF2 step.
+    pub fn bdf2_step<S: Real>(state: ChunkedView<StepState<&[T], &[S], &mut [S]>>, dt: f64) {
+        State::mixed_bdf2_step(state, dt, 0.25, 1.0 / 3.0);
+    }
+
+    /// Take a `alpha`-`beta` parametrized BDF2 step in `q` computed in the state workspace.
     ///
-    /// Use `gamma = 1/2` for vanilla BDF2. Other values of `gamma` are useful for BDF2 variants like TR-BDF2.
-    pub fn bdf2_step<S: Real>(
-        &mut self,
+    /// Use
+    /// - `alpha = 1/4`, `beta = 1/3` for standalone BDF2.
+    /// - `alpha = 1/2`, `beta = 2/3` for half BDF2 step following half a TR or BE step.
+    /// - `alpha = 2 - sqrt(2)`, `beta = sqrt(2)/2` for `2 - sqrt(2)` of TR or BE step followed by `1 - sqrt(2)` BDF2 step.
+    pub fn mixed_bdf2_step<S: Real>(
         state: ChunkedView<StepState<&[T], &[S], &mut [S]>>,
         dt: f64,
-        gamma: f64,
+        alpha: f64,
+        beta: f64,
     ) {
         debug_assert!(dt > 0.0);
 
         let dt = S::from(dt).unwrap();
-        let gamma = S::from(gamma).unwrap();
+        let alpha = S::from(alpha).unwrap();
+        let beta = S::from(beta).unwrap();
 
         // Compute coefficients
-        let _1 = S::one();
-        let _2 = S::from(2.0).unwrap();
-        let a = _1 / (gamma * (_2 - gamma));
-        let b = (_1 - gamma) * (_1 - gamma) / (gamma * (_2 - gamma));
-        let c = (_1 - gamma) / (_2 - gamma);
+        // let a = _1 / (gamma * (_2 - gamma));
+        let a = beta / alpha;
+        // let b = (_1 - gamma) * (_1 - gamma) / (gamma * (_2 - gamma));
+        let b = S::one() - a;
+        // let c = (_1 - gamma) / (_2 - gamma);
+        let c = S::one() - beta;
 
         // Integrate all (positional) degrees of freedom using standard implicit euler.
-        // Note this code includes rigid motion, but we will overwrite those below.
         state.isolate(VERTEX_DOFS).into_iter().for_each(
             |StepState {
                  prev_q, cur, next, ..
              }| {
-                *next.q = *next.dq * c * dt + S::from(*cur.q).unwrap() * a
-                    - S::from(*prev_q).unwrap() * b;
+                *next.q = *next.dq * c * dt
+                    + S::from(*cur.q).unwrap() * a
+                    + S::from(*prev_q).unwrap() * b;
             },
         );
 

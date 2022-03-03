@@ -29,7 +29,7 @@ pub enum TimeIntegration {
     /// Trapezoid Rule integration.
     TR,
     ///// Second order Backward Differentiation Formula.
-    //BDF2,
+    BDF2,
     ///// TR and BDF2 mixed method.
     //TRBDF2,
 }

@@ -98,7 +98,7 @@ impl From<TimeIntegration> for softy::nl_fem::TimeIntegration {
     fn from(ti: TimeIntegration) -> softy::nl_fem::TimeIntegration {
         match ti {
             TimeIntegration::TR => softy::nl_fem::TimeIntegration::TR,
-            //TimeIntegration::BDF2 => softy::nl_fem::TimeIntegration::BDF2,
+            TimeIntegration::BDF2 => softy::nl_fem::TimeIntegration::BDF2,
             //TimeIntegration::TRBDF2=> softy::nl_fem::TimeIntegration::TRBDF2,
             _ => softy::nl_fem::TimeIntegration::BE,
         }

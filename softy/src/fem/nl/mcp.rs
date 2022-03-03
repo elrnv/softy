@@ -40,6 +40,10 @@ where
         self.problem.debug_friction()
     }
     #[inline]
+    fn mesh(&self) -> crate::Mesh {
+        self.problem.mesh()
+    }
+    #[inline]
     fn mesh_with(&self, dq: &[T]) -> crate::Mesh {
         self.problem.mesh_with(dq)
     }

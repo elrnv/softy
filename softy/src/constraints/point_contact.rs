@@ -52,10 +52,7 @@ enum MassMatrixInv<S, T, I> {
 
 impl<T> MassData<T> {
     fn is_some(&self) -> bool {
-        match self {
-            MassData::Zero => false,
-            _ => true,
-        }
+        !matches!(self, MassData::Zero)
     }
 }
 
@@ -285,10 +282,10 @@ impl<T: Real> PointContactConstraint<T> {
                 .map_err(|_| Error::InvalidParameter {
                     name: "Missing mass attribute or parameter".to_string(),
                 })
-                .and_then(|attrib| {
+                .map(|attrib| {
                     let data: Chunked3<Vec<T>> =
                         attrib.iter().map(|&x| [T::from(x).unwrap(); 3]).collect();
-                    Ok(MassData::Sparse(data))
+                    MassData::Sparse(data)
                 }),
         }
     }
@@ -310,7 +307,7 @@ impl<T: Real> PointContactConstraint<T> {
         //}
 
         let surf = &self.implicit_surface;
-        let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(&surf);
+        let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
         let row_correction = |((row, col), val)| {
             let idx: Index = neighborhood_indices[row];
             assert!(idx.is_valid());
@@ -1515,7 +1512,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
         mut out: [SubsetView<Chunked3<&mut [T]>>; 2],
         multiplier: T,
     ) {
-        if let Some(ref frictional_contact) = self.frictional_contact() {
+        if let Some(frictional_contact) = self.frictional_contact() {
             if !frictional_contact.object_impulse.is_empty() && !out[0].is_empty() {
                 for (i, (&cr, _)) in frictional_contact.object_impulse.iter().enumerate() {
                     out[0][i] = (Vector3::new(out[0][i]) + Vector3::new(cr) * multiplier).into();
@@ -1537,7 +1534,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
         mut grad: SubsetView<Chunked3<&mut [T]>>,
         multiplier: T,
     ) {
-        if let Some(ref frictional_contact) = self.frictional_contact() {
+        if let Some(frictional_contact) = self.frictional_contact() {
             if !frictional_contact.object_impulse.is_empty() && !grad.is_empty() {
                 for (i, (_, &r)) in frictional_contact.object_impulse.iter().enumerate() {
                     grad[i] = (Vector3::new(grad[i]) + Vector3::new(r) * multiplier).into();
@@ -1551,7 +1548,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
         mut grad: SubsetView<Chunked3<&mut [T]>>,
         multiplier: T,
     ) {
-        if let Some(ref frictional_contact) = self.frictional_contact() {
+        if let Some(frictional_contact) = self.frictional_contact() {
             if !frictional_contact.collider_impulse.is_empty() && !grad.is_empty() {
                 for (i, (_, &r)) in frictional_contact.collider_impulse.indexed_source_iter() {
                     grad[i] = (Vector3::new(grad[i]) + Vector3::new(r) * multiplier).into();
@@ -1564,8 +1561,8 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
         let mut dissipation = T::zero();
         if let Some(ref frictional_contact) = self.friction_workspace {
             for (i, (_, f)) in frictional_contact.object_impulse.iter().enumerate() {
-                for j in 0..3 {
-                    dissipation += v[0][i][j] * f[j];
+                for (&f, &v0i) in f.iter().zip(v[0][i].iter()).take(3) {
+                    dissipation += v0i * f;
                 }
             }
 
@@ -1850,24 +1847,20 @@ impl<T: Real> PointContactConstraint<T> {
     pub(crate) fn object_constraint_jacobian_size(&self) -> usize {
         if let Some(jac) = self.constraint_jacobian.borrow() {
             jac[0].as_ref().map_or(0, |jac| jac.num_non_zeros())
+        } else if !self.object_is_fixed() {
+            self.implicit_surface.num_surface_jacobian_entries()
         } else {
-            if !self.object_is_fixed() {
-                self.implicit_surface.num_surface_jacobian_entries()
-            } else {
-                0
-            }
+            0
         }
     }
 
     pub(crate) fn collider_constraint_jacobian_size(&self) -> usize {
         if let Some(jac) = self.constraint_jacobian.borrow() {
             jac[1].as_ref().map_or(0, |jac| jac.num_non_zeros())
+        } else if !self.collider_is_fixed() {
+            self.implicit_surface.num_query_jacobian_entries()
         } else {
-            if !self.collider_is_fixed() {
-                self.implicit_surface.num_query_jacobian_entries()
-            } else {
-                0
-            }
+            0
         }
     }
 
@@ -1909,9 +1902,9 @@ impl<T: Real> PointContactConstraint<T> {
             })
     }
 
-    pub(crate) fn object_constraint_jacobian_indices_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
+    pub(crate) fn object_constraint_jacobian_indices_iter(
+        &self,
+    ) -> impl Iterator<Item = MatrixElementIndex> + '_ {
         if let Some(jac) = self.constraint_jacobian.borrow() {
             Either::Left(
                 jac[0]
@@ -1929,9 +1922,9 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
-    pub(crate) fn collider_constraint_jacobian_indices_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
+    pub(crate) fn collider_constraint_jacobian_indices_iter(
+        &self,
+    ) -> impl Iterator<Item = MatrixElementIndex> + '_ {
         if let Some(jac) = self.constraint_jacobian.borrow() {
             Either::Left(
                 jac[1]
@@ -1949,9 +1942,9 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
-    pub(crate) fn object_constraint_jacobian_blocks_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (usize, usize, [T; 3])> + 'a {
+    pub(crate) fn object_constraint_jacobian_blocks_iter(
+        &self,
+    ) -> impl Iterator<Item = (usize, usize, [T; 3])> + '_ {
         if let Some(jac) = self.constraint_jacobian.borrow() {
             Either::Left(
                 jac[0]
@@ -2015,9 +2008,9 @@ impl<T: Real> PointContactConstraint<T> {
         );
     }
 
-    pub(crate) fn implicit_object_constraint_jacobian_blocks_par_iter<'a>(
-        &'a self,
-    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+    pub(crate) fn implicit_object_constraint_jacobian_blocks_par_iter(
+        &self,
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + '_ {
         let surf = &self.implicit_surface;
         let iter = surf
             .surface_jacobian_indexed_block_par_iter(self.collider_vertex_positions.view().into());
@@ -2036,9 +2029,9 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     //#[cfg(feature = "optsolver")]
-    pub(crate) fn object_constraint_jacobian_blocks_par_iter<'a>(
-        &'a self,
-    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+    pub(crate) fn object_constraint_jacobian_blocks_par_iter(
+        &self,
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + '_ {
         if let Some(jac) = self.constraint_jacobian.borrow() {
             Either::Left(
                 jac[0]
@@ -2080,9 +2073,9 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
-    pub(crate) fn collider_constraint_jacobian_blocks_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (usize, usize, [T; 3])> + 'a {
+    pub(crate) fn collider_constraint_jacobian_blocks_iter(
+        &self,
+    ) -> impl Iterator<Item = (usize, usize, [T; 3])> + '_ {
         if let Some(jac) = self.constraint_jacobian.borrow() {
             Either::Left(
                 jac[1]
@@ -2165,9 +2158,9 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     //#[cfg(feature = "optsolver")]
-    pub(crate) fn collider_constraint_jacobian_blocks_par_iter<'a>(
-        &'a self,
-    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+    pub(crate) fn collider_constraint_jacobian_blocks_par_iter(
+        &self,
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + '_ {
         if let Some(jac) = self.constraint_jacobian.borrow() {
             Either::Left(
                 jac[1]
@@ -2210,9 +2203,9 @@ impl<T: Real> PointContactConstraint<T> {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn constraint_jacobian_indices_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
+    pub(crate) fn constraint_jacobian_indices_iter(
+        &self,
+    ) -> impl Iterator<Item = MatrixElementIndex> + '_ {
         let col_offset = self.implicit_surface.surface_vertex_positions().len() * 3;
         let obj_indices_iter = self.object_constraint_jacobian_indices_iter();
         let coll_indices_iter = self
@@ -2592,13 +2585,14 @@ impl<T: Real> ContactConstraintJacobian<'_, T> for PointContactConstraint<T> {
 impl<'a, T: Real> ContactConstraintHessian<'a, T> for PointContactConstraint<T> {
     type InputDual = &'a [T];
     fn constraint_hessian_size(&self) -> usize {
-        0 + if !self.object_is_fixed() {
+        let obj = if !self.object_is_fixed() {
             self.implicit_surface
                 .num_surface_hessian_product_entries()
                 .unwrap_or(0)
         } else {
             0
-        } + if !self.collider_is_fixed() {
+        };
+        obj + if !self.collider_is_fixed() {
             self.implicit_surface.num_query_hessian_product_entries()
         } else {
             0

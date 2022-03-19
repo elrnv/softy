@@ -40,7 +40,7 @@ impl VolumeConstraint {
         let mut unique_zones = mesh
             .attrib_clone_into_vec::<VolumeZoneIdType, CellIndex>(VOLUME_ZONE_ID_ATTRIB)
             .unwrap_or_else(|_| vec![0; 1]);
-        unique_zones.sort();
+        unique_zones.sort_unstable();
         unique_zones.dedup();
         Ok(unique_zones
             .iter()
@@ -240,9 +240,9 @@ impl VolumeConstraint {
     /// A generic Hessian element iterator. This is used to implement iterators over indices and
     /// values of the sparse Hessian matrix enetries.
     /// Note: it is an attempt to code reuse. Ideally we should use generators here.
-    fn constraint_hessian_iter<'a>(
-        tri: &'a [usize; 3],
-    ) -> impl Iterator<Item = ((usize, usize), (usize, usize), usize, usize)> + 'a {
+    fn constraint_hessian_iter(
+        tri: &[usize; 3],
+    ) -> impl Iterator<Item = ((usize, usize), (usize, usize), usize, usize)> + '_ {
         (0..3).flat_map(move |vi| {
             let col_v = tri[vi];
             let row_v = move |off| tri[(vi + off) % 3];
@@ -258,9 +258,7 @@ impl VolumeConstraint {
         })
     }
 
-    pub fn constraint_hessian_indices_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
+    pub fn constraint_hessian_indices_iter(&self) -> impl Iterator<Item = MatrixElementIndex> + '_ {
         self.surface_topo.iter().flat_map(move |tri| {
             Self::constraint_hessian_iter(tri).map(|((row_v, col_v), (r, c), _, _)| {
                 MatrixElementIndex {

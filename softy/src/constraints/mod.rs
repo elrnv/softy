@@ -333,8 +333,7 @@ pub trait ContactConstraint<T: Real>:
                     tensr::Vector3::new(
                         frictional_contact
                             .contact_basis
-                            .from_contact_coordinates([T::zero(), f[1], f[2]], contact_idx)
-                            .into(),
+                            .from_contact_coordinates([T::zero(), f[1], f[2]], contact_idx),
                     )
                 } else {
                     tensr::Vector3::zero()

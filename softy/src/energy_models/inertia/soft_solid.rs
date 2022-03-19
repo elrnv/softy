@@ -416,12 +416,12 @@ impl<T: Real> EnergyHessianProduct<T> for TetSolidInertia<'_> {
                     .zip(tet_elems.density.iter().map(|&x| f64::from(x))),
             )
             .for_each(|(cell, (&vol, density))| {
-                for vi in 0..4 {
+                for &vtx in cell.iter() {
                     // vertex index
                     for j in 0..3 {
                         // vector component
-                        let row = 3 * cell[vi] + j;
-                        let col = 3 * cell[vi] + j;
+                        let row = 3 * vtx + j;
+                        let col = 3 * vtx + j;
                         prod[row] += p[col] * T::from(0.25 * vol * density).unwrap() * scale;
                     }
                 }

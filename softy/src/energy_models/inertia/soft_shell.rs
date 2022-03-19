@@ -413,12 +413,12 @@ impl<T: Real> EnergyHessianProduct<T> for SoftTriShellInertia<'_> {
                     .zip(tri_elems.density.iter().map(|&x| f64::from(x))),
             )
             .for_each(|(face, (&area, density))| {
-                for vi in 0..3 {
+                for &vtx in face.iter() {
                     // vertex index
                     for j in 0..3 {
                         // vector component
-                        let row = 3 * face[vi] + j;
-                        let col = 3 * face[vi] + j;
+                        let row = 3 * vtx + j;
+                        let col = 3 * vtx + j;
                         prod[row] = p[col] * T::from(third * area * density).unwrap() * scale;
                     }
                 }

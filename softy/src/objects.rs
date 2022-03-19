@@ -103,9 +103,7 @@ pub trait DynamicObject: Object {
             use geo::attrib::*;
             let fixed_buf = mesh
                 .remove_attrib::<VertexIndex>(FIXED_ATTRIB)
-                .unwrap_or_else(|_| {
-                    Attribute::direct_from_vec(vec![0 as FixedIntType; mesh.num_vertices()])
-                })
+                .unwrap_or_else(|_| Attribute::direct_from_vec(vec![0; mesh.num_vertices()]))
                 .into_data();
             let fixed = fixed_buf
                 .cast_into_vec::<FixedIntType>()

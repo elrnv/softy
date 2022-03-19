@@ -366,7 +366,7 @@ impl DihedralElements {
             mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)?;
         let get_ref_pos = |f, i| ref_pos[mesh.cell_vertex(f, i).unwrap().into_inner()];
 
-        let mut dihedrals = compute_interior_edge_topology_from_mesh(&mesh, vertex_type)?;
+        let mut dihedrals = compute_interior_edge_topology_from_mesh(mesh, vertex_type)?;
         let (mut ref_angles, mut ref_length): (Vec<_>, Vec<_>) = dihedrals
             .iter()
             .map(|e| {
@@ -628,7 +628,7 @@ impl TriShell {
 }
 
 impl TriShell {
-    pub fn elasticity<'a, T: Real>(&'a self) -> TriShellNeoHookean<'a, T> {
+    pub fn elasticity<T: Real>(&self) -> TriShellNeoHookean<'_, T> {
         TriShellNeoHookean::new(self)
     }
 }

@@ -268,6 +268,11 @@ impl Display for Timings {
         )?;
         writeln!(
             f,
+            "      Friction D Half:        {}",
+            self.friction_jacobian.d_half.as_millis()
+        )?;
+        writeln!(
+            f,
             "      Friction D:             {}",
             self.friction_jacobian.d.as_millis()
         )?;

@@ -116,7 +116,7 @@ where
         }
 
         // r0 = b - p
-        r.axpy(-T::one(), &p, T::one());
+        r.axpy(-T::one(), p, T::one());
 
         // Choose r0s arbitrary such that (r0s, r) != 0. We chose r0s = r.
         r0s.as_mut_slice().copy_from_slice(r.as_slice());
@@ -176,7 +176,7 @@ where
                 }
 
                 // r = b - A*x
-                r.axpy(T::one(), &rhs, -T::one());
+                r.axpy(T::one(), rhs, -T::one());
                 r0s.as_mut_slice().copy_from_slice(r.as_slice());
                 rho_new = r0s.norm_squared();
                 r0s_norm_sq = rho_new.to_f64().unwrap();
@@ -215,7 +215,7 @@ where
                 };
             }
 
-            let mut r0sAp = r0s.dot(&Ap);
+            let mut r0sAp = r0s.dot(Ap);
             log::trace!("r0sAp = {:?}", r0sAp);
 
             // Restart with a different r0s if Ap becomes orthogonal to r0s.
@@ -232,7 +232,7 @@ where
                 }
 
                 // r = b - A*x
-                r.axpy(T::one(), &rhs, -T::one());
+                r.axpy(T::one(), rhs, -T::one());
                 r0s.as_mut_slice().copy_from_slice(r.as_slice());
                 r0sAp = r0s.norm_squared();
                 r0s_norm_sq = r0sAp.to_f64().unwrap();

@@ -359,7 +359,7 @@ pub(crate) mod test_utils {
                     for col in 0..=row {
                         eprint!("{:10.2e}", hess[row][col]);
                     }
-                    eprintln!("");
+                    eprintln!();
                 }
 
                 eprintln!("Expected:");
@@ -367,7 +367,7 @@ pub(crate) mod test_utils {
                     for col in 0..=row {
                         eprint!("{:10.2e}", hess_ad[row][col]);
                     }
-                    eprintln!("");
+                    eprintln!();
                 }
             }
             assert!(success);

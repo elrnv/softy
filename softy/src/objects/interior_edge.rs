@@ -235,7 +235,7 @@ impl InteriorEdge {
             faces(self.faces[0], 1),
             faces(self.faces[0], 2),
         ];
-        let an0 = Triangle::from_indexed_slice(&f0, &pos)
+        let an0 = Triangle::from_indexed_slice(&f0, pos)
             .area_normal()
             .into_tensor();
         let f1 = [
@@ -511,7 +511,7 @@ enum EdgeTopo {
 }
 
 impl EdgeTopo {
-    fn into_manifold_edge(&self) -> Option<[usize; 2]> {
+    fn to_manifold_edge(&self) -> Option<[usize; 2]> {
         match self {
             EdgeTopo::Manifold(e) => Some(*e),
             _ => None,
@@ -531,8 +531,8 @@ impl EdgeData {
             topo: EdgeTopo::Boundary(face_idx),
         }
     }
-    fn into_manifold_edge(&self) -> Option<([usize; 2], [usize; 2])> {
-        self.topo.into_manifold_edge().map(|e| (self.vertices, e))
+    fn to_manifold_edge(&self) -> Option<([usize; 2], [usize; 2])> {
+        self.topo.to_manifold_edge().map(|e| (self.vertices, e))
     }
 }
 
@@ -637,7 +637,7 @@ pub(crate) fn compute_interior_edge_topology_from_mesh(
     for edge in edges.values() {
         // We only consider manifold edges with strictly two adjacent faces.
         // Boundary edges are ignored as are non-manifold edges.
-        if let Some((verts, faces)) = edge.into_manifold_edge() {
+        if let Some((verts, faces)) = edge.to_manifold_edge() {
             // Determine the source vertex for this edge in faces[0].
             let f0 = mesh.indices.view().at(faces[0]);
             let f1 = mesh.indices.view().at(faces[1]);
@@ -745,7 +745,7 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &crate::TriMesh) -> Vec<In
     for edge in edges.values() {
         // We only consider manifold edges with strictly two adjacent faces.
         // Boundary edges are ignored as are non-manifold edges.
-        if let Some((verts, faces)) = edge.into_manifold_edge() {
+        if let Some((verts, faces)) = edge.to_manifold_edge() {
             // Determine the source vertex for this edge in faces[0].
             let edge_start = [
                 find_triangle_edge_start(verts, trimesh.face(faces[0])),
@@ -914,7 +914,7 @@ mod tests {
                 eprint!("{:10.2e}", grad_ad[vtx][i]);
             }
         }
-        eprintln!("");
+        eprintln!();
 
         assert!(success);
     }
@@ -994,7 +994,7 @@ mod tests {
                         }
                     }
                 }
-                eprintln!("");
+                eprintln!();
             }
         }
         eprintln!("\n");
@@ -1018,10 +1018,10 @@ mod tests {
                         }
                     }
                 }
-                eprintln!("");
+                eprintln!();
             }
         }
-        eprintln!("");
+        eprintln!();
 
         assert!(success);
     }

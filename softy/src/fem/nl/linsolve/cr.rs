@@ -77,7 +77,7 @@ where
         }
 
         // r0 = b - p
-        r.axpy(-T::one(), &p, T::one());
+        r.axpy(-T::one(), p, T::one());
 
         let mut r_norm_sq = r.norm_squared().to_f64().unwrap();
 
@@ -99,12 +99,12 @@ where
         matvec(r.as_slice(), Ar.as_mut_slice());
         Ap.as_mut_slice().copy_from_slice(Ar.as_slice());
 
-        let mut rAr = r.dot(&Ar);
+        let mut rAr = r.dot(Ar);
 
         let mut iterations = 0;
         loop {
             // α = rAr/ p'A'Ap
-            let alpha = rAr / Ap.dot(&Ap);
+            let alpha = rAr / Ap.dot(Ap);
 
             // x = x + α * p
             x.axpy(alpha, p, T::one());
@@ -146,7 +146,7 @@ where
                 };
             }
 
-            let rAr_new = r.dot(&Ar);
+            let rAr_new = r.dot(Ar);
             let beta = rAr_new / rAr;
             rAr = rAr_new;
 

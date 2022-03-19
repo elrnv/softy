@@ -227,7 +227,6 @@ fn friction_tester(
 
 /// A regular tetrahedron sliding on a flat surface.
 #[test]
-#[ignore]
 fn sliding_tet_on_points() -> Result<(), Error> {
     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
     let fc_params = FrictionalContactParams {
@@ -241,7 +240,7 @@ fn sliding_tet_on_points() -> Result<(), Error> {
         friction_params: Some(fc_params(0.2)),
     };
 
-    let tetmesh = PlatonicSolidBuilder::build_tetrahedron();
+    let mut tetmesh = PlatonicSolidBuilder::build_tetrahedron();
     let mut surface = GridBuilder {
         rows: 10,
         cols: 10,
@@ -252,7 +251,8 @@ fn sliding_tet_on_points() -> Result<(), Error> {
     surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
     surface.translate([0.0, -0.7, 0.0]);
 
-    //geo::io::save_polymesh(&surface, "./out/ramp.vtk");
+    // geo::io::save_polymesh(&surface, "./out/ramp.vtk");
+    // geo::io::save_tetmesh(&tetmesh, "./out/mesh.vtk");
 
     friction_tester(material, fc_params, tetmesh, surface, true)
 }
@@ -283,7 +283,7 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
     surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
     surface.translate([0.0, -0.5, 0.0]);
 
-    //geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
+    // geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
 
     friction_tester(material, fc_params, tetmesh, surface, false)
 }

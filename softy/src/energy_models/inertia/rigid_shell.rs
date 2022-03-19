@@ -114,9 +114,9 @@ impl EnergyHessianTopology for RigidShellInertia {
     ) {
         debug_assert_eq!(indices.len(), self.energy_hessian_size());
 
-        for i in 0..3 {
+        for (i, idx) in indices.iter_mut().enumerate().take(3) {
             // Translational degrees of freedom generate a diagonal matrix.
-            indices[i] = MatrixElementIndex {
+            *idx = MatrixElementIndex {
                 row: i + offset.row,
                 col: i + offset.col,
             };
@@ -144,8 +144,8 @@ impl<T: Real> EnergyHessian<T> for RigidShellInertia {
     #[allow(non_snake_case)]
     fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {
         debug_assert_eq!(values.len(), self.energy_hessian_size());
-        for i in 0..3 {
-            values[i] = T::from(self.mass).unwrap() * scale;
+        for v in values.iter_mut().take(3) {
+            *v = T::from(self.mass).unwrap() * scale;
         }
         values[3..].copy_from_slice(
             &(self.inertia.lower_triangular_vec().cast::<T>() * scale).into_data()[..],

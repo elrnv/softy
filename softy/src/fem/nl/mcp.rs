@@ -144,13 +144,13 @@ where
     ///
     /// This callback gets called at the beginning of every Newton iteration.
     fn outer_callback(&self) -> &RefCell<Callback<T>> {
-        &self.solver.outer_callback()
+        self.solver.outer_callback()
     }
     /// Gets a reference to the inner callback function.
     ///
     /// This is the callback that gets called for every inner linear solve.
     fn inner_callback(&self) -> &RefCell<Callback<T>> {
-        &self.solver.inner_callback()
+        self.solver.inner_callback()
     }
     /// Gets a reference to the underlying problem instance.
     fn problem(&self) -> &P {

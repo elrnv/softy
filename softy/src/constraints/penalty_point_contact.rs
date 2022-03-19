@@ -2,13 +2,14 @@ use super::point_contact::PointContactConstraint;
 use crate::constraints::{ContactConstraint, ContactSurface};
 use crate::matrix::MatrixElementIndex;
 use crate::{
-    ContactBasis, ContactGradient, ContactGradientView, ContactJacobian, Error, FrictionParams,
-    FrictionWorkspace, Index, Real, TriMesh, TripletContactJacobian, ORIGINAL_VERTEX_INDEX_ATTRIB,
+    BlockMatrix3Triplets, ContactBasis, ContactGradient, ContactGradientView, ContactJacobian,
+    Error, FrictionParams, FrictionWorkspace, Index, Real, SSBlockMatrix3, TriMesh,
+    TripletContactJacobian, ORIGINAL_VERTEX_INDEX_ATTRIB,
 };
 use autodiff as ad;
 use flatk::{
-    Chunked, Chunked1, Chunked3, CloneWithStorage, Isolate, Offsets, Select, Set, Sparse, Storage,
-    StorageMut, SubsetView, UniChunked, View, U1, U3,
+    Chunked, Chunked1, Chunked3, CloneWithStorage, IntoStorage, Isolate, Offsets, Select, Set,
+    Sparse, Storage, StorageMut, SubsetView, UniChunked, View, U1, U3,
 };
 use geo::attrib::Attrib;
 use geo::index::CheckedIndex;
@@ -21,6 +22,7 @@ use rayon::iter::Either;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::ops::AddAssign;
 use std::time::{Duration, Instant};
 use tensr::{
@@ -67,20 +69,39 @@ pub struct MappedContactJacobian<T> {
 
 impl<T: Real> MappedContactJacobian<T> {
     fn from_triplets(triplet_jac: TripletContactJacobian<T>) -> Self {
-        debug_assert!(triplet_jac
-            .block_indices
-            .windows(2)
-            .all(|w| w[0].0 <= w[1].0 || w[0].1 <= w[1].1));
-        let blocks =
-            Chunked3::from_flat(triplet_jac.blocks.data.view().into_arrays()).into_arrays();
+        // debug_assert!(triplet_jac
+        //     .block_indices
+        //     .windows(2)
+        //     .all(|w| w[0].0 < w[1].0 || (w[0].0 == w[1].0 && w[0].1 <= w[1].1)));
+
+        let indices = &triplet_jac.block_indices;
+        let nnz = indices.len();
+        let mut entries = (0..nnz).collect::<Vec<_>>();
+        entries.sort_by(|&a, &b| {
+            indices[a]
+                .0
+                .cmp(&indices[b].0)
+                .then_with(|| indices[a].1.cmp(&indices[b].1))
+        });
+
+        let blocks = triplet_jac.blocks.view();
+        // let blocks =
+        //     Chunked3::from_flat(triplet_jac.blocks.data.view().into_arrays()).into_arrays();
 
         let mut mapping = vec![Index::INVALID; blocks.len()];
 
-        let triplet_iter = triplet_jac
-            .block_indices
-            .iter()
-            .zip(blocks.iter())
-            .map(|((row, col), block)| (*row, *col, *block));
+        let triplet_iter = entries.iter().map(|&i| {
+            (
+                triplet_jac.block_indices[i].0,
+                triplet_jac.block_indices[i].1,
+                *blocks.isolate(i).into_arrays(),
+            )
+        });
+        // let triplet_iter = triplet_jac
+        //     .block_indices
+        //     .iter()
+        //     .zip(blocks.iter())
+        //     .map(|((row, col), block)| (*row, *col, *block));
 
         let uncompressed = tensr::SSBlockMatrix3::from_block_triplets_iter_uncompressed(
             triplet_iter,
@@ -92,7 +113,7 @@ impl<T: Real> MappedContactJacobian<T> {
         let matrix = uncompressed.pruned_with(
             |_, _, _| true,
             |src, dst| {
-                mapping[src] = Index::new(dst);
+                mapping[entries[src]] = Index::new(dst);
             },
         );
 
@@ -148,7 +169,7 @@ impl<T: Real> MappedContactJacobian<T> {
         let surf_v = (self.matrix.view().into_tensor().transpose() * vc.into_tensor()).into_data();
         let mut v = Chunked3::from_flat(vec![T::zero(); num_variables]);
         for (&i, &[v0, v1, v2]) in implicit_surface_vertex_indices.iter().zip(surf_v.iter()) {
-            v[i] = [-v0, -v1, -v2];
+            v[i] = [v0, v1, v2];
         }
         for (&i, &[v0, v1, v2]) in constrained_collider_vertices.iter().zip(vc.iter()) {
             v[collider_vertex_indices[i]] = [-v0, -v1, -v2];
@@ -242,6 +263,79 @@ impl<T: Real> MappedContactGradient<T> {
                     .isolate(pos)
                     .into_arrays()
                     .as_mut_tensor() += block.into_arrays().as_tensor().transpose();
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MappedSSBlockMatrix3<T> {
+    /// Compressed sparse row sparse block matrix.
+    pub matrix: SSBlockMatrix3<T>,
+    /// A Mapping from original triplets to the final compressed sparse matrix.
+    pub mapping: Vec<Index>,
+}
+
+impl<T: Real> MappedSSBlockMatrix3<T> {
+    fn from_triplets(triplets: &BlockMatrix3Triplets<T>) -> Self {
+        let indices = &triplets.block_indices;
+        let nnz = indices.len();
+        let mut entries = (0..nnz).collect::<Vec<_>>();
+        entries.sort_by(|&a, &b| {
+            indices[a]
+                .0
+                .cmp(&indices[b].0)
+                .then_with(|| indices[a].1.cmp(&indices[b].1))
+        });
+
+        let blocks = triplets.blocks.view();
+
+        let mut mapping = vec![Index::INVALID; blocks.len()];
+
+        let triplet_iter = entries.iter().map(|&i| {
+            (
+                triplets.block_indices[i].0,
+                triplets.block_indices[i].1,
+                *blocks.isolate(i).into_arrays(),
+            )
+        });
+
+        let uncompressed = tensr::SSBlockMatrix3::from_block_triplets_iter_uncompressed(
+            triplet_iter,
+            triplets.num_rows,
+            triplets.num_cols,
+        );
+
+        // Compress the CSR matrix.
+        let matrix = uncompressed.pruned_with(
+            |_, _, _| true,
+            |src, dst| {
+                mapping[entries[src]] = Index::new(dst);
+            },
+        );
+
+        MappedSSBlockMatrix3 {
+            matrix: matrix.into_data(),
+            mapping,
+        }
+    }
+
+    fn update_values(&mut self, triplets: &BlockMatrix3Triplets<T>) {
+        let Self { matrix, mapping } = self;
+
+        matrix.storage_mut().fill(T::zero()); // Clear values.
+
+        // Update blocks according to the predetermined mapping.
+        for (&pos, block) in mapping.iter().zip(triplets.blocks.iter()) {
+            if let Some(pos) = pos.into_option() {
+                *matrix
+                    .source
+                    .data
+                    .source
+                    .view_mut()
+                    .isolate(pos)
+                    .into_arrays()
+                    .as_mut_tensor() += *block.into_arrays().as_tensor();
             }
         }
     }
@@ -517,6 +611,7 @@ pub struct FrictionJacobianTimings {
     pub b: Duration,
     pub c: Duration,
     pub d: Duration,
+    pub d_half: Duration,
     pub e: Duration,
 }
 
@@ -532,6 +627,7 @@ impl AddAssign<FrictionJacobianTimings> for FrictionJacobianTimings {
         self.b += rhs.b;
         self.c += rhs.c;
         self.d += rhs.d;
+        self.d_half += rhs.d_half;
         self.e += rhs.e;
     }
 }
@@ -548,6 +644,7 @@ impl FrictionJacobianTimings {
         self.b = Duration::new(0, 0);
         self.c = Duration::new(0, 0);
         self.d = Duration::new(0, 0);
+        self.d_half = Duration::new(0, 0);
         self.e = Duration::new(0, 0);
     }
 }
@@ -579,6 +676,8 @@ where
 
     contact_jacobian: Option<MappedContactJacobian<T>>,
     contact_gradient: Option<MappedContactGradient<T>>,
+    jac_contact_jacobian: Option<MappedSSBlockMatrix3<T>>,
+    jac_contact_gradient: Option<BlockMatrix3Triplets<T>>,
     distance_gradient: LazyCell<MappedDistanceGradient<T>>,
 
     friction_jacobian_workspace: FrictionJacobianWorkspace<T>,
@@ -620,6 +719,30 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 matrix: clone_cast_ssblock_mtx::<T, S>(&self_contact_gradient.matrix),
             });
         }
+        let mut jac_contact_jacobian = None;
+        if let Some(self_jac_contact_jacobian) = self.jac_contact_jacobian.as_ref() {
+            jac_contact_jacobian.replace(MappedSSBlockMatrix3 {
+                mapping: self_jac_contact_jacobian.mapping.clone(),
+                matrix: clone_cast_ssblock_mtx::<T, S>(&self_jac_contact_jacobian.matrix),
+            });
+        }
+        let mut jac_contact_gradient = None;
+        if let Some(self_jac_contact_gradient) = self.jac_contact_gradient.as_ref() {
+            jac_contact_gradient.replace(BlockMatrix3Triplets {
+                block_indices: self_jac_contact_gradient.block_indices.clone(),
+                blocks: {
+                    let storage: Vec<_> = self_jac_contact_gradient
+                        .blocks
+                        .storage()
+                        .iter()
+                        .map(|&x| S::from(x).unwrap())
+                        .collect();
+                    self_jac_contact_gradient.blocks.clone_with_storage(storage)
+                },
+                num_rows: self_jac_contact_gradient.num_rows,
+                num_cols: self_jac_contact_gradient.num_cols,
+            });
+        }
         PenaltyPointContactConstraint {
             point_constraint: self.point_constraint.clone_cast(),
             implicit_surface_vertex_indices: self.implicit_surface_vertex_indices.clone(),
@@ -638,6 +761,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 .collect(),
             contact_jacobian,
             contact_gradient,
+            jac_contact_jacobian,
+            jac_contact_gradient,
             friction_jacobian_workspace: FrictionJacobianWorkspace::default(),
             force_workspace: std::cell::RefCell::new(Vec::new()),
             constrained_collider_vertices: self.constrained_collider_vertices.clone(),
@@ -682,8 +807,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             collider_vertex_indices,
             distance_gradient: LazyCell::new(),
             contact_jacobian: None,
-            // contact_gradient: LazyCell::new(),
             contact_gradient: None,
+            jac_contact_jacobian: None,
+            jac_contact_gradient: None,
             lambda: Vec::new(),
             distance_potential: Vec::new(),
             distance_potential_alt: Vec::new(),
@@ -764,7 +890,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .iter()
             .map(|v| v.as_tensor().norm())
             .max_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Less))
-            .unwrap_or(T::zero())
+            .unwrap_or_else(T::zero)
             .to_f64()
             .unwrap();
 
@@ -801,7 +927,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .iter()
             .map(|v| v.as_tensor().norm())
             .max_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Less))
-            .unwrap_or(T::zero())
+            .unwrap_or_else(T::zero)
             .to_f64()
             .unwrap();
 
@@ -896,7 +1022,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         }
     }
 
-    pub(crate) fn precompute_contact_jacobian<'a>(&mut self, num_vertices: usize) {
+    pub(crate) fn precompute_contact_jacobian(&mut self, num_vertices: usize) {
         let pc = &mut self.point_constraint;
 
         if pc.friction_workspace.is_none() {
@@ -904,6 +1030,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         }
 
         self.constrained_collider_vertices = self.point_constraint.active_constraint_indices();
+        let num_constraints = self.constrained_collider_vertices.len();
 
         self.collider_vertex_constraints =
             vec![Index::invalid(); self.point_constraint.collider_vertex_positions.len()];
@@ -923,6 +1050,19 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         );
 
         self.contact_jacobian = Some(MappedContactJacobian::from_triplets(jac_triplets));
+        // let jac1 = self.contact_jacobian.clone().unwrap();
+        //
+        // self.contact_jacobian.as_mut().unwrap().update_values(&jac_triplets);
+        // let jac2 = self.contact_jacobian.clone().unwrap();
+        // assert_eq!(&jac1.mapping, &jac2.mapping);
+        // for ((row_idx1, row1), (row_idx2, row2)) in jac1.matrix.view().into_iter().zip(jac2.matrix.view().into_iter()) {
+        //     assert_eq!(row1.len(), row2.len());
+        //     assert_eq!(row_idx1, row_idx2);
+        //     for ((idx1, entry1), (idx2, entry2)) in row1.into_iter().zip(row2.into_iter()) {
+        //         assert_eq!(idx1, idx2);
+        //         assert_eq!(entry1, entry2);
+        //     }
+        // }
 
         let jac_triplets = TripletContactJacobian::from_selection_reindexed_full(
             &self.point_constraint.implicit_surface,
@@ -934,6 +1074,37 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         );
 
         self.contact_gradient = Some(MappedContactGradient::from_triplets(&jac_triplets));
+
+        let multipliers = vec![[T::zero(); 3]; num_vertices];
+        let jac_triplets = Self::build_contact_jacobian_gradient_product(
+            &self.point_constraint.implicit_surface,
+            self.point_constraint
+                .collider_vertex_positions
+                .view()
+                .into_arrays(),
+            &self.collider_vertex_constraints,
+            &self.implicit_surface_vertex_indices,
+            &multipliers,
+            num_vertices,
+            num_constraints,
+        )
+        .unwrap();
+
+        self.jac_contact_jacobian = Some(MappedSSBlockMatrix3::from_triplets(&jac_triplets));
+
+        let multipliers = vec![[T::zero(); 3]; num_constraints];
+        let jac_triplets = Self::build_contact_jacobian_jacobian_product(
+            &self.point_constraint.implicit_surface,
+            self.point_constraint
+                .collider_vertex_positions
+                .view()
+                .into_arrays(),
+            &self.implicit_surface_vertex_indices,
+            &multipliers,
+            num_vertices,
+        )
+        .unwrap();
+        self.jac_contact_gradient = Some(jac_triplets);
     }
 
     pub(crate) fn update_contact_jacobian<'a>(
@@ -946,7 +1117,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             Select::new(constrained_collider_vertices, query_points.view());
 
         let jac_triplets =
-            TripletContactJacobian::from_selection(&surf, constrained_collider_vertex_positions);
+            TripletContactJacobian::from_selection(surf, constrained_collider_vertex_positions);
 
         contact_jacobian.update_values(&jac_triplets);
     }
@@ -965,7 +1136,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             Select::new(constrained_collider_vertices, query_points.view());
 
         let triplets = TripletContactJacobian::from_selection_reindexed_full(
-            &surf,
+            surf,
             constrained_collider_vertex_positions,
             collider_vertex_constraints,
             implicit_surface_vertex_indices,
@@ -976,8 +1147,51 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         contact_gradient.update_values(&triplets);
     }
 
+    pub(crate) fn update_jac_contact_jacobian<'a>(
+        jac_contact_jacobian: &'a mut MappedSSBlockMatrix3<T>,
+        surf: &QueryTopo<T>,
+        query_points: Chunked3<&[T]>,
+        collider_vertex_constraints: &'a [Index],
+        implicit_surface_vertex_indices: &'a [usize],
+        multiplier: &'a [[T; 3]],
+        num_vertices: usize,
+        num_constraints: usize,
+    ) {
+        let triplets = Self::build_contact_jacobian_gradient_product(
+            surf,
+            query_points.view().into_arrays(),
+            collider_vertex_constraints,
+            implicit_surface_vertex_indices,
+            multiplier,
+            num_vertices,
+            num_constraints,
+        )
+        .unwrap();
+
+        jac_contact_jacobian.update_values(&triplets);
+    }
+
+    pub(crate) fn update_jac_contact_gradient<'a>(
+        jac_contact_gradient: &'a mut BlockMatrix3Triplets<T>,
+        surf: &QueryTopo<T>,
+        query_points: Chunked3<&[T]>,
+        implicit_surface_vertex_indices: &'a [usize],
+        multiplier: &'a [[T; 3]],
+        num_vertices: usize,
+    ) {
+        jac_contact_gradient.blocks = Self::build_contact_jacobian_jacobian_product(
+            surf,
+            query_points.view().into_arrays(),
+            implicit_surface_vertex_indices,
+            multiplier,
+            num_vertices,
+        )
+        .unwrap()
+        .blocks;
+    }
+
     /// Initializes the constraint gradient sparsity pattern.
-    pub fn reset_distance_gradient<'a>(&mut self, num_vertices: usize) {
+    pub fn reset_distance_gradient(&mut self, num_vertices: usize) {
         let (indices, blocks): (Vec<_>, Vec<_>) = self
             .distance_jacobian_blocks_par_iter()
             .map(|(row, col, block)| (MatrixElementIndex { row: col, col: row }, block))
@@ -992,7 +1206,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             ));
     }
 
-    pub fn update_neighbors<'a>(&mut self, x: Chunked3<&'a [T]>) -> bool {
+    pub fn update_neighbors(&mut self, x: Chunked3<&[T]>) -> bool {
         self.update_state(x);
 
         let updated = self
@@ -1289,7 +1503,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             ..
         } = pc.friction_workspace.as_mut().unwrap();
 
-        contact_basis.update_from_normals(normals.into());
+        contact_basis.update_from_normals(normals);
 
         // Compute relative velocity at the point of contact: `vc = J(x)v`
         // assert_eq!(jac.view().into_tensor().num_cols(), v.len());
@@ -1342,9 +1556,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         }
 
         Self::distance_jacobian_blocks_par_chunks_fn(
-            &point_constraint,
-            &implicit_surface_vertex_indices,
-            &collider_vertex_indices,
+            point_constraint,
+            implicit_surface_vertex_indices,
+            collider_vertex_indices,
             fws,
             |fws, (row, col, j)| {
                 let mut fws = Chunked3::from_flat(fws.as_mut_slice());
@@ -1393,14 +1607,14 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let constrained_collider_vertices = &self.constrained_collider_vertices;
         let pc = &mut self.point_constraint;
 
-        if pc.friction_workspace.is_none() {
-            return None;
-        }
+        pc.friction_workspace.as_ref()?;
 
         // Construct contact (or "sliding") basis.
         let normals = pc.contact_normals();
         assert_eq!(normals.len(), lambda.len());
         let t_prep = Instant::now();
+
+        // eprintln!("pos: {:?}", pc.collider_vertex_positions.view());
 
         // Contact Jacobian is defined for object vertices only. Contact Jacobian for collider vertices is trivial.
         if recompute_jacobian {
@@ -1426,7 +1640,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             ..
         } = pc.friction_workspace.as_mut().unwrap();
 
-        contact_basis.update_from_normals(normals.into());
+        contact_basis.update_from_normals(normals);
 
         // Compute relative velocity at the point of contact: `vc = J(x)v`
         //assert_eq!(jac.num_cols() + pc.collider_vertex_positions.len(), v.len());
@@ -1449,9 +1663,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .enumerate()
             .for_each(|(i, (vc, lambda))| {
                 let [_v0, v1, v2] = contact_basis.to_contact_coordinates(*vc, i);
-                //dbg!(i, [v0, v1, v2]);
                 let vc_t = [v1, v2].into_tensor();
-                //dbg!(&lambda);
                 let vc_t_smoothed = eta
                     .profile(vc_t, *lambda, T::from(epsilon).unwrap())
                     .into_data();
@@ -1495,13 +1707,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         } = self.point_constraint.friction_workspace.as_ref()?;
         let mu = T::from(params.dynamic_friction).unwrap();
 
-        // Compute `vc <- -mu B(x) H(B'(x) vc) λ(x)`.
+        // Compute `vc <- -mu B(x) vc`.
         vc.view_mut().into_iter().enumerate().for_each(|(i, v)| {
             let vc = v.as_tensor();
-            *v = contact_basis.from_contact_coordinates(*vc * (-mu), i);
+            *v = Vector3::from(contact_basis.from_contact_coordinates(*vc * (-mu), i)).into_data();
         });
-
-        //dbg!(&vc);
 
         // Compute object force (compute `f = J'(x)vc`)
         let f = jac.transpose_mul(
@@ -1511,6 +1721,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             &self.collider_vertex_indices,
             v.len() * 3,
         );
+
         let t_vc_jac = Instant::now();
         let timings = &mut *self.timings.borrow_mut();
         timings.total += t_vc_jac - t_begin;
@@ -1592,15 +1803,10 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 let norm_t_inv = T::one() / t.norm();
                 t *= norm_t_inv;
 
-                let nml_jac_row = (nml_jac[tangent_axis]
-                    - (n.transpose() * nml_jac)[0] * n[tangent_axis])
-                    * norm_n_inv;
-
-                let neg_t_proj = t * t.transpose() - Matrix3::identity();
-
-                let tangent_jac = neg_t_proj
-                    * (n * nml_jac_row.transpose() + nml_jac * n[tangent_axis])
-                    * norm_t_inv;
+                // Jacobian of unnormalized tangent.
+                let jac_t = -(nml_jac * n[tangent_axis] + n * nml_jac[tangent_axis].transpose());
+                let t_proj = Matrix3::identity() - t * t.transpose();
+                let tangent_jac = t_proj * jac_t * norm_t_inv;
 
                 let bitangent_jac = [
                     (nml_jac[1] * t[2] - nml_jac[2] * t[1] + tangent_jac[2] * n[1]
@@ -1692,60 +1898,86 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         .into_data())
     }
 
-    /// Builds a contact jacobian gradient product.
+    /// Builds a contact Jacobian gradient product.
     ///
     /// Computes `grad_q (J(q) b)'` where `b` is the multiplier.
     ///
-    pub fn build_contact_jacobian_gradient_product<'a>(
+    pub(crate) fn build_contact_jacobian_gradient_product(
         surf: &implicits::QueryTopo<T>,
         query_points: &[[T; 3]],
         collider_vertex_constraints: &[Index],
+        implicit_surface_vertex_indices: &[usize],
         multipliers: &[[T; 3]],
         num_vertices: usize,
         num_contacts: usize,
-    ) -> Result<Tensor![T; S S 3 3], Error> {
+    ) -> Result<BlockMatrix3Triplets<T>, Error> {
         let (indices, blocks): (Vec<_>, Vec<_>) = surf
             .contact_jacobian_jacobian_product_indexed_blocks_iter(
                 query_points.view(),
                 multipliers,
             )?
+            .map(|(row, col, mtx)| (row, implicit_surface_vertex_indices[col], mtx))
+            // Remove inactive vertices
             .filter(|(_, col, _)| col < &num_vertices)
+            // Reindex rows to be in contact indices
             .filter_map(|(row, col, mtx)| {
                 collider_vertex_constraints[row]
                     .into_option()
                     .map(|contact_idx| (contact_idx, col, mtx))
             })
+            // Transpose to create gradient
             .map(|(row, col, mtx)| {
                 (
-                    MatrixElementIndex { row: col, col: row },
-                    mtx.into_tensor().transpose().into_data(),
+                    (col, row),
+                    mtx.into_tensor().into_data(), // mtx was column-major
                 )
             })
-            .unzip(); // transpose to produce gradient
+            .unzip();
 
-        let nnz = indices.len();
-        assert_eq!(nnz, blocks.len());
+        Ok(BlockMatrix3Triplets {
+            block_indices: indices,
+            blocks: Chunked3::from_flat(Chunked3::from_array_vec(
+                Chunked3::from_array_vec(blocks).into_storage(),
+            )),
+            num_rows: num_vertices,
+            num_cols: num_contacts,
+        })
+    }
 
-        let mut entries = (0..nnz).collect::<Vec<_>>();
+    /// Builds a contact Jacobian Jacobian product.
+    ///
+    /// Computes `grad_q J(q) b` where `b` is the multiplier.
+    ///
+    pub(crate) fn build_contact_jacobian_jacobian_product(
+        surf: &implicits::QueryTopo<T>,
+        query_points: &[[T; 3]],
+        implicit_surface_vertex_indices: &[usize],
+        multipliers: &[[T; 3]],
+        num_vertices: usize,
+    ) -> Result<BlockMatrix3Triplets<T>, Error> {
+        let (indices, blocks): (Vec<_>, Vec<_>) = surf
+            .contact_hessian_product_indexed_blocks_iter(query_points, multipliers)?
+            // Reindex
+            .filter_map(move |(row, col, block)| {
+                let row = implicit_surface_vertex_indices[row];
+                let col = implicit_surface_vertex_indices[col];
+                if row < num_vertices && col < num_vertices {
+                    // eprintln!("Amtx: ({row}, {col}): {block:?}");
+                    Some(((row, col), Matrix3::from(block).transpose().into_data()))
+                } else {
+                    None
+                }
+            })
+            .unzip();
 
-        // Sort indices into row major order
-        entries.sort_by(|&a, &b| {
-            indices[a]
-                .row
-                .cmp(&indices[b].row)
-                .then_with(|| indices[a].col.cmp(&indices[b].col))
-        });
-
-        let triplet_iter = entries
-            .iter()
-            .map(|&i| (indices[i].row, indices[i].col, blocks[i]));
-
-        Ok(tensr::SSBlockMatrix3::from_block_triplets_iter(
-            triplet_iter,
-            num_vertices,
-            num_contacts,
-        )
-        .into_data())
+        Ok(BlockMatrix3Triplets {
+            block_indices: indices,
+            blocks: Chunked3::from_flat(Chunked3::from_array_vec(
+                Chunked3::from_array_vec(blocks).into_storage(),
+            )),
+            num_rows: num_vertices,
+            num_cols: num_vertices,
+        })
     }
 
     // Compute the product of friction matrix `mu J'B H(B'Jv)` with constraint Jacobian term `-k ddb dd/dq` and `dq/dv`.
@@ -1765,7 +1997,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         epsilon: f32,
         dqdv: T,
         eta: FrictionProfile,
-    ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a {
+    ) -> Vec<(usize, usize, Matrix3<T>)> {
         //assert_eq!(constraint_jac.len(), contact_jac.into_tensor().num_cols());
 
         let kappa = T::from(kappa).unwrap();
@@ -1798,7 +2030,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let vc = vc.view();
 
         // Iterate over each column of the constraint Jacobian.
-        let res: Vec<_> = contact_gradient
+        contact_gradient
             .into_iter()
             .filter(move |(row_idx, _)| *row_idx < num_vertices)
             .flat_map(move |(row_idx, lhs_row)| {
@@ -1807,53 +2039,46 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                     .filter(move |(col_idx, _)| *col_idx < num_vertices)
                     .flat_map(move |(col_idx, rhs_col)| {
                         let mut lhs_row_iter = lhs_row.into_iter().peekable();
-                        let out = rhs_col.into_iter().filter_map(
-                            move |(rhs_constraint_idx, rhs_block)| {
+                        rhs_col
+                            .into_iter()
+                            .filter_map(move |(rhs_constraint_idx, rhs_block)| {
                                 // Find the next matching lhs entry.
-                                loop {
-                                    let lhs_constraint_idx = if let Some(&(lhs_constraint_idx, _)) =
-                                        lhs_row_iter.peek()
-                                    {
-                                        lhs_constraint_idx
-                                    } else {
-                                        break;
-                                    };
-
-                                    if rhs_constraint_idx < lhs_constraint_idx {
-                                        return None; // Skips entry and advances rhs iterator.
-                                    } else if lhs_constraint_idx < rhs_constraint_idx {
-                                        // Skip lhs entry and continue in the loop.
-                                        let _ = lhs_row_iter.next().unwrap();
-                                    } else {
-                                        // Found entry that matches both rhs_col and lhs_row.
-                                        let (lhs_constraint_idx, lhs_block) =
-                                            lhs_row_iter.next().unwrap();
-                                        let lhs_block = *lhs_block.into_arrays().as_tensor();
-                                        let rhs_block = *rhs_block.into_arrays().as_tensor();
-                                        let index = lhs_constraint_idx; // = rhs_constraint_idx
-                                                                        //dbg!(rhs_block* (-dqdv
-                                                                        //    * kappa
-                                                                        //    * ContactPenalty::new(delta)
-                                                                        //    .ddb(dist[rhs_constraint_idx])));
-                                        let rhs = *vc[index].as_tensor()
-                                            * (rhs_block
-                                                * (-dqdv
-                                                    * kappa
-                                                    * ContactPenalty::new(delta)
-                                                        .ddb(dist[rhs_constraint_idx])));
-                                        //dbg!(&rhs.into_data());
-                                        return Some((row_idx, col_idx, lhs_block * rhs));
+                                while let Some(&(lhs_constraint_idx, _)) = lhs_row_iter.peek() {
+                                    match rhs_constraint_idx.cmp(&lhs_constraint_idx) {
+                                        Ordering::Less => {
+                                            return None;
+                                        } // Skips entry and advances rhs iterator.
+                                        Ordering::Greater => {
+                                            // Skip lhs entry and continue in the loop.
+                                            let _ = lhs_row_iter.next().unwrap();
+                                        }
+                                        Ordering::Equal => {
+                                            // Found entry that matches both rhs_col and lhs_row.
+                                            let (lhs_constraint_idx, lhs_block) =
+                                                lhs_row_iter.next().unwrap();
+                                            let lhs_block = *lhs_block.into_arrays().as_tensor();
+                                            let rhs_block = *rhs_block.into_arrays().as_tensor();
+                                            let index = lhs_constraint_idx; // = rhs_constraint_idx
+                                                                            //dbg!(rhs_block* (-dqdv
+                                                                            //    * kappa
+                                                                            //    * ContactPenalty::new(delta)
+                                                                            //    .ddb(dist[rhs_constraint_idx])));
+                                            let rhs = *vc[index].as_tensor()
+                                                * (rhs_block
+                                                    * (-dqdv
+                                                        * kappa
+                                                        * ContactPenalty::new(delta)
+                                                            .ddb(dist[rhs_constraint_idx])));
+                                            //dbg!(&rhs.into_data());
+                                            return Some((row_idx, col_idx, lhs_block * rhs));
+                                        }
                                     }
                                 }
                                 None
-                            },
-                        );
-
-                        out
+                            })
                     })
             })
-            .collect();
-        res.into_iter()
+            .collect()
     }
 
     // Assume all the state (including friction workspace) has been updated
@@ -1871,13 +2096,14 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let eta = self.eta;
 
         // TODO: Refactor this monstrosity of a function.
-        self.update_constraint_gradient();
+
+        if recompute_contact_jacobian {
+            self.update_constraint_gradient();
+        }
 
         let t_constraint_gradient = Instant::now();
 
-        if self.point_constraint.friction_workspace.is_none() {
-            return None;
-        }
+        self.point_constraint.friction_workspace.as_ref()?;
 
         let num_vertices = max_index;
         let num_constraints = self.constraint_size();
@@ -1915,17 +2141,6 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             );
         }
         let contact_gradient = &self.contact_gradient.as_ref().unwrap().matrix;
-        // Self::contact_gradient(
-        //     &mut self.contact_gradient,
-        //     &self.point_constraint.implicit_surface,
-        //     self.point_constraint.collider_vertex_positions.view(),
-        //     &self.constrained_collider_vertices,
-        //     &self.collider_vertex_constraints,
-        //     &self.implicit_surface_vertex_indices,
-        //     &self.collider_vertex_indices,
-        //     v.len(),
-        //     recompute_contact_jacobian,
-        // );
         assert_eq!(
             contact_gradient.view().into_tensor().num_cols(),
             num_constraints
@@ -1958,6 +2173,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let t_a;
         let t_b;
         let t_c;
+        let t_d_half;
         let t_d;
         let t_e;
 
@@ -1969,7 +2185,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                     ..
                 } = self;
 
-                // Compute `c(x,v) = H(T(x)'v)λ(x) * dq/dv`, friction force in contact space.
+                // Compute `bc(x,v) = mu * H(T(x)'v)λ(x) * dq/dv`, friction force in physical space.
                 *bc = c
                     .iter()
                     .enumerate()
@@ -1981,7 +2197,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                             .contact_basis
                             .from_contact_coordinates(v, i)
                             .into_tensor()
-                            * dqdv)
+                            * (mu * dqdv))
                             .into_data()
                     })
                     .collect();
@@ -2019,28 +2235,24 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
             // The following should be multiplied by mu.
 
+            // eprintln!("Amult = {:?}", &self.friction_jacobian_workspace.bc.as_arrays());
+
             // Compute (A)
-            let implicit_idxs = self.implicit_surface_vertex_indices.clone();
-            let jac_contact_gradient = surf
-                .contact_hessian_product_indexed_blocks_iter(
-                    query_points.view().into_arrays(),
+            if recompute_contact_jacobian {
+                Self::update_jac_contact_gradient(
+                    self.jac_contact_gradient.as_mut().unwrap(),
+                    surf,
+                    query_points.view(),
+                    &self.implicit_surface_vertex_indices,
                     self.friction_jacobian_workspace.bc.as_arrays(),
-                )
-                .ok()?
-                // Reindex
-                .map(move |(row, col, block)| {
-                    (
-                        implicit_idxs[row],
-                        implicit_idxs[col],
-                        Matrix3::from(block).transpose(),
-                    )
-                })
-                .filter(move |&(row, col, _)| row < num_vertices && col < num_vertices);
+                    num_vertices,
+                );
+            }
+            let jac_contact_gradient = self.jac_contact_gradient.as_ref().unwrap();
 
             t_a = Instant::now();
 
             // Compute (B)
-
             let jac_basis = Self::build_contact_basis_gradient_product_from_selection(
                 surf,
                 &self
@@ -2063,8 +2275,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .transpose();
 
             // for (row_idx, row) in jac_basis.0.view().into_data().into_iter() {
-            //     for (col_idx, block) in row.into_iter() {
-            //         eprintln!("jb({},{}): {:?}", row_idx, col_idx, block);
+            //     if row_idx == 0 {
+            //         for (col_idx, block) in row.into_iter() {
+            //             let v = Vector3::from([block.data[0], block.data[1], block.data[2]]);
+            //             eprintln!("jb({},{}): {:?}", row_idx, col_idx, (v * dqdv).into_data());
+            //         }
             //     }
             // }
 
@@ -2093,13 +2308,15 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             let lambda = &self.friction_jacobian_workspace.lambda;
 
             // Construct the eta matrix dH
-            let dh_blocks: Chunked3<Vec<_>> = (0..num_constraints)
-                .flat_map(|constraint_idx| {
+            let dh_blocks: Chunked3<Vec<_>> = vc
+                .iter()
+                .zip(lambda.iter())
+                .enumerate()
+                .flat_map(|(constraint_idx, (vc, lambda))| {
                     let [_, v1, v2] = pc_ws
                         .contact_basis
-                        .to_contact_coordinates(vc[constraint_idx], constraint_idx);
-                    let mtx = eta.jacobian([v1, v2].into(), T::one(), T::from(epsilon).unwrap())
-                        * lambda[constraint_idx];
+                        .to_contact_coordinates(*vc, constraint_idx);
+                    let mtx = eta.jacobian([v1, v2].into(), *lambda, T::from(epsilon).unwrap());
                     std::iter::once([T::zero(); 3])
                         .chain(std::iter::once([T::zero(), mtx[0][0], mtx[0][1]]))
                         .chain(std::iter::once([T::zero(), mtx[1][0], mtx[1][1]]))
@@ -2157,17 +2374,30 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 SubsetView::from_unique_ordered_indices(&self.implicit_surface_vertex_indices, v);
             let v0vec: Vec<[T; 3]> = v0.iter().cloned().collect();
 
-            let mut jac_contact_jacobian = Self::build_contact_jacobian_gradient_product(
-                surf,
-                query_points.view().into_arrays(),
-                self.collider_vertex_constraints.view(),
-                v0vec.view(),
-                self.implicit_surface_vertex_indices.len(),
-                num_constraints,
-            )
-            .ok()?
-            .into_tensor()
-            .transpose();
+            // eprintln!("Dmult = {v0vec:?}");
+
+            if recompute_contact_jacobian {
+                Self::update_jac_contact_jacobian(
+                    self.jac_contact_jacobian.as_mut().unwrap(),
+                    surf,
+                    query_points.view(),
+                    self.collider_vertex_constraints.view(),
+                    &self.implicit_surface_vertex_indices,
+                    v0vec.view(),
+                    num_vertices,
+                    num_constraints,
+                );
+            }
+            let mut jac_contact_jacobian = self
+                .jac_contact_jacobian
+                .clone()
+                .unwrap()
+                .matrix
+                .into_tensor()
+                .transpose();
+
+            t_d_half = Instant::now();
+
             jac_contact_jacobian.premultiply_block_diagonal_mtx(bt.view());
             jac_contact_jacobian.premultiply_block_diagonal_mtx(dh.view());
             jac_contact_jacobian.premultiply_block_diagonal_mtx(b.view());
@@ -2218,16 +2448,26 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         timings.b += t_b - t_a;
         timings.c += t_c - t_b;
         timings.d += t_d - t_c;
+        timings.d_half += t_d_half - t_c;
         timings.e += t_e - t_d;
 
         // Combine all matrices.
 
         Some(
             f_lambda_jac
+                .into_iter()
                 //.inspect(|(i,j,m)| log::trace!("dL: ({},{}):{:?}", i, j, (*m).into_data()))
-                //.chain(
-                //    jac_contact_gradient, //.inspect(|(_,_,m)| log::trace!("A: {:?}", m)) ,
-                //) // (A)
+                .chain(
+                    jac_contact_gradient
+                        .block_indices
+                        .iter()
+                        .zip(jac_contact_gradient.blocks.iter())
+                        .map(|((row, col), mtx)| (*row, *col, *mtx.into_arrays().as_tensor())), // .inspect(move |(i, j, m)| {
+                                                                                                //     if !m.is_zero() && *i < max_index && *j < max_index {
+                                                                                                //          log::debug!("A: {:?}", m);
+                                                                                                //     }
+                                                                                                // })
+                ) // (A)
                 .chain(
                     self.friction_jacobian_workspace
                         .contact_gradient_jac_basis
@@ -2242,7 +2482,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                     *block.into_arrays().as_tensor() * (mu * dqdv),
                                 )
                             })
-                        }), //        .inspect(|(i,j,m)| log::trace!("B:({},{}): {:?}", i,j,(*m).into_data())) ,
+                        }), //.inspect(|(i,j,m)| log::trace!("B:({},{}): {:?}", i,j,(*m).into_data())) ,
                 )
                 .chain(
                     self.friction_jacobian_workspace
@@ -2260,22 +2500,22 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                             })
                         }), //.inspect(|(i,j,m)| log::trace!("C:({},{}): {:?}", i,j,(*m).into_data())) ,
                 )
-                //.chain(
-                //    self.friction_jacobian_workspace
-                //        .contact_gradient_basis_eta_jac_basis_jac_contact_jac
-                //        .view()
-                //        .into_iter()
-                //        .flat_map(move |(row_idx, row)| {
-                //            // (D)
-                //            row.into_iter().map(move |(col_idx, block)| {
-                //                (
-                //                    row_idx,
-                //                    col_idx,
-                //                    *block.into_arrays().as_tensor() * (mu * dqdv),
-                //                )
-                //            })
-                //        }),
-                //)
+                .chain(
+                    self.friction_jacobian_workspace
+                        .contact_gradient_basis_eta_jac_basis_jac_contact_jac
+                        .view()
+                        .into_iter()
+                        .flat_map(move |(row_idx, row)| {
+                            // (D)
+                            row.into_iter().map(move |(col_idx, block)| {
+                                (
+                                    row_idx,
+                                    col_idx,
+                                    *block.into_arrays().as_tensor() * (mu * dqdv),
+                                )
+                            })
+                        }), //.inspect(|(i,j,m)| log::trace!("D:({},{}): {:?}", i,j,(*m).into_data())) ,
+                )
                 .chain(
                     self.friction_jacobian_workspace
                         .contact_gradient_basis_eta_jac_basis_contact_jac
@@ -2322,9 +2562,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             )
     }
 
-    fn distance_jacobian_blocks_par_iter<'a>(
-        &'a self,
-    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+    fn distance_jacobian_blocks_par_iter(
+        &self,
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + '_ {
         Self::distance_jacobian_blocks_par_iter_fn(
             &self.point_constraint,
             &self.implicit_surface_vertex_indices,
@@ -2379,7 +2619,6 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     pub(crate) fn constraint_gradient_column_major_transpose<'a>(
         matrix: Tensor![T; &'a S S 3 1],
     ) -> Tensor![T; &'a S S 1 3] {
-        use flatk::IntoStorage;
         // TODO: update Chunked with from_raw, into_raw functions to avoid exposing unsafe construction.
         let Sparse {
             source:
@@ -2436,12 +2675,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .map(move |(row, col, mtx)| {
                 let row = self.implicit_surface_vertex_indices[row];
                 let col = self.implicit_surface_vertex_indices[col];
-                if col > row {
-                    (col, row, mtx)
-                } else {
-                    (row, col, mtx)
-                }
-                .into()
+                (row, col, mtx)
             }),
         )
     }
@@ -2470,12 +2704,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .map(move |(row, col, mtx)| {
                 let row = self.collider_vertex_indices[row];
                 let col = self.implicit_surface_vertex_indices[col];
-                if col > row {
-                    (col, row, mtx)
-                } else {
-                    (row, col, mtx)
-                }
-                .into()
+                (row, col, mtx)
             }),
         )
     }
@@ -2504,9 +2733,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         .flatten()
     }
 
-    pub(crate) fn object_distance_potential_hessian_block_indices_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (usize, usize)> + 'a {
+    pub(crate) fn object_distance_potential_hessian_block_indices_iter(
+        &self,
+    ) -> impl Iterator<Item = (usize, usize)> + '_ {
         if self.point_constraint.object_is_fixed() {
             None
         } else {
@@ -2528,9 +2757,33 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         })
     }
 
-    pub(crate) fn collider_distance_potential_hessian_block_indices_iter<'b>(
-        &'b self,
-    ) -> impl Iterator<Item = usize> + 'b {
+    pub(crate) fn object_collider_distance_potential_hessian_block_indices_iter(
+        &self,
+    ) -> impl Iterator<Item = (usize, usize)> + '_ {
+        if self.point_constraint.object_is_fixed() {
+            None
+        } else {
+            self.point_constraint
+                .implicit_surface
+                .sample_query_hessian_product_block_indices_iter()
+                .ok()
+        }
+        .into_iter()
+        .flatten()
+        .map(move |(row, col)| {
+            let row = self.collider_vertex_indices[row];
+            let col = self.implicit_surface_vertex_indices[col];
+            if col > row {
+                (col, row)
+            } else {
+                (row, col)
+            }
+        })
+    }
+
+    pub(crate) fn collider_distance_potential_hessian_block_indices_iter(
+        &self,
+    ) -> impl Iterator<Item = usize> + '_ {
         if self.point_constraint.collider_is_fixed() {
             None
         } else {
@@ -2545,20 +2798,32 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         .flatten()
     }
 
-    pub(crate) fn constraint_hessian_indices_iter<'a>(
-        &'a self,
+    pub(crate) fn constraint_hessian_indices_iter(
+        &self,
         max_index: usize,
-    ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
+    ) -> impl Iterator<Item = MatrixElementIndex> + '_ {
         let obj_indices_iter = self.object_distance_potential_hessian_block_indices_iter();
+        let obj_col_indices_iter =
+            self.object_collider_distance_potential_hessian_block_indices_iter();
         let coll_indices_iter = self
             .collider_distance_potential_hessian_block_indices_iter()
             .map(|idx| (idx, idx));
+        let hessian = obj_indices_iter
+            .chain(obj_col_indices_iter)
+            .flat_map(|(row, col)| {
+                // Fill upper triangular portion.
+                std::iter::once((row, col)).chain(if row == col {
+                    Either::Left(std::iter::empty())
+                } else {
+                    Either::Right(std::iter::once((col, row)))
+                })
+            })
+            .chain(coll_indices_iter);
 
         let MappedDistanceGradient { matrix: g, .. } = self
             .distance_gradient
             .borrow()
             .expect("Uninitialized constraint gradient.");
-
         let g_view = g.view();
         let j_view = Self::constraint_gradient_column_major_transpose(g.view());
 
@@ -2573,12 +2838,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                     .flat_map(move |(col_idx, rhs_col)| {
                         // Produce an iterator for the row-col block inner product.
                         MulExpr::with_op(lhs_row.into_expr(), rhs_col.into_expr(), Multiplication)
-                            .map(move |_| (row_idx, col_idx).into())
+                            .map(move |_| (row_idx, col_idx))
                     })
             });
 
-        obj_indices_iter
-            .chain(coll_indices_iter)
+        hessian
             .filter(move |(row, col)| *row < max_index && *col < max_index)
             .chain(gj_iter)
             .flat_map(move |(row, col)| {
@@ -2615,7 +2879,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                 std::iter::once((row, col, mtx)).chain(if row == col {
                     Either::Left(std::iter::empty())
                 } else {
-                    Either::Right(std::iter::once((col, row, mtx)))
+                    Either::Right(std::iter::once((
+                        col,
+                        row,
+                        Matrix3::from(mtx).transpose().into_data(),
+                    )))
                 })
             })
             .chain(
@@ -2655,6 +2923,10 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .filter(move |(row, col, _)| *row < max_index && *col < max_index)
             .chain(gj)
             .flat_map(move |(row, col, mtx)| {
+                // if !Matrix3::from(mtx).is_zero() {
+                //     eprintln!("c({row},{col}): {mtx:?}");
+                // }
+
                 //if row == col {
                 //    Either::Left((0..3).flat_map(move |r| {
                 //        (0..=r).map(move |c| ((3 * row + r, 3 * col + c).into(), mtx[r][c]))
@@ -3089,7 +3361,7 @@ mod tests {
             for col in 0..n {
                 eprint!("{:10.2e} ", jac[row][col]);
             }
-            eprintln!("");
+            eprintln!();
         }
 
         eprintln!("Expected:");
@@ -3097,7 +3369,7 @@ mod tests {
             for col in 0..n {
                 eprint!("{:10.2e} ", jac_ad[row][col]);
             }
-            eprintln!("");
+            eprintln!();
         }
 
         if success {

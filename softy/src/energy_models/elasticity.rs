@@ -163,7 +163,7 @@ mod test_utils {
                 eprintln!("{:10.2e}", df[wrt_vtx_idx][j].value());
             }
         }
-        eprintln!("");
+        eprintln!();
 
         eprintln!("Testing with autodiff gradient:");
         let mut success = true;
@@ -233,10 +233,10 @@ mod test_utils {
                     }
                     eprint!("\t");
                 }
-                eprintln!("");
+                eprintln!();
             }
         }
-        eprintln!("");
+        eprintln!();
 
         let mut success = true;
         let mut autodiff_h = [[Matrix3::<f64>::zeros(); 4]; 4];
@@ -285,10 +285,10 @@ mod test_utils {
                     }
                     eprint!("\t");
                 }
-                eprintln!("");
+                eprintln!();
             }
         }
-        eprintln!("");
+        eprintln!();
         assert!(success);
     }
 
@@ -322,10 +322,10 @@ mod test_utils {
                     }
                     eprint!("\t");
                 }
-                eprintln!("");
+                eprintln!();
             }
         }
-        eprintln!("");
+        eprintln!();
 
         let mut d_verts = vec![
             [0.0, 0.0, 0.0],
@@ -346,7 +346,7 @@ mod test_utils {
                         eprintln!("{:10.2e}", h[wrt_vtx_idx][j]);
                     }
                 }
-                eprintln!("");
+                eprintln!();
                 for vtx in 0..3 {
                     for i in 0..3 {
                         if wrt_vtx < vtx || (wrt_vtx == vtx && i >= wrt_i) {
@@ -400,7 +400,7 @@ mod test_utils {
                 eprintln!("{:10.2e}", df[wrt_vtx_idx][j].value());
             }
         }
-        eprintln!("");
+        eprintln!();
 
         eprintln!("Testing with autodiff gradient:");
         let mut success = true;
@@ -469,10 +469,10 @@ mod test_utils {
                     }
                     eprint!("\t");
                 }
-                eprintln!("");
+                eprintln!();
             }
         }
-        eprintln!("");
+        eprintln!();
 
         let mut success = true;
         let mut autodiff_h = [[Matrix3::<f64>::zeros(); 3]; 3];
@@ -523,10 +523,10 @@ mod test_utils {
                     }
                     eprint!("\t");
                 }
-                eprintln!("");
+                eprintln!();
             }
         }
-        eprintln!("");
+        eprintln!();
         assert!(success);
     }
 
@@ -557,10 +557,10 @@ mod test_utils {
                     }
                     eprint!("\t");
                 }
-                eprintln!("");
+                eprintln!();
             }
         }
-        eprintln!("");
+        eprintln!();
 
         let mut d_verts = vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]];
 
@@ -576,7 +576,7 @@ mod test_utils {
                         eprintln!("{:10.2e}", h[wrt_vtx_idx][j]);
                     }
                 }
-                eprintln!("");
+                eprintln!();
                 for vtx in 0..2 {
                     for i in 0..3 {
                         if wrt_vtx < vtx || (wrt_vtx == vtx && i >= wrt_i) {

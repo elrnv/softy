@@ -135,7 +135,7 @@ impl<T: Real> Into<[T; 3]> for VectorCyl<T> {
 }
 
 /// This struct defines the basis frame at the set of contact points.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct ContactBasis<T> {
     pub normals: Vec<[T; 3]>,
     pub tangents: Vec<[T; 3]>,
@@ -143,10 +143,7 @@ pub struct ContactBasis<T> {
 
 impl<T: Real> ContactBasis<T> {
     pub fn new() -> ContactBasis<T> {
-        ContactBasis {
-            normals: Vec::new(),
-            tangents: Vec::new(),
-        }
+        ContactBasis::default()
     }
 
     /// Converts this contact basis to `ContactBasis<f64>`.
@@ -296,10 +293,7 @@ impl<T: Real> ContactBasis<T> {
         contact
             .iter()
             .enumerate()
-            .map(|(i, &v)| {
-                self.from_cylindrical_contact_coordinates(v.into(), i)
-                    .into()
-            })
+            .map(|(i, &v)| self.from_cylindrical_contact_coordinates(v.into(), i))
             .collect()
     }
 
@@ -489,8 +483,19 @@ impl<T: Real> ContactBasis<T> {
     }
 }
 
+/// An intermediate representation of a sparse matrix that makes it easy to
+/// convert to other sparse representations.
+#[derive(Debug, Clone)]
+pub(crate) struct BlockMatrix3Triplets<T> {
+    pub block_indices: Vec<(usize, usize)>,
+    pub blocks: Chunked3<Chunked3<Vec<T>>>,
+    pub num_rows: usize,
+    pub num_cols: usize,
+}
+
 /// An intermediate representation of a contact Jacobian (or gradient) that makes it easy to
 /// convert to other sparse representations.
+#[derive(Debug, Clone)]
 pub(crate) struct TripletContactJacobian<T> {
     pub block_indices: Vec<(usize, usize)>,
     pub blocks: Chunked3<Chunked3<Vec<T>>>,
@@ -508,41 +513,6 @@ impl<T: Real> TripletContactJacobian<T> {
             num_cols: 0,
         }
     }
-
-    // /// Contact jacobian excluding the collider part, which is a diagonal matrix.
-    // pub fn from_selection_reindexed<'a>(
-    //     surf: &implicits::QueryTopo<T>,
-    //     constrained_collider_vertex_positions: SelectView<'a, Chunked3<&'a [T]>>,
-    //     collider_vertex_constraints: &'a [Index],
-    //     implicit_surface_vertex_indices: &'a [usize],
-    // ) -> TripletContactJacobian<T> {
-    //     let query_points = constrained_collider_vertex_positions.target;
-    //     let orig_cj_matrix_iter = surf.contact_jacobian_matrices_par_iter(query_points.into());
-    //
-    //     let (cj_indices, cj_matrices): (Vec<_>, Vec<_>) =
-    //         // Filter out entries not in active constraint points. These are deemed to be zero.
-    //         orig_cj_matrix_iter
-    //             // Surface Jacobian
-    //             .filter_map(|(row, col, matrix)| {
-    //                 collider_vertex_constraints[row]
-    //                     .into_option()
-    //                     .map(|idx| ((idx, implicit_surface_vertex_indices[col]), matrix))
-    //             }).unzip();
-    //
-    //     // Check monotonicity of rows and cols.
-    //     debug_assert!(cj_indices.iter().windows(2).all(|w| w[0].0 <= w[1].0 || w[0].1 <= w[1].1));
-    //
-    //     let blocks = Chunked3::from_flat(Chunked3::from_array_vec(
-    //         Chunked3::from_array_vec(cj_matrices).into_storage(),
-    //     ));
-    //
-    //     TripletContactJacobian {
-    //         block_indices: cj_indices,
-    //         blocks,
-    //         num_rows: constrained_collider_vertex_positions.len(),
-    //         num_cols: surf.surface_vertex_positions().len(),
-    //     }
-    // }
 
     /// Full contact jacobian including collider part.
     pub fn from_selection_reindexed_full<'a>(
@@ -614,7 +584,7 @@ impl<T: Real> TripletContactJacobian<T> {
                     active_contact_point_indices[row]
                         .into_option()
                         .map(|idx| ((idx, col), matrix))
-                }) .filter(|((r, c), _)| {
+                }).filter(|((r, c), _)| {
                     *r < num_rows && *c < num_cols
                 })
                 .unzip();
@@ -712,61 +682,6 @@ impl<T: Real> TripletContactJacobian<T> {
             .storage_mut()
             .extend(chunked_matrices.into_storage().into_iter());
     }
-
-    // This version sorts indices.
-    // pub fn into_jacobian(self) -> ContactJacobian<T> {
-    //     let mut entries = (0..self.block_indices.len()).collect::<Vec<_>>();
-    //
-    //     // Sort indices into row major order
-    //     entries.sort_by(|&a, &b| {
-    //         self.block_indices[a]
-    //             .0
-    //             .cmp(&self.block_indices[b].0)
-    //             .then_with(|| self.block_indices[a].1.cmp(&self.block_indices[b].1))
-    //     });
-    //
-    //     let blocks = Chunked3::from_flat(self.blocks.data.view().into_arrays()).into_arrays();
-    //
-    //     let triplet_iter = entries
-    //         .iter()
-    //         .map(|&i| (self.block_indices[i].0, self.block_indices[i].1, blocks[i]));
-    //
-    //     SSBlockMatrix3::from_block_triplets_iter(triplet_iter, self.num_rows, self.num_cols)
-    //         .into_data()
-    // }
-
-    // pub fn into_gradient(self) -> ContactGradient<T> {
-    //     let vecs: Vec<_> = self
-    //         .blocks
-    //         .into_iter()
-    //         .flat_map(|m| {
-    //             std::array::IntoIter::new(m.as_arrays().as_tensor().transpose().into_data())
-    //         })
-    //         .collect();
-    //
-    //     let blocks = Chunked3::from_flat(vecs.as_slice()).into_arrays();
-    //     let indices: Vec<_> = self
-    //         .block_indices
-    //         .iter()
-    //         .map(|&(row, col)| MatrixElementIndex { row: col, col: row })
-    //         .collect(); // transpose
-    //     let mut entries = (0..indices.len()).collect::<Vec<_>>();
-    //
-    //     // Sort indices into row major order
-    //     entries.sort_by(|&a, &b| {
-    //         indices[a]
-    //             .row
-    //             .cmp(&indices[b].row)
-    //             .then_with(|| indices[a].col.cmp(&indices[b].col))
-    //     });
-    //
-    //     let triplet_iter = entries
-    //         .iter()
-    //         .map(|&i| (indices[i].row, indices[i].col, blocks[i]));
-    //
-    //     SSBlockMatrix3::from_block_triplets_iter(triplet_iter, self.num_cols, self.num_rows)
-    //         .into_data()
-    // }
 }
 
 /// Contact jacobian maps values at the surface vertex positions (of the object)
@@ -779,6 +694,9 @@ pub type ContactJacobianView<'a, T = f64> = Tensor![T; &'a S S 3 3]; //SSBlockMa
 
 pub type ContactGradient<T = f64> = Tensor![T; S S 3 3]; // SSBlockMatrix3<T>;
 pub type ContactGradientView<'a, T = f64> = Tensor![T; &'a S S 3 3]; //SSBlockMatrix3View<'a, T>;
+
+pub type SSBlockMatrix3<T = f64> = Tensor![T; S S 3 3];
+pub type SSBlockMatrix3View<'a, T = f64> = Tensor![T; &'a S S 3 3];
 
 /// The global contact Jacobian maps values at the surface vertex positions (of all objects) to
 /// query points (contact points).
@@ -799,7 +717,7 @@ pub type GlobalContactJacobianView<'a, T = f64> = Tensor![T; &'a S S S S 3 3];
 
 impl<T: Real> Into<ContactJacobian<T>> for TripletContactJacobian<T> {
     fn into(self) -> ContactJacobian<T> {
-        SSBlockMatrix3::from_index_iter_and_data(
+        tensr::SSBlockMatrix3::from_index_iter_and_data(
             self.block_indices.iter().cloned(),
             self.num_rows,
             self.num_cols,

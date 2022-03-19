@@ -531,8 +531,8 @@ impl<T: Real> State<T, ad::FT<T>> {
             .filter(|&x| *x == VertexType::Free)
             .count();
 
-        let solid = TetSolid::try_from_mesh_and_materials(&mesh, materials, &vertex_type)?;
-        let shell = TriShell::try_from_mesh_and_materials(&mesh, materials, &vertex_type)?;
+        let solid = TetSolid::try_from_mesh_and_materials(mesh, materials, vertex_type)?;
+        let shell = TriShell::try_from_mesh_and_materials(mesh, materials, vertex_type)?;
         //let rigid = RigidBody::try_from_mesh_and_materials(&mesh, materials)?;
 
         let vel = mesh
@@ -546,7 +546,7 @@ impl<T: Real> State<T, ad::FT<T>> {
         let dof = GeneralizedCoords::<Vec<T>, Vec<ad::FT<T>>>::new_chunked(
             bytemuck::cast_slice(mesh.vertex_positions()),
             bytemuck::cast_slice(vel.as_slice()),
-            &vertex_type,
+            vertex_type,
         );
 
         // Masses don't usually change so we can initialize them now.
@@ -592,11 +592,9 @@ impl<T: Real> State<T, ad::FT<T>> {
                 .collect::<Vec<_>>(),
             // Save the map to original indices, which is needed when we update
             // vertex positions.
-            orig_index: mesh
-                .attrib_as_slice::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?
-                .iter()
-                .map(|&i| usize::from(i))
-                .collect(),
+            orig_index: mesh.direct_attrib_clone_into_vec::<SourceIndexType, VertexIndex>(
+                SOURCE_INDEX_ATTRIB,
+            )?,
             vertex_type: vertex_type.to_vec(),
         };
 
@@ -658,9 +656,9 @@ impl<T: Real> State<T, ad::FT<T>> {
             GeneralizedCoords {
                 prev: convert_state(&coords.prev),
                 cur: convert_state(&coords.cur),
-                next_q: convert(&coords.next_q),
+                next_q: convert(coords.next_q),
                 next_ad: convert_state_ad(&coords.next_ad),
-                r_ad: convert_ad(&coords.r_ad),
+                r_ad: convert_ad(coords.r_ad),
                 //active_dofs: Vec::new(),
             }
         };

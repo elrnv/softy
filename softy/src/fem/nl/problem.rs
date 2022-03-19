@@ -1523,7 +1523,11 @@ impl<T: Real64> NLProblem<T> {
                 .borrow()
                 .num_hessian_diagonal_nnz(num_active_coords / 3);
             num += 2 * nh - ndh;
+        }
 
+        // dbg!(num);
+
+        for fc in self.frictional_contact_constraints.iter() {
             // Add friction jacobian counts
             let mut constraint = fc.constraint.borrow_mut();
             let delta = self.delta as f32;
@@ -1547,6 +1551,7 @@ impl<T: Real64> NLProblem<T> {
                 )
                 .map(|iter| iter.count())
                 .unwrap_or(0);
+            // dbg!(f_jac_count);
             num += f_jac_count;
         }
 
@@ -1913,13 +1918,13 @@ impl<T: Real64> NLProblem<T> {
 
         let mut objective = self.energy(
             vtx.residual_state().into_storage(),
-            &solid,
-            &shell,
+            solid,
+            shell,
             self.frictional_contact_constraints.as_slice(),
         );
 
         if !self.is_static() {
-            objective += self.inertia(vtx.residual_state().into_storage(), &solid, &shell);
+            objective += self.inertia(vtx.residual_state().into_storage(), solid, shell);
         }
         objective
     }
@@ -1941,8 +1946,8 @@ impl<T: Real64> NLProblem<T> {
 
         self.subtract_force(
             vtx.residual_state().into_storage(),
-            &solid,
-            &shell,
+            solid,
+            shell,
             self.frictional_contact_constraints.as_slice(),
         );
 
@@ -1972,8 +1977,8 @@ impl<T: Real64> NLProblem<T> {
         }
 
         if !self.is_static() {
-            let mut res_state = vtx.residual_state();
-            self.add_momentum_diff(res_state.into_storage(), &solid, &shell);
+            let res_state = vtx.residual_state();
+            self.add_momentum_diff(res_state.into_storage(), solid, shell);
         }
     }
 
@@ -2039,6 +2044,8 @@ impl<T: Real64> NLProblem<T> {
             }
         }
 
+        // eprintln!("i lower triangular = {count}");
+
         // Duplicate off-diagonal indices to form a complete matrix.
         let (rows_begin, rows_end) = rows.split_at_mut(count);
         let (cols_begin, cols_end) = cols.split_at_mut(count);
@@ -2067,13 +2074,15 @@ impl<T: Real64> NLProblem<T> {
 
         count += num_off_diagonals;
 
+        // eprintln!("i pre contact = {count}");
+
         // Compute friction derivatives.
         // Note that friction Jacobian is non-symmetric and so must appear after the symmetrization above.
 
         // Add contact constraint Jacobian
         for fc in self.frictional_contact_constraints.iter() {
             let constraint = fc.constraint.borrow();
-            // Indices for constraint hessian first term (multipliers held constant)
+            // Indices for constraint Hessian first term (multipliers held constant)
             count += constraint
                 .constraint_hessian_indices_iter(num_active_coords / 3)
                 //.filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
@@ -2086,6 +2095,9 @@ impl<T: Real64> NLProblem<T> {
         }
 
         // let State { vtx, .. } = &*self.state.borrow();
+
+        // dbg!(count);
+        // dbg!(rows[count..].len());
 
         // Add Non-symmetric friction Jacobian entries.
         for fc in self.frictional_contact_constraints.iter() {
@@ -2118,6 +2130,7 @@ impl<T: Real64> NLProblem<T> {
                         .count()
                 })
                 .unwrap_or(0);
+            // dbg!(f_jac_count);
             count += f_jac_count;
         }
 
@@ -2249,6 +2262,8 @@ impl<T: Real64> NLProblem<T> {
             count += nh;
         }
 
+        // eprintln!("lower triangular = {count}");
+
         // Duplicate off-diagonal entries.
         let (vals_lower, vals_upper) = vals.split_at_mut(count);
 
@@ -2275,31 +2290,49 @@ impl<T: Real64> NLProblem<T> {
             })
             .count();
 
+        // eprintln!("pre contact = {count}");
+
         // Compute friction derivatives.
         // Note that friction Jacobian is non-symmetric and so must appear after the symmetrization above.
+
+        let mut jac = vec![vec![0.0; num_active_coords]; num_active_coords];
 
         // Add contact constraint jacobian entries here.
         for fc in self.frictional_contact_constraints.iter() {
             let mut constraint = fc.constraint.borrow_mut();
             let delta = self.delta as f32;
             let kappa = self.kappa as f32;
+            constraint.update_constraint_gradient();
             constraint.update_multipliers(delta, kappa);
             // Compute constraint hessian first term (multipliers held constant)
             count += constraint
                 .constraint_hessian_indexed_values_iter(delta, kappa, num_active_coords / 3)
                 .zip(vals[count..].iter_mut())
-                .map(|((_, val), out_val)| {
+                .map(|((idx, val), out_val)| {
                     *out_val = -dqdv * force_multiplier * factor * val;
+                    jac[idx.row][idx.col] += out_val.to_f64().unwrap();
                 })
                 .count();
         }
 
+        // eprintln!("cj = [");
+        // for row in jac.iter() {
+        //     for entry in row.iter() {
+        //         eprint!("{entry:?} ");
+        //     }
+        //     eprintln!(";");
+        // }
+        // eprintln!("]");
+        //
         //let orig_vel = next.vel.to_vec();
         //let orig_pos = cur.pos.to_vec();
 
         // dbg!(&orig_pos);
         // dbg!(&next.pos);
         // dbg!(&orig_vel);
+
+        // dbg!(count);
+        // dbg!(vals[count..].len());
 
         // Add Non-symmetric friction Jacobian entries.
         // let n = num_active_coords;
@@ -2330,11 +2363,13 @@ impl<T: Real64> NLProblem<T> {
                     iter.zip(vals[count..].iter_mut())
                         .map(|((_r, _c, val), out_val)| {
                             // jac[_r][_c] = val.to_f64().unwrap();
+                            // eprintln!("({_r},{_c}): {val}");
                             *out_val = force_multiplier * factor * val;
                         })
                         .count()
                 })
                 .unwrap_or(0);
+            // dbg!(f_jac_count);
             *self.jac_timings.borrow_mut() += *constraint.jac_timings.borrow();
             count += f_jac_count;
 
@@ -2774,8 +2809,8 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
         self.subtract_force(
             vtx.residual_state().into_storage(),
-            &solid,
-            &shell,
+            solid,
+            shell,
             self.frictional_contact_constraints.as_slice(),
         );
 
@@ -2942,7 +2977,7 @@ impl<T: Real64> NLProblem<T> {
         x: &[T],
         perturb_initial: bool,
     ) -> Result<(), crate::Error> {
-        if level <= 0 {
+        if level == 0 {
             return Ok(());
         }
 
@@ -3035,17 +3070,17 @@ impl<T: Real64> NLProblem<T> {
         if !success && n < 15 {
             // Print dense hessian if its small
             log::debug!("Actual:");
-            for row in 0..n {
-                for col in 0..=row {
-                    log::debug!("{:10.2e}", jac[row][col]);
+            for (row_idx, row) in jac.iter().enumerate() {
+                for entry in row.iter().take(row_idx + 1) {
+                    log::debug!("{:10.2e}", entry);
                 }
                 log::debug!("");
             }
 
             log::debug!("Expected:");
-            for row in 0..n {
-                for col in 0..=row {
-                    log::debug!("{:10.2e}", jac_ad[row][col]);
+            for (row_idx, row) in jac_ad.iter().enumerate() {
+                for entry in row.iter().take(row_idx + 1) {
+                    log::debug!("{:10.2e}", entry);
                 }
                 log::debug!("");
             }
@@ -3079,81 +3114,81 @@ impl<T: Real64> NLProblem<T> {
         }
         if success {
             log::debug!("No errors during Jacobian check.");
-            return objective_result;
+            objective_result
         } else {
             Err(crate::Error::DerivativeCheckFailure)
         }
     }
 
-    /// Checks that the given problem has a consistent Jacobian implementation.
-    pub(crate) fn check_objective_gradient(
-        &self,
-        x: &[T],
-        perturb_initial: bool,
-    ) -> Result<(), crate::Error> {
-        log::debug!("Checking Objective Gradient...");
-        use ad::F1 as F;
-        // Compute Gradient
-        let grad: Vec<f64> = {
-            let problem_clone = self.clone();
-            let n = problem_clone.num_variables();
-            let mut x0 = x.to_vec();
-            if perturb_initial {
-                perturb(&mut x0);
-            }
-
-            let mut r = vec![T::zero(); n];
-            problem_clone.residual(&x0, &mut r);
-            r.iter().map(|&x| x.to_f64().unwrap()).collect()
-        };
-
-        let problem = self.clone_as_autodiff();
-        let n = problem.num_variables();
-        let mut x0: Vec<_> = x.iter().map(|&x| F::cst(x.to_f64().unwrap())).collect();
-        if perturb_initial {
-            perturb(&mut x0);
-        }
-
-        let mut grad_ad = vec![0.0; n];
-
-        // Precompute constraints.
-        let mut _r = vec![ad::F1::zero(); n];
-        problem.residual(&x0, &mut _r);
-
-        let mut success = true;
-        for i in 0..n {
-            // eprintln!("CHECK GRAD AUTODIFF WRT {}", i);
-            x0[i] = F::var(x0[i]);
-            let obj = problem.objective(&x0);
-            let dobj = obj.deriv();
-            let res = approx::relative_eq!(grad[i], dobj, max_relative = 1e-6, epsilon = 1e-7,);
-            grad_ad[i] = dobj;
-            if !res {
-                success = false;
-                log::debug!("({}): {} vs. {}", i, grad[i], dobj);
-            }
-            x0[i] = F::cst(x0[i]);
-        }
-
-        if !success && n < 15 {
-            // Print dense grad if its small
-            log::debug!("Actual:");
-            for i in 0..n {
-                log::debug!("{:10.2e}", grad[i]);
-            }
-
-            log::debug!("Expected:");
-            for i in 0..n {
-                log::debug!("{:10.2e}", grad_ad[i]);
-            }
-        }
-        if success {
-            log::debug!("No errors during Gradient check.");
-            Ok(())
-        } else {
-            Err(crate::Error::DerivativeCheckFailure)
-        }
-    }
+    ///// Checks that the given problem has a consistent Jacobian implementation.
+    // pub(crate) fn check_objective_gradient(
+    //     &self,
+    //     x: &[T],
+    //     perturb_initial: bool,
+    // ) -> Result<(), crate::Error> {
+    //     log::debug!("Checking Objective Gradient...");
+    //     use ad::F1 as F;
+    //     // Compute Gradient
+    //     let grad: Vec<f64> = {
+    //         let problem_clone = self.clone();
+    //         let n = problem_clone.num_variables();
+    //         let mut x0 = x.to_vec();
+    //         if perturb_initial {
+    //             perturb(&mut x0);
+    //         }
+    //
+    //         let mut r = vec![T::zero(); n];
+    //         problem_clone.residual(&x0, &mut r);
+    //         r.iter().map(|&x| x.to_f64().unwrap()).collect()
+    //     };
+    //
+    //     let problem = self.clone_as_autodiff();
+    //     let n = problem.num_variables();
+    //     let mut x0: Vec<_> = x.iter().map(|&x| F::cst(x.to_f64().unwrap())).collect();
+    //     if perturb_initial {
+    //         perturb(&mut x0);
+    //     }
+    //
+    //     let mut grad_ad = vec![0.0; n];
+    //
+    //     // Precompute constraints.
+    //     let mut _r = vec![ad::F1::zero(); n];
+    //     problem.residual(&x0, &mut _r);
+    //
+    //     let mut success = true;
+    //     for i in 0..n {
+    //         // eprintln!("CHECK GRAD AUTODIFF WRT {}", i);
+    //         x0[i] = F::var(x0[i]);
+    //         let obj = problem.objective(&x0);
+    //         let dobj = obj.deriv();
+    //         let res = approx::relative_eq!(grad[i], dobj, max_relative = 1e-6, epsilon = 1e-7,);
+    //         grad_ad[i] = dobj;
+    //         if !res {
+    //             success = false;
+    //             log::debug!("({}): {} vs. {}", i, grad[i], dobj);
+    //         }
+    //         x0[i] = F::cst(x0[i]);
+    //     }
+    //
+    //     if !success && n < 15 {
+    //         // Print dense grad if its small
+    //         log::debug!("Actual:");
+    //         for i in 0..n {
+    //             log::debug!("{:10.2e}", grad[i]);
+    //         }
+    //
+    //         log::debug!("Expected:");
+    //         for i in 0..n {
+    //             log::debug!("{:10.2e}", grad_ad[i]);
+    //         }
+    //     }
+    //     if success {
+    //         log::debug!("No errors during Gradient check.");
+    //         Ok(())
+    //     } else {
+    //         Err(crate::Error::DerivativeCheckFailure)
+    //     }
+    // }
 }
 
 pub(crate) fn perturb<T: Real>(x: &mut [T]) {

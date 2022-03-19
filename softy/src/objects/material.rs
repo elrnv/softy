@@ -62,7 +62,7 @@ pub struct RigidProperties {
 /// Soft shell material properties.
 ///
 /// This struct describes the physical properties of a deformable shell object.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct SoftShellProperties {
     /// Bending stiffness sets the resistance of the material to bending.
     ///
@@ -74,18 +74,9 @@ pub struct SoftShellProperties {
     pub deformable: DeformableProperties,
 }
 
-impl Default for SoftShellProperties {
-    fn default() -> Self {
-        SoftShellProperties {
-            bending_stiffness: None,
-            deformable: DeformableProperties::default(),
-        }
-    }
-}
-
 /// Solids are always elastically deformable. For rigid solids, use rigid shells,
 /// because rigid objects don't require interior properties.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct SolidProperties {
     /// Volume preservation sets the material to be globally incompressible.
     ///
@@ -112,15 +103,6 @@ pub trait DeformableMaterial: DynamicMaterial {
     fn elasticity(&self) -> Option<Elasticity>;
     /// The damping parameter.
     fn damping(&self) -> f32;
-}
-
-impl Default for SolidProperties {
-    fn default() -> Self {
-        SolidProperties {
-            volume_preservation: false,
-            deformable: DeformableProperties::default(),
-        }
-    }
 }
 
 /// A generic material that can be assigned to a `TriMeshShell`.

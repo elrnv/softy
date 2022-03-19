@@ -250,9 +250,9 @@ impl From<Error> for SimResult {
     }
 }
 
-impl Into<SimResult> for Result<nl_fem::SolveResult, Error> {
-    fn into(self) -> SimResult {
-        match self {
+impl From<Result<nl_fem::SolveResult, Error>> for SimResult {
+    fn from(res: Result<nl_fem::SolveResult, Error>) -> SimResult {
+        match res {
             Ok(solve_result) => SimResult::Success(format!("{}", solve_result)),
             Err(err) => err.into(),
         }
@@ -309,5 +309,5 @@ where
     iter.into_iter()
         .map(|x| x.abs())
         .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
-        .unwrap_or(T::zero())
+        .unwrap_or_else(T::zero)
 }

@@ -193,7 +193,7 @@ where
         let x_tol = T::from(params.x_tol).unwrap();
 
         log_debug_stats_header();
-        log_debug_stats(0, 0, &r, x, &x_prev);
+        log_debug_stats(0, 0, r, x, x_prev);
         loop {
             if !(outer_callback.borrow_mut())(CallbackArgs {
                 iteration: iterations,
@@ -208,7 +208,7 @@ where
             }
 
             // Update Jacobian values.
-            problem.jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
+            problem.jacobian_values(x, r, j_rows, j_cols, j_vals.as_mut_slice());
 
             //log::trace!("j_vals = {:?}", &j_vals);
 
@@ -218,7 +218,7 @@ where
                 j_sprs.data_mut()[dst] = j_vals[src];
             }
 
-            r_cur.copy_from_slice(&r);
+            r_cur.copy_from_slice(r);
 
             //log::trace!("r = {:?}", &r);
 
@@ -285,7 +285,7 @@ where
 
             iterations += 1;
 
-            log_debug_stats(iterations, 1, &r_next, x, &x_prev);
+            log_debug_stats(iterations, 1, r_next, x, x_prev);
 
             let denom = inf_norm(x.iter().cloned()) + T::one();
 
@@ -308,7 +308,7 @@ where
             }
 
             // Reset r to be a valid residual for the next iteration.
-            r.copy_from_slice(&r_next);
+            r.copy_from_slice(r_next);
         }
     }
 }

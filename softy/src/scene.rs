@@ -3,6 +3,7 @@
 // TODO: Save only fixed vertices.
 // TODO: Enable more sophisticated interpolation.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
@@ -26,9 +27,15 @@ pub enum SceneError {
     #[error("Attribute transfer error")]
     Attribute(#[from] geo::attrib::Error),
     #[error("Solver error")]
-    Solver(#[from] crate::Error),
+    Solver(#[from] Box<crate::Error>),
     #[error("This library was compiled without JSON support.")]
     JSONUnsupported,
+}
+
+impl From<crate::Error> for SceneError {
+    fn from(err: crate::Error) -> SceneError {
+        SceneError::Solver(Box::new(err))
+    }
 }
 
 /// An enum defining all attribute types supported by the solver.
@@ -101,23 +108,12 @@ impl From<CellType> for geo::mesh::CellType {
 }
 
 /// A simplified mesh structure suitable for serialization and deserialization.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct MeshTopo {
     pub indices: Vec<Vec<usize>>,
     pub types: Vec<CellType>,
     pub vertex_attributes: HashMap<String, Attribute>,
     pub cell_attributes: HashMap<String, Attribute>,
-}
-
-impl Default for MeshTopo {
-    fn default() -> Self {
-        MeshTopo {
-            indices: Vec::new(),
-            types: Vec::new(),
-            vertex_attributes: HashMap::new(),
-            cell_attributes: HashMap::new(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -165,11 +161,10 @@ impl Scene {
             vertex_attributes,
             cell_attributes,
         };
-        let mut animation = Vec::new();
-        animation.push(KeyframedVertexPositions {
+        let animation = vec![KeyframedVertexPositions {
             frame: 0,
             positions: mesh.vertex_positions.into_vec(),
-        });
+        }];
         Scene {
             mesh_topo,
             animation,
@@ -224,20 +219,24 @@ impl Scene {
         // No panic since animation should always be non-empty to contain at least one set of vertex
         // positions.
         let last = self.animation.last_mut().unwrap();
-        if frame > last.frame {
-            // Insert at the end. Presumably this is the most common scenario.
-            self.animation
-                .push(KeyframedVertexPositions { frame, positions });
-        } else if frame == last.frame {
-            // Times coincide, overwrite the last one
-            last.positions = positions;
-        } else {
-            // Insert in the middle, or overwrite previous keyframe.
-            match self.animation.binary_search_by_key(&frame, |tp| tp.frame) {
-                Ok(pos) => self.animation[pos].positions = positions,
-                Err(pos) => self
-                    .animation
-                    .insert(pos, KeyframedVertexPositions { frame, positions }),
+        match frame.cmp(&last.frame) {
+            Ordering::Greater => {
+                // Insert at the end. Presumably this is the most common scenario.
+                self.animation
+                    .push(KeyframedVertexPositions { frame, positions });
+            }
+            Ordering::Equal => {
+                // Times coincide, overwrite the last one
+                last.positions = positions;
+            }
+            Ordering::Less => {
+                // Insert in the middle, or overwrite previous keyframe.
+                match self.animation.binary_search_by_key(&frame, |tp| tp.frame) {
+                    Ok(pos) => self.animation[pos].positions = positions,
+                    Err(pos) => self
+                        .animation
+                        .insert(pos, KeyframedVertexPositions { frame, positions }),
+                }
             }
         }
         self
@@ -350,14 +349,11 @@ impl SceneConfig {
     /// Saves this scene configuration to the given path interpreted as a RON file.
     pub fn save_as_ron(&self, path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
         let path = path.as_ref();
-        File::create(path)
-            .map_err(SceneError::from)
-            .and_then(|f| {
-                let mut writer = BufWriter::new(f);
-                ron::ser::to_writer_pretty(&mut writer, self, ron::ser::PrettyConfig::new())
-                    .map_err(|_| SceneError::Serialize)
-            })
-            .into()
+        File::create(path).map_err(SceneError::from).and_then(|f| {
+            let mut writer = BufWriter::new(f);
+            ron::ser::to_writer_pretty(&mut writer, self, ron::ser::PrettyConfig::new())
+                .map_err(|_| SceneError::Serialize)
+        })
     }
 
     /// Saves this scene configuration to the given path interpreted as a JSON file.
@@ -369,14 +365,11 @@ impl SceneConfig {
         #[cfg(feature = "simd-json")]
         {
             let path = _path.as_ref();
-            File::create(path)
-                .map_err(SceneError::from)
-                .and_then(|f| {
-                    let mut writer = BufWriter::new(f);
-                    simd_json::serde::to_writer_pretty(&mut writer, self)
-                        .map_err(|_| SceneError::Serialize)
-                })
-                .into()
+            File::create(path).map_err(SceneError::from).and_then(|f| {
+                let mut writer = BufWriter::new(f);
+                simd_json::serde::to_writer_pretty(&mut writer, self)
+                    .map_err(|_| SceneError::Serialize)
+            })
         }
         #[cfg(not(feature = "simd-json"))]
         {
@@ -403,25 +396,19 @@ impl SceneConfig {
     #[cfg(feature = "bincode")]
     pub fn save_as_bin(&self, path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
         let path = path.as_ref();
-        File::create(path)
-            .map_err(SceneError::from)
-            .and_then(|f| {
-                let mut writer = BufWriter::new(f);
-                bincode::serialize_into(&mut writer, self).map_err(|_| SceneError::Serialize)
-            })
-            .into()
+        File::create(path).map_err(SceneError::from).and_then(|f| {
+            let mut writer = BufWriter::new(f);
+            bincode::serialize_into(&mut writer, self).map_err(|_| SceneError::Serialize)
+        })
     }
 
     /// Loads the scene from a `RON` file.
     pub fn load_from_ron(path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
         let path = path.as_ref();
-        File::open(path)
-            .map_err(SceneError::from)
-            .and_then(|f| {
-                let reader = BufReader::new(f);
-                ron::de::from_reader(reader).map_err(|_| SceneError::Serialize)
-            })
-            .into()
+        File::open(path).map_err(SceneError::from).and_then(|f| {
+            let reader = BufReader::new(f);
+            ron::de::from_reader(reader).map_err(|_| SceneError::Serialize)
+        })
     }
 
     /// Loads the scene from a `JSON` file.
@@ -433,13 +420,10 @@ impl SceneConfig {
         #[cfg(feature = "simd-json")]
         {
             let path = _path.as_ref();
-            File::open(path)
-                .map_err(SceneError::from)
-                .and_then(|f| {
-                    let reader = BufReader::new(f);
-                    simd_json::serde::from_reader(reader).map_err(|_| SceneError::Serialize)
-                })
-                .into()
+            File::open(path).map_err(SceneError::from).and_then(|f| {
+                let reader = BufReader::new(f);
+                simd_json::serde::from_reader(reader).map_err(|_| SceneError::Serialize)
+            })
         }
         #[cfg(not(feature = "simd-json"))]
         {
@@ -465,13 +449,10 @@ impl SceneConfig {
     #[cfg(feature = "bincode")]
     pub fn load_from_bin(path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
         let path = path.as_ref();
-        File::open(path)
-            .map_err(SceneError::from)
-            .and_then(|f| {
-                let reader = BufReader::new(f);
-                bincode::deserialize_from(reader).map_err(|_| SceneError::Serialize)
-            })
-            .into()
+        File::open(path).map_err(SceneError::from).and_then(|f| {
+            let reader = BufReader::new(f);
+            bincode::deserialize_from(reader).map_err(|_| SceneError::Serialize)
+        })
     }
 
     /// Runs a simulation on this scene.
@@ -488,12 +469,12 @@ impl SceneConfig {
         callback: impl Fn(u64, SolveResult, Mesh) -> bool,
     ) -> Result<(), SceneError> {
         let mesh = self.scene.build_mesh()?;
-        let mut solver_builder = SolverBuilder::new(self.sim_params.clone());
+        let mut solver_builder = SolverBuilder::new(self.sim_params);
         solver_builder
             .set_mesh(mesh)
             .set_materials(self.materials.clone());
         for (fc_params, (obj, col)) in self.frictional_contacts.iter() {
-            solver_builder.add_frictional_contact(fc_params.clone(), (*obj, *col));
+            solver_builder.add_frictional_contact(*fc_params, (*obj, *col));
         }
         let mut solver = solver_builder.build::<f64>()?;
 

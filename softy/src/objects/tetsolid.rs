@@ -424,9 +424,9 @@ impl TetSolid {
 
 impl TetSolid {
     #[inline]
-    pub fn elasticity<'a, T: Real>(
-        &'a self,
-    ) -> (TetSolidNeoHookean<'a, T>, TetSolidStableNeoHookean<'a, T>) {
+    pub fn elasticity<T: Real>(
+        &self,
+    ) -> (TetSolidNeoHookean<'_, T>, TetSolidStableNeoHookean<'_, T>) {
         (
             TetSolidNeoHookean::new(&self.nh_tet_elements),
             TetSolidStableNeoHookean::new(&self.snh_tet_elements),

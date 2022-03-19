@@ -94,7 +94,7 @@ impl<T: Real, E: TetEnergy<T>> Energy<T> for TetSolidElasticity<'_, E> {
         )
         .map(|(damping, density, &vol, &DX_inv, cell, &lambda, &mu)| {
             let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
-            let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
+            let tet_dx = tet_x1 - Tetrahedron::from_indexed_slice(cell, pos0);
             let Dx = Matrix3::new(tet_x1.shape_matrix());
             let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
             let vol = T::from(vol).unwrap();
@@ -165,7 +165,7 @@ impl<X: Real, T: Real, E: TetEnergy<T>> EnergyGradient<X, T> for TetSolidElastic
                     .into(),
             );
             // Make tet displacement.
-            let tet_dx = &tet_x1 - &tet_x0_t;
+            let tet_dx = tet_x1 - tet_x0_t;
 
             let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
             let vol = T::from(vol).unwrap();

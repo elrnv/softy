@@ -112,7 +112,7 @@ impl SolverBuilder {
     ) -> Result<Vec<RefCell<VolumeConstraint>>, Error> {
         Ok(VolumeConstraint::try_from_mesh(mesh, materials)?
             .into_iter()
-            .map(|vc| RefCell::new(vc))
+            .map(RefCell::new)
             .collect())
     }
 
@@ -225,9 +225,7 @@ impl SolverBuilder {
         // Remove an attribute with the same name if it exists since it will have the wrong type.
         if let Ok(attrib) = mesh.remove_attrib::<CellIndex>(OBJECT_ID_ATTRIB) {
             if let Ok(iter) = attrib.iter::<i32>() {
-                let obj_ids = iter
-                    .map(|&id| clamp_id(ObjectIdType::try_from(id).unwrap_or(0)))
-                    .collect();
+                let obj_ids = iter.map(|&id| clamp_id(id)).collect();
                 mesh.insert_attrib_data::<ObjectIdType, VertexIndex>(OBJECT_ID_ATTRIB, obj_ids)?;
                 return Ok(());
             } else if let Ok(iter) = attrib.iter::<u8>() {
@@ -280,9 +278,7 @@ impl SolverBuilder {
         // Remove an attribute with the same name if it exists since it will have the wrong type.
         if let Ok(attrib) = mesh.remove_attrib::<CellIndex>(MATERIAL_ID_ATTRIB) {
             if let Ok(iter) = attrib.iter::<i32>() {
-                let mtl_ids = iter
-                    .map(|&id| normalize_id(MaterialIdType::try_from(id).unwrap_or(0)))
-                    .collect();
+                let mtl_ids = iter.map(|&id| normalize_id(id)).collect();
                 mesh.insert_attrib_data::<MaterialIdType, VertexIndex>(
                     MATERIAL_ID_ATTRIB,
                     mtl_ids,
@@ -404,7 +400,10 @@ impl SolverBuilder {
     /// A helper function to initialize the vertex velocity attribute.
     pub(crate) fn init_velocity_attribute(mesh: &mut Mesh) -> Result<(), Error> {
         // If there is already an attribute with the right type, just leave it alone.
-        if let Ok(_) = mesh.attrib_check::<VelType, VertexIndex>(VELOCITY_ATTRIB) {
+        if mesh
+            .attrib_check::<VelType, VertexIndex>(VELOCITY_ATTRIB)
+            .is_ok()
+        {
             return Ok(());
         }
         // Remove an attribute with the same name if it exists since it will have the wrong type.
@@ -428,8 +427,9 @@ impl SolverBuilder {
     /// A helper function to populate the vertex face reference position attribute.
     pub(crate) fn init_cell_vertex_ref_pos_attribute(mesh: &mut Mesh) -> Result<(), Error> {
         // If the attribute already exists, just leave it alone.
-        if let Ok(_) =
-            mesh.attrib_check::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)
+        if mesh
+            .attrib_check::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)
+            .is_ok()
         {
             return Ok(());
         }
@@ -726,7 +726,7 @@ impl SolverBuilder {
         let num_variables = problem.num_variables();
 
         // Setup Ipopt parameters using the input simulation params.
-        let params = self.sim_params.clone();
+        let params = self.sim_params;
 
         let r_scale = problem.min_element_force_scale;
         let r_tol = params.residual_tolerance.unwrap_or(0.0) * r_scale as f32;
@@ -865,7 +865,7 @@ where
 
     /// Get simulation parameters.
     pub fn params(&self) -> SimParams {
-        self.sim_params.clone()
+        self.sim_params
     }
 
     /// Update the maximal displacement allowed. If zero, no limit is applied.
@@ -901,7 +901,7 @@ where
             } = self;
 
             // Advance internal state (positions and velocities) of the problem.
-            solver.problem_mut().advance(&solution);
+            solver.problem_mut().advance(solution);
         }
 
         // Reduce max_step for next iteration if the solution was a good one.
@@ -983,7 +983,7 @@ where
         solver
             .problem()
             .check_jacobian(sim_params.derivative_test, solution.as_slice(), false)
-            .ok(); //?;
+            .unwrap(); //?;
 
         let mut contact_iterations = sim_params.contact_iterations as i64;
 
@@ -1022,7 +1022,7 @@ where
                         .iter()
                         .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
                         .copied()
-                        .unwrap_or(T::zero())
+                        .unwrap_or_else(T::zero)
                         .to_f64()
                         .unwrap();
 
@@ -1060,11 +1060,10 @@ where
                         continue;
                     } else {
                         // Relax kappa
-                        if largest_penalty == 0.0 {
-                            if solver.problem().kappa > 1.0e2 / sim_params.contact_tolerance as f64
-                            {
-                                solver.problem_mut().kappa /= 2.0;
-                            }
+                        if largest_penalty == 0.0
+                            && solver.problem().kappa > 1.0e2 / sim_params.contact_tolerance as f64
+                        {
+                            solver.problem_mut().kappa /= 2.0;
                         }
                         self.commit_solution(false);
                         // Kill velocities if needed.

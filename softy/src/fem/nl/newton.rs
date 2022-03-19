@@ -222,7 +222,7 @@ impl SparseIterativeSolver {
         b: &[T],
         values: &[T],
     ) -> Result<&[f64], SparseIterativeSolveError> {
-        self.update_rhs(&b);
+        self.update_rhs(b);
         self.update_values(values);
         self.solve()
     }
@@ -416,7 +416,7 @@ impl SparseDirectSolver {
         let t_update_values = Instant::now();
         self.refactor()?;
         let t_refactor = Instant::now();
-        self.update_rhs(&r);
+        self.update_rhs(r);
         let t_update_rhs = Instant::now();
         let result = self.solve();
         let t_solve = Instant::now();
@@ -510,7 +510,7 @@ pub struct NewtonWorkspace<T: Real> {
     x_prev: Vec<T>,
     r: Vec<T>,
     p: Vec<T>,
-    jp: Vec<T>,
+    // jp: Vec<T>,
     r_cur: Vec<T>,
     r_next: Vec<T>,
 }
@@ -588,7 +588,7 @@ where
         let x_prev = vec![T::zero(); n];
 
         let r = x_prev.clone();
-        let jp = r.clone();
+        // let jp = r.clone();
         let r_next = r.clone();
         let r_cur = r.clone();
         let p = r.clone();
@@ -632,7 +632,7 @@ where
                 x_prev,
                 r,
                 p,
-                jp,
+                // jp,
                 r_cur,
                 r_next,
             }),
@@ -844,14 +844,14 @@ where
         let header = IterationInfo::header();
         log::debug!("{}", header[0]);
         log::debug!("{}", header[1]);
-        let info = IterationInfo::new(0, 0, linsolve_result, 1.0, f64::INFINITY, &r, &x_prev, x);
+        let info = IterationInfo::new(0, 0, linsolve_result, 1.0, f64::INFINITY, r, x_prev, x);
         log::debug!("{}", info);
         stats.push(info);
 
         // Prepare initial Jacobian used in the merit function.
         problem.jacobian_values(
             x,
-            &r,
+            r,
             &sparse_jacobian.j_rows,
             &sparse_jacobian.j_cols,
             sparse_jacobian.j_vals.as_mut_slice(),
@@ -871,17 +871,14 @@ where
             .expect("Uninitialized iterative sparse solver.");
         #[cfg(target_os = "macos")]
         {
-            init_sparse_solver.update_values(&init_sparse_jacobian_vals);
-            match init_sparse_solver.refactor() {
-                Err(err) => {
-                    return SolveResult {
-                        iterations,
-                        status: Status::LinearSolveError(err.into()),
-                        timings,
-                        stats,
-                    }
-                }
-                Ok(_) => {}
+            init_sparse_solver.update_values(init_sparse_jacobian_vals);
+            if let Err(err) = init_sparse_solver.refactor() {
+                return SolveResult {
+                    iterations,
+                    status: Status::LinearSolveError(err.into()),
+                    timings,
+                    stats,
+                };
             }
         }
 
@@ -959,7 +956,7 @@ where
             // Update Jacobian values.
             //let before_j = Instant::now();
 
-            r_cur.copy_from_slice(&r);
+            r_cur.copy_from_slice(r);
 
             match linsolve {
                 LinearSolverWorkspace::Iterative(linsolve) => {
@@ -1001,11 +998,18 @@ where
                     let t_begin_solve = Instant::now();
                     problem.jacobian_values(
                         x,
-                        &r_cur,
+                        r_cur,
                         &sparse_jacobian.j_rows,
                         &sparse_jacobian.j_cols,
                         sparse_jacobian.j_vals.as_mut_slice(),
                     );
+                    // build_sparse_from_product(
+                    //     j,
+                    //     |i, col| {
+                    //         problem.jacobian_product(x, &identity[i], r, col);
+                    //     },
+                    //     x.len(),
+                    // );
                     let t_jacobian_values = Instant::now();
                     log::trace!("Condition number: {:?}", {
                         let j_dense_ad = j_dense_ad.borrow_mut_with(|| {
@@ -1060,25 +1064,19 @@ where
 
                     ////log::trace!("j_vals = {:?}", &j_vals);
 
-                    //// Zero out Jacobian.
-                    //j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
+                    // //// Zero out Jacobian.
                     j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
-
                     // Update the Jacobian matrix.
-                    // for (&pos, &j_val) in j_mapping.iter().zip(j_vals.iter()) {
-                    //     if let Some(pos) = pos.into_option() {
-                    //         j.storage_mut()[pos] += j_val;
-                    //     }
-                    // }
                     for (&pos, &j_val) in j_mapping.iter().zip(sparse_jacobian.j_vals.iter()) {
                         if let Some(pos) = pos.into_option() {
                             j.storage_mut()[pos] += j_val;
                         }
                     }
+
                     let sparse_solver = sparse_solver
                         .borrow_mut()
                         .expect("Uninitialized iterative sparse solver.");
-                    let result = sparse_solver.solve_with_values(&r, j.storage());
+                    let result = sparse_solver.solve_with_values(r, j.storage());
                     let r64 = match result {
                         Err(err) => break (iterations, Status::LinearSolveError(err.into())),
                         Ok(r) => r,
@@ -1123,7 +1121,7 @@ where
             *x.as_mut_tensor() += p.as_tensor();
 
             // Compute the residual for the full step.
-            problem.residual(&x, r_next.as_mut_slice());
+            problem.residual(x, r_next.as_mut_slice());
 
             let (ls_count, alpha) = add_time! {
                 timings.line_search;
@@ -1260,8 +1258,8 @@ where
                 linsolve_result,
                 alpha as f32,
                 merit_next,
-                &r_next,
-                &x_prev,
+                r_next,
+                x_prev,
                 x,
             );
             log::debug!("{}", &info);
@@ -1286,7 +1284,7 @@ where
             }
 
             // Reset r to be a valid residual for the next iteration.
-            r.copy_from_slice(&r_next);
+            r.copy_from_slice(r_next);
 
             // Update merit function
             //merit_prev = merit_cur;
@@ -1436,6 +1434,22 @@ fn eig<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
     log::debug!("J eigenvalues: {:?}", dense.complex_eigenvalues());
 }
 
+#[allow(dead_code)]
+fn build_sparse_from_product<T: Real>(
+    j: &mut DSMatrix<T>,
+    jprod: impl Fn(usize, &mut [T]),
+    num_variables: usize,
+) {
+    let mut j = j.view_mut().into_data();
+    let mut col = vec![T::zero(); num_variables];
+    for (col_idx, mut sparse_col) in j.iter_mut().enumerate() {
+        jprod(col_idx, &mut col);
+        for (entry_idx, entry) in sparse_col.iter_mut() {
+            *entry = col[*entry_idx];
+        }
+    }
+}
+
 // Helper function for debugging the jacobian.
 #[allow(dead_code)]
 fn build_dense_from_product<T: Real>(
@@ -1573,10 +1587,7 @@ impl LineSearch {
         LineSearch::BackTracking { c: 1e-4, rho: 0.9 }
     }
     pub fn is_assisted(&self) -> bool {
-        match self {
-            LineSearch::AssistedBackTracking { .. } => true,
-            _ => false,
-        }
+        matches!(self, LineSearch::AssistedBackTracking { .. })
     }
     /// Gets the factor by which the step size should be decreased.
     pub fn step_factor(&self) -> f64 {

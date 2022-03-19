@@ -197,7 +197,7 @@ impl<T: Real> LocalMLS<T> {
     /// Creates a clone of this `LocalMLS` with all reals cast to the given type.
     pub fn clone_cast<S: Real>(&self) -> LocalMLS<S> {
         LocalMLS {
-            kernel: self.kernel.clone(),
+            kernel: self.kernel,
             base_radius: self.base_radius,
             max_step: S::from(self.max_step).unwrap(),
             surf_base: Box::new(self.surf_base.clone_cast::<S>()),
@@ -209,7 +209,7 @@ impl<T: Real> GlobalMLS<T> {
     /// Creates a clone of this `GlobalMLS` with all reals cast to the given type.
     pub fn clone_cast<S: Real>(&self) -> GlobalMLS<S> {
         GlobalMLS {
-            kernel: self.kernel.clone(),
+            kernel: self.kernel,
             surf_base: Box::new(self.surf_base.clone_cast::<S>()),
         }
     }
@@ -251,7 +251,7 @@ impl<T: Real> ImplicitSurfaceBase<T> {
         let samples = self.samples.clone_cast::<S>();
         let spatial_tree = build_rtree_from_samples(&samples);
         ImplicitSurfaceBase {
-            bg_field_params: self.bg_field_params.clone(),
+            bg_field_params: self.bg_field_params,
             surface_topo: self.surface_topo.clone(),
             surface_vertex_positions: self
                 .surface_vertex_positions
@@ -323,7 +323,7 @@ impl<T: Real> ImplicitSurfaceBase<T> {
                 geo::algo::compute_vertex_area_weighted_normals(positions, surface_topo, normals);
             }
             SampleType::Face => {
-                samples.update_triangle_samples(surface_topo, &surface_vertex_positions);
+                samples.update_triangle_samples(surface_topo, surface_vertex_positions);
             }
         }
     }
@@ -340,7 +340,7 @@ impl<T: Real> ImplicitSurfaceBase<T> {
         // First we update the surface vertex positions.
         let mut num_updated = 0;
         for (p, new_p) in self.surface_vertex_positions.iter_mut().zip(vertex_iter) {
-            *p = new_p.into();
+            *p = new_p;
             num_updated += 1;
         }
 
@@ -555,7 +555,7 @@ impl<T: Real> MLS<T> {
 
                 let q = Vector3::new(*q);
 
-                let view = SamplesView::new(neighs, &samples);
+                let view = SamplesView::new(neighs, samples);
 
                 // Record number of neighbors in total.
                 *num_neighs = view.len() as i32;
@@ -808,7 +808,7 @@ impl<T: Real> ImplicitSurface<T> {
 
         let hrbf_values: Vec<f64> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
 
-        let hrbf = hrbf::Pow3HrbfBuilder::<f64>::new(pts.clone())
+        let hrbf = hrbf::Pow3HrbfBuilder::<f64>::new(pts)
             .offsets(hrbf_values)
             .normals(nmls)
             .build()
@@ -873,7 +873,7 @@ impl<T: Real> ImplicitSurface<T> {
             })
             .collect();
         let hrbf_values: Vec<f64> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
-        let hrbf = hrbf::Pow3HrbfBuilder::<f64>::new(pts.clone())
+        let hrbf = hrbf::Pow3HrbfBuilder::<f64>::new(pts)
             .offsets(hrbf_values)
             .normals(nmls)
             .build()
@@ -1082,7 +1082,8 @@ where
 {
     samples.into_iter().flat_map(move |sample| {
         let mult = multiplier(sample);
-        let grad = face_unit_normal_gradient_iter(sample, surface_vertices, surface_topo);
+        let grad =
+            face_unit_normal_gradient_iter_from_sample(sample, surface_vertices, surface_topo);
         grad.map(move |g| g * mult)
     })
 }
@@ -1101,15 +1102,11 @@ where
 {
     samples.into_par_iter().map(move |sample| {
         let mult = multiplier(sample);
-        face_unit_normal_gradient_product(sample, surface_vertices, surface_topo, mult)
+        face_unit_normal_gradient_product_from_sample(sample, surface_vertices, surface_topo, mult)
     })
 }
 
-/// Compute the gradient of the face normal at the given sample with respect to
-/// its vertices. The returned triple of `Matrix3`s corresponds to the block column vector of
-/// three matrices corresponding to each triangle vertex, which together construct the actual
-/// `9x3` component-wise gradient.
-pub(crate) fn face_unit_normal_gradient_iter<T>(
+pub(crate) fn face_unit_normal_gradient_iter_from_sample<T>(
     sample: Sample<T>,
     surface_vertices: &[[T; 3]],
     surface_topo: &[[usize; 3]],
@@ -1117,15 +1114,40 @@ pub(crate) fn face_unit_normal_gradient_iter<T>(
 where
     T: Real,
 {
-    let nml_proj = scaled_tangent_projection(sample);
-    let tri_indices = &surface_topo[sample.index];
+    let mut sample_unit_nml = sample.nml;
+    let sample_area = sample_unit_nml.normalize();
+    face_unit_normal_gradient_iter(
+        sample.index,
+        sample_unit_nml,
+        T::one() / sample_area,
+        surface_vertices,
+        surface_topo,
+    )
+}
+
+/// Compute the gradient of the face normal at the given sample with respect to
+/// its vertices. The returned triple of `Matrix3`s corresponds to the block column vector of
+/// three matrices corresponding to each triangle vertex, which together construct the actual
+/// `9x3` component-wise gradient.
+pub(crate) fn face_unit_normal_gradient_iter<T>(
+    sample_index: usize,
+    sample_unit_nml: Vector3<T>,
+    sample_area_inv: T,
+    surface_vertices: &[[T; 3]],
+    surface_topo: &[[usize; 3]],
+) -> impl Iterator<Item = Matrix3<T>>
+where
+    T: Real,
+{
+    let nml_proj = scaled_tangent_projection(sample_unit_nml, sample_area_inv);
+    let tri_indices = &surface_topo[sample_index];
     let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
     // Note: Implicit transpose when interpreting column-major matrix as a row-major matrix.
     (0..3).map(move |i| -Matrix3::new(tri.area_normal_gradient(i)) * nml_proj)
 }
 
 #[allow(dead_code)]
-pub(crate) fn face_unit_normal_gradient_product<T>(
+pub(crate) fn face_unit_normal_gradient_product_from_sample<T>(
     sample: Sample<T>,
     surface_vertices: &[[T; 3]],
     surface_topo: &[[usize; 3]],
@@ -1134,8 +1156,32 @@ pub(crate) fn face_unit_normal_gradient_product<T>(
 where
     T: Real,
 {
-    let nml_proj_mult = scaled_tangent_projection(sample) * mult;
-    let tri_indices = &surface_topo[sample.index];
+    let mut sample_unit_nml = sample.nml;
+    let sample_area = sample_unit_nml.normalize();
+    face_unit_normal_gradient_product(
+        sample.index,
+        sample_unit_nml,
+        T::one() / sample_area,
+        surface_vertices,
+        surface_topo,
+        mult,
+    )
+}
+
+#[allow(dead_code)]
+pub(crate) fn face_unit_normal_gradient_product<T>(
+    sample_index: usize,
+    sample_unit_nml: Vector3<T>,
+    sample_area_inv: T,
+    surface_vertices: &[[T; 3]],
+    surface_topo: &[[usize; 3]],
+    mult: Vector3<T>,
+) -> Matrix3<T>
+where
+    T: Real,
+{
+    let nml_proj_mult = scaled_tangent_projection(sample_unit_nml, sample_area_inv) * mult;
+    let tri_indices = &surface_topo[sample_index];
     let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
     // Note: Implicit transpose when interpreting column-major matrix as a row-major matrix.
     Matrix3::new([
@@ -1147,14 +1193,24 @@ where
 
 /// Compute the matrix for projecting on the tangent plane of the given sample inversely scaled
 /// by the local area (normal norm reciprocal).
-pub(crate) fn scaled_tangent_projection<T>(sample: Sample<T>) -> Matrix3<T>
+pub(crate) fn scaled_tangent_projection<T>(
+    sample_unit_nml: Vector3<T>,
+    scale_factor: T,
+) -> Matrix3<T>
 where
     T: Real,
 {
-    let nml_norm_inv = T::one() / sample.nml.norm();
-    let nml = sample.nml * nml_norm_inv;
-    Matrix3::from_diag_iter(std::iter::repeat(nml_norm_inv))
-        - (nml * nml_norm_inv) * nml.transpose()
+    Matrix3::from_diag_iter(std::iter::repeat(scale_factor))
+        - (sample_unit_nml * scale_factor) * sample_unit_nml.transpose()
+}
+
+pub(crate) fn scaled_tangent_projection_from_sample<T>(sample: Sample<T>) -> Matrix3<T>
+where
+    T: Real,
+{
+    let mut sample_unit_nml = sample.nml;
+    let sample_area = sample_unit_nml.normalize();
+    scaled_tangent_projection(sample_unit_nml, T::one() / sample_area)
 }
 
 /// Compute the gradient vector product of the `compute_vertex_unit_normals` function with respect to

@@ -113,14 +113,14 @@ impl Neighborhood {
             .par_iter()
             .zip(cache.par_iter_mut())
             .map(|(q, pts)| {
-                let init_hash = Self::compute_hash(&pts);
+                let init_hash = Self::compute_hash(pts);
                 pts.clear();
                 pts.extend(neigh(*q).map(|op| op.index));
 
                 // This way of detecting changes has false positives, but for the purposes of
                 // simulation, this should affect a negligible number of frames.
                 // TODO: find percentage of false positives
-                init_hash != Self::compute_hash(&pts)
+                init_hash != Self::compute_hash(pts)
             })
             .reduce(|| false, |a, b| a || b);
 
@@ -167,7 +167,7 @@ impl Neighborhood {
             .par_iter()
             .zip(extended_set.par_iter_mut())
             .map(|(triv_pts, ext_pts)| {
-                let init_hash = Self::compute_hash(&ext_pts);
+                let init_hash = Self::compute_hash(ext_pts);
                 ext_pts.clear();
                 let mut set: BTreeSet<_> = triv_pts.iter().collect();
                 if sample_type == SampleType::Vertex && !dual_topo.is_empty() {
@@ -178,7 +178,7 @@ impl Neighborhood {
                 ext_pts.extend(set.into_iter());
 
                 // TODO: check for rate of false positives.
-                init_hash != Self::compute_hash(&ext_pts)
+                init_hash != Self::compute_hash(ext_pts)
             })
             .reduce(|| false, |a, b| a || b);
 

@@ -1,5 +1,8 @@
 use super::*;
-use crate::jacobian::{normalized_neighbor_weight_gradient, query_jacobian_at};
+use crate::jacobian::{
+    normalized_neighbor_weight_gradient, normalized_neighbor_weight_vertex_gradients,
+    query_jacobian_at, rodrigues_rotation,
+};
 use crate::Error;
 use rayon::iter::Either;
 use std::cmp::Ordering;
@@ -120,9 +123,7 @@ impl<T: Real> QueryTopo<T> {
         self.num_neighborhoods() * 6
     }
 
-    pub fn query_hessian_product_indices_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (usize, usize)> + 'a {
+    pub fn query_hessian_product_indices_iter(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
         self.query_hessian_product_block_indices_iter()
             .flat_map(move |i| {
                 (0..3).flat_map(move |r| (0..=r).map(move |c| (3 * i + r, 3 * i + c)))
@@ -133,9 +134,7 @@ impl<T: Real> QueryTopo<T> {
     ///
     /// The query hessian is diagonal so the iterator returns the index of each diagonal element
     /// in the sparse matrix.
-    pub fn query_hessian_product_block_indices_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = usize> + 'a {
+    pub fn query_hessian_product_block_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.trivial_neighborhood_seq()
             .enumerate()
             .filter(move |(_, nbrs)| !nbrs.is_empty())
@@ -336,9 +335,9 @@ impl<T: Real> QueryTopo<T> {
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
     /// points. This returns an iterator over all the hessian product indices.
-    pub fn surface_hessian_product_indices_iter<'a>(
-        &'a self,
-    ) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
+    pub fn surface_hessian_product_indices_iter(
+        &self,
+    ) -> Result<impl Iterator<Item = (usize, usize)> + '_, Error> {
         Ok(self
             .surface_hessian_product_block_indices_iter()?
             .flat_map(move |(row, col)| {
@@ -351,9 +350,9 @@ impl<T: Real> QueryTopo<T> {
     /// points.
     ///
     /// This returns an iterator over all the block hessian product indices.
-    pub fn surface_hessian_product_block_indices_iter<'a>(
-        &'a self,
-    ) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
+    pub fn surface_hessian_product_block_indices_iter(
+        &self,
+    ) -> Result<impl Iterator<Item = (usize, usize)> + '_, Error> {
         let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
@@ -570,6 +569,13 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
+        debug_assert_eq!(
+            self.trivial_neighborhood_seq()
+                .filter(|nbrs| !nbrs.is_empty())
+                .count(),
+            multipliers.len()
+        );
+
         let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
@@ -666,7 +672,9 @@ impl<T: Real> QueryTopo<T> {
         match sample_type {
             SampleType::Vertex => Err(Error::UnsupportedSampleType),
             SampleType::Face => {
-                let hess = zip!(query_points.iter(), neigh_points)
+                let hess = query_points
+                    .iter()
+                    .zip(neigh_points)
                     .enumerate()
                     .filter(|(_, (_, nbrs))| !nbrs.is_empty())
                     .zip(mult_iter)
@@ -680,35 +688,128 @@ impl<T: Real> QueryTopo<T> {
                         let weight_sum_inv = bg.weight_sum_inv();
                         let closest_d = bg.closest_sample_dist();
 
+                        let dwdq_neigh = normalized_neighbor_weight_vertex_gradients(
+                            q,
+                            view,
+                            kernel,
+                            surface_vertex_positions.len(),
+                            surface_topo,
+                            bg.clone(),
+                        );
+
                         let dw_neigh =
                             normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
-                        let ddw_neigh = normalized_neighbor_weight_hessian(q, view, kernel, bg);
+                        let ddwdq_neigh = normalized_neighbor_weight_vertex_hessian(
+                            q,
+                            view,
+                            kernel,
+                            surface_vertex_positions.len(),
+                            surface_topo,
+                            bg,
+                        );
 
+                        let unit_nml_grads = view
+                            .into_iter()
+                            .map(move |sample| {
+                                let mut sample_unit_nml = sample.nml;
+                                let sample_area = sample_unit_nml.normalize();
+                                face_unit_normal_gradient_iter(
+                                    sample.index,
+                                    sample_unit_nml,
+                                    T::one() / sample_area,
+                                    surface_vertex_positions,
+                                    surface_topo,
+                                )
+                                .collect::<Vec<_>>()
+                            })
+                            .collect::<Vec<_>>();
+
+                        let seen =
+                            std::cell::RefCell::new(vec![false; surface_vertex_positions.len()]);
+
+                        let entries = view
+                            .into_iter()
+                            .flat_map(|col_sample| {
+                                surface_topo[col_sample.index]
+                                    .iter()
+                                    .filter_map(|&tri_vtx| {
+                                        if seen.borrow()[tri_vtx] {
+                                            return None;
+                                        } else {
+                                            seen.borrow_mut()[tri_vtx] = true;
+                                        }
+                                        let jac_grad_phi = view
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(which_sample, sample)| {
+                                                (
+                                                    surface_topo[sample.index]
+                                                        .iter()
+                                                        .position(|&x| x == tri_vtx),
+                                                    which_sample,
+                                                    sample,
+                                                )
+                                            })
+                                            .map(|(which_vtx, which_sample, sample)| {
+                                                let sample_unit_nml = sample.nml.normalized();
+                                                sample_query_hessian_component_at(
+                                                    q,
+                                                    sample,
+                                                    sample_unit_nml,
+                                                    kernel,
+                                                    &unit_nml_grads[which_sample],
+                                                    which_vtx,
+                                                    dw_neigh,
+                                                    ddwdq_neigh[tri_vtx],
+                                                    dwdq_neigh[tri_vtx],
+                                                    weight_sum_inv,
+                                                    closest_d,
+                                                )
+                                            })
+                                            .sum::<Matrix3<T>>();
+                                        Some((
+                                            query_idx,
+                                            tri_vtx,
+                                            (jac_grad_phi * mult).into_data(),
+                                        ))
+                                    })
+                            })
+                            .collect::<Vec<_>>();
+                        entries.into_iter()
+                    });
+                Ok(hess)
+            }
+        }
+    }
+
+    /// Computes indices for `d/dq (grad_x Psi(x) b)` where `q` are sample adjacent vertices.
+    ///
+    /// Here `Psi` is the implicit function and `b` are the multipliers.
+    /// Returned blocks are row-major.
+    pub fn sample_query_hessian_product_block_indices_iter(
+        &self,
+    ) -> Result<impl Iterator<Item = (usize, usize)> + '_, Error> {
+        let neigh_points = self.trivial_neighborhood_seq();
+
+        let ImplicitSurfaceBase {
+            ref samples,
+            ref surface_topo,
+            sample_type,
+            ..
+        } = *self.base();
+
+        match sample_type {
+            SampleType::Vertex => Err(Error::UnsupportedSampleType),
+            SampleType::Face => {
+                let hess = neigh_points
+                    .enumerate()
+                    .filter(|(_, nbrs)| !nbrs.is_empty())
+                    .flat_map(move |(query_idx, nbr_points)| {
+                        let view = SamplesView::new(nbr_points, samples);
                         view.into_iter().flat_map(move |sample| {
-                            face_unit_normal_gradient_iter(
-                                sample,
-                                surface_vertex_positions,
-                                surface_topo,
-                            )
-                            .map(move |unit_nml_grad| {
-                                sample_query_hessian_at(
-                                    q,
-                                    sample,
-                                    kernel,
-                                    unit_nml_grad,
-                                    dw_neigh,
-                                    ddw_neigh,
-                                    weight_sum_inv,
-                                    closest_d,
-                                ) * mult
-                            })
-                            .enumerate()
-                            .map(move |(i, m)| {
-                                (query_idx, surface_topo[sample.index][i], m.into_data())
-                            })
+                            (0..3).map(move |i| (query_idx, surface_topo[sample.index][i]))
                         })
                     });
-
                 Ok(hess)
             }
         }
@@ -797,6 +898,39 @@ where
     ddw_neigh * weight_sum_inv // normalize the neighborhood derivative
 }
 
+/// Compute the normalized sum of all sample weight gradients.
+pub(crate) fn normalized_neighbor_weight_vertex_hessian<'a, T, K, V>(
+    q: Vector3<T>,
+    samples: SamplesView<'a, 'a, T>,
+    kernel: K,
+    num_surface_vertices: usize,
+    surface_topo: &'a [[usize; 3]],
+    bg: BackgroundField<'a, T, V, K>,
+) -> Vec<Matrix3<T>>
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
+    V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
+{
+    let closest_d = bg.closest_sample_dist();
+
+    let weight_sum_inv = bg.weight_sum_inv();
+    let third = T::from(1.0 / 3.0).unwrap();
+    let factor = third * weight_sum_inv;
+
+    let mut ddw_neigh = vec![Matrix3::zero(); num_surface_vertices];
+
+    samples.iter().for_each(|s| {
+        let bg_hess = bg.background_weight_hessian(Some(s.index));
+        let ddw = (kernel.with_closest_dist(closest_d).hess(q, s.pos) + bg_hess) * factor;
+        surface_topo[s.index]
+            .iter()
+            .for_each(|&v| ddw_neigh[v] -= ddw);
+    });
+
+    ddw_neigh // normalize the neighborhood derivative
+}
+
 /*
  * Surface hessian components
  */
@@ -839,7 +973,7 @@ where
     });
 
     // Add in the normal gradient multiplied by a vector of given Vector3 values.
-    let nml_hess = normal_hessian_at(q, view, kernel, &surface_topo, surface_vertex_positions, bg);
+    let nml_hess = normal_hessian_at(q, view, kernel, surface_topo, surface_vertex_positions, bg);
 
     nml_hess
         .chain(main_hess)
@@ -990,8 +1124,8 @@ where
     // Compute the unit normal hessian product.
     let nml_hess_iter = compute_face_unit_normals_hessian_products(
         samples,
-        &surface_vertex_positions,
-        &surface_topo,
+        surface_vertex_positions,
+        surface_topo,
         nml_hess_multiplier,
     );
 
@@ -1009,7 +1143,7 @@ where
         let dw_l = -kernel.with_closest_dist(csd).grad(q, pos_l);
         let dws_l = dw_l + dwb_l;
 
-        face_unit_normal_gradient_iter(sample_l, surface_vertex_positions, surface_topo)
+        face_unit_normal_gradient_iter_from_sample(sample_l, surface_vertex_positions, surface_topo)
             .enumerate()
             .flat_map(move |(i, dn_li)| {
                 let row_vtx = surface_topo[index_l][i];
@@ -1032,25 +1166,29 @@ where
                     ..
                 } = sample_k;
                 let wk = kernel.with_closest_dist(csd).eval(q, pos_k);
-                face_unit_normal_gradient_iter(sample_k, surface_vertex_positions, surface_topo)
-                    .enumerate()
-                    .flat_map(move |(i, dn_ki)| {
-                        let row_vtx = surface_topo[index_k][i];
-                        (0..3).map(move |j| {
-                            let col_vtx = surface_topo[index_l][j];
+                face_unit_normal_gradient_iter_from_sample(
+                    sample_k,
+                    surface_vertex_positions,
+                    surface_topo,
+                )
+                .enumerate()
+                .flat_map(move |(i, dn_ki)| {
+                    let row_vtx = surface_topo[index_k][i];
+                    (0..3).map(move |j| {
+                        let col_vtx = surface_topo[index_l][j];
 
-                            let mtx = -dn_ki
-                                * (q - pos_k)
-                                * dws_l.transpose()
-                                * (wk * ws_inv * ws_inv * third);
+                        let mtx = -dn_ki
+                            * (q - pos_k)
+                            * dws_l.transpose()
+                            * (wk * ws_inv * ws_inv * third);
 
-                            match row_vtx.cmp(&col_vtx) {
-                                Ordering::Greater => (row_vtx, col_vtx, mtx),
-                                Ordering::Less => (col_vtx, row_vtx, mtx.transpose()),
-                                Ordering::Equal => (row_vtx, col_vtx, mtx + mtx.transpose()),
-                            }
-                        })
+                        match row_vtx.cmp(&col_vtx) {
+                            Ordering::Greater => (row_vtx, col_vtx, mtx),
+                            Ordering::Less => (col_vtx, row_vtx, mtx.transpose()),
+                            Ordering::Equal => (row_vtx, col_vtx, mtx + mtx.transpose()),
+                        }
                     })
+                })
             }))
     });
 
@@ -1080,7 +1218,7 @@ where
     let third = T::one() / T::from(3.0).unwrap();
     samples.into_iter().flat_map(move |sample| {
         let tri_indices = &surface_topo[sample.index];
-        let nml_proj = scaled_tangent_projection(sample); // symmetric
+        let nml_proj = scaled_tangent_projection_from_sample(sample); // symmetric
         let lambda = multiplier(sample);
         (0..3).flat_map(move |k| {
             let vtx_row = tri_indices[k];
@@ -1115,9 +1253,9 @@ where
     // For each triangle contribution (one element in a sum)
     samples.into_iter().flat_map(move |sample| {
         let tri_indices = &surface_topo[sample.index];
-        let norm_inv = T::one() / sample.nml.norm();
-        let nml = sample.nml * norm_inv;
-        let nml_proj = scaled_tangent_projection(sample);
+        let mut nml = sample.nml;
+        let norm_inv = T::one() / nml.normalize();
+        let nml_proj = scaled_tangent_projection(nml, norm_inv);
         let mult = multiplier(sample);
         let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
         // Converting to row-major here causes sign change.
@@ -1181,38 +1319,74 @@ where
 
     let grad_phi = query_jacobian_at(q, view, None, kernel, bg_field_params);
 
+    let dwdq_neigh = normalized_neighbor_weight_vertex_gradients(
+        q,
+        view,
+        kernel,
+        surface_vertices.len(),
+        surface_topo,
+        bg.clone(),
+    );
     let dw_neigh = normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
-    let ddw_neigh = normalized_neighbor_weight_hessian(q, view, kernel, bg);
+    let ddwdq_neigh = normalized_neighbor_weight_vertex_hessian(
+        q,
+        view,
+        kernel,
+        surface_vertices.len(),
+        surface_topo,
+        bg,
+    );
 
-    let third = T::one() / T::from(3.0).unwrap();
+    let third = T::from(1.0 / 3.0).unwrap();
+
+    let unit_nml_grads = view
+        .into_iter()
+        .map(move |sample| {
+            let mut sample_unit_nml = sample.nml;
+            let sample_area = sample_unit_nml.normalize();
+            face_unit_normal_gradient_iter(
+                sample.index,
+                sample_unit_nml,
+                T::one() / sample_area,
+                surface_vertices,
+                surface_topo,
+            )
+            .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
 
     // For each sample
-    view.into_iter().flat_map(move |sample| {
-        // For each triangle vertex
-        let mut lambda = Vector3::zero();
-        surface_topo[sample.index].iter().for_each(move |&vtx_idx| {
-            lambda += multipliers[vtx_idx].into_tensor();
-        });
-        lambda *= third;
-        let hess = sample_contact_jacobian_gradient_product_at(
-            q,
-            sample,
-            surface_vertices,
-            surface_topo,
-            kernel,
-            grad_phi,
-            dw_neigh,
-            ddw_neigh,
-            weight_sum_inv,
-            closest_d,
-            lambda,
-            false,
-        );
-        hess.into_iter().enumerate().map(move |(i, hess)| {
-            let col_vtx = surface_topo[sample.index][i];
-            (col_vtx, (hess * third).into_data())
+    view.into_iter()
+        .enumerate()
+        .flat_map(move |(which_sample, sample)| {
+            // For each triangle vertex
+            let mut lambda = Vector3::zero();
+            surface_topo[sample.index].iter().for_each(|&vtx_idx| {
+                lambda += multipliers[vtx_idx].into_tensor();
+            });
+            lambda *= third;
+
+            let hess = sample_contact_jacobian_gradient_product_at(
+                q,
+                view,
+                sample,
+                which_sample,
+                surface_vertices,
+                surface_topo,
+                kernel,
+                grad_phi,
+                dw_neigh,
+                ddwdq_neigh.clone(),
+                dwdq_neigh.clone(),
+                unit_nml_grads.clone(),
+                weight_sum_inv,
+                closest_d,
+                lambda,
+                false,
+            );
+            hess.into_iter()
+                .map(move |(col_idx, hess)| (col_idx, hess.into_data()))
         })
-    })
 }
 
 /// Computes the hessian for a single contact
@@ -1221,7 +1395,7 @@ where
 /// Note that this "Hessian" is not symmetric since the contact "Jacobian" is not really a
 /// Jacobian of anything, it is an approximation of dx/dq with some physical meaning.
 ///
-/// The returned Matrix3 are interpreted as column major (implicit transpose of a row-major matrix)
+/// The returned `Matrix3` are interpreted as column major (implicit transpose of a row-major matrix)
 pub(crate) fn contact_hessian_at<'a, T, K: 'a>(
     q: Vector3<T>,
     view: SamplesView<'a, 'a, T>,
@@ -1243,47 +1417,73 @@ where
 
     let grad_phi = query_jacobian_at(q, view, None, kernel, bg_field_params);
 
+    let dwdq_neigh = normalized_neighbor_weight_vertex_gradients(
+        q,
+        view,
+        kernel,
+        surface_vertices.len(),
+        surface_topo,
+        bg.clone(),
+    );
     let dw_neigh = normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
-    let ddw_neigh = normalized_neighbor_weight_hessian(q, view, kernel, bg);
+    let ddwdq_neigh = normalized_neighbor_weight_vertex_hessian(
+        q,
+        view,
+        kernel,
+        surface_vertices.len(),
+        surface_topo,
+        bg,
+    );
 
     let third = T::one() / T::from(3.0).unwrap();
 
-    // For each sample
-    view.into_iter().flat_map(move |sample| {
-        // For each triangle vertex
-        surface_topo[sample.index].iter().flat_map(move |&row_vtx| {
-            let hess = sample_contact_jacobian_gradient_product_at(
-                q,
-                sample,
+    let unit_nml_grads = view
+        .into_iter()
+        .map(move |sample| {
+            let mut sample_unit_nml = sample.nml;
+            let sample_area = sample_unit_nml.normalize();
+            face_unit_normal_gradient_iter(
+                sample.index,
+                sample_unit_nml,
+                T::one() / sample_area,
                 surface_vertices,
                 surface_topo,
-                kernel,
-                grad_phi,
-                dw_neigh,
-                ddw_neigh,
-                weight_sum_inv,
-                closest_d,
-                multiplier,
-                true,
-            );
-            hess.into_iter().enumerate().map(move |(i, hess)| {
-                let col_vtx = surface_topo[sample.index][i];
-                (row_vtx, col_vtx, (hess * third).into_data())
+            )
+            .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    // For each sample
+    view.into_iter()
+        .enumerate()
+        .flat_map(move |(which_sample, sample)| {
+            // For each triangle vertex
+            let dwdq_neigh = dwdq_neigh.clone();
+            let ddwdq_neigh = ddwdq_neigh.clone();
+            let unit_nml_grads = unit_nml_grads.clone();
+            surface_topo[sample.index].iter().flat_map(move |&row_vtx| {
+                let hess = sample_contact_jacobian_gradient_product_at(
+                    q,
+                    view,
+                    sample,
+                    which_sample,
+                    surface_vertices,
+                    surface_topo,
+                    kernel,
+                    grad_phi,
+                    dw_neigh,
+                    ddwdq_neigh.clone(),
+                    dwdq_neigh.clone(),
+                    unit_nml_grads.clone(),
+                    weight_sum_inv,
+                    closest_d,
+                    multiplier,
+                    true,
+                );
+                hess.into_iter()
+                    .map(move |(col_idx, hess)| (row_vtx, col_idx, (hess * third).into_data()))
             })
         })
-    })
-}
-
-pub(crate) fn rodrigues_rotation<T: Real>(ux: Matrix3<T>, nml_dot_grad: T) -> Matrix3<T> {
-    if nml_dot_grad != -T::one() {
-        Matrix3::identity() + ux + (ux * ux) / (T::one() + nml_dot_grad)
-    } else {
-        // TODO: take a convenient unit vector u and compute the rotation
-        // as
-        //let ux = u.skew();
-        //Matrix3::identity() + (ux*ux) * 2
-        Matrix3::identity()
-    }
 }
 
 /// Contact Jacobian derivative with respect to the three adjacent vertex positions.
@@ -1291,18 +1491,22 @@ pub(crate) fn rodrigues_rotation<T: Real>(ux: Matrix3<T>, nml_dot_grad: T) -> Ma
 /// Returns coulumn major blocks.
 pub(crate) fn sample_contact_jacobian_gradient_product_at<'a, T, K: 'a>(
     q: Vector3<T>,
+    samples_view: SamplesView<'a, 'a, T>,
     sample: Sample<T>,
+    which_sample: usize,
     surface_vertices: &'a [[T; 3]],
     surface_topo: &'a [[usize; 3]],
     kernel: K,
-    mut grad_phi: Vector3<T>,
+    grad_phi: Vector3<T>,
     dw_neigh_normalized: Vector3<T>,
-    ddw_neigh_normalized: Matrix3<T>,
+    ddw_neigh_normalized: Vec<Matrix3<T>>,
+    dwdq_neigh_normalized: Vec<Vector3<T>>,
+    unit_nml_grads: Vec<Vec<Matrix3<T>>>,
     weight_sum_inv: T,
     closest_d: T,
     multiplier: Vector3<T>,
     transpose: bool,
-) -> impl Iterator<Item = Matrix3<T>> + 'a
+) -> impl Iterator<Item = (usize, Matrix3<T>)> + 'a
 where
     T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
@@ -1310,12 +1514,12 @@ where
     // Jacobian values
     let kernel = kernel.with_closest_dist(closest_d);
     let w_normalized = kernel.eval(q, sample.pos) * weight_sum_inv;
-    let grad_phi_norm = grad_phi.norm();
-    if grad_phi_norm != T::zero() {
-        grad_phi /= grad_phi_norm;
-    }; // normalize grad_phi
-    let nml_dot_grad = sample.nml.dot(grad_phi);
-    let mut u = sample.nml.cross(grad_phi);
+    //grad_phi.normalize();
+    let sample_unit_nml = sample.nml.normalized();
+    let nml_dot_grad = sample_unit_nml.dot(grad_phi);
+    let mut u = sample_unit_nml.cross(grad_phi);
+
+    // TODO: Figure out why the transpose is wrong here
     if transpose {
         // The negative makes rodrigues rotation transpose.
         u *= -T::one();
@@ -1329,69 +1533,107 @@ where
 
     // Hessian specific values.
     // Negative in front of kernel grad is because grad is wrt sample pos not q.
-    let first_term = (rot * multiplier) * kernel.grad(q, sample.pos).transpose() * (-third);
+    let w = kernel.with_closest_dist(closest_d).eval(q, sample.pos);
+    let dw = kernel.with_closest_dist(closest_d).grad(q, sample.pos);
+    let dw_normalized = dw * weight_sum_inv;
+    // This term is transposed to make it column-major.
+    let dw_normalized_term = dw_normalized * ((rot * multiplier).transpose() * (-third));
+
+    let dw_normalized_entries = surface_topo[sample.index]
+        .iter()
+        .map(move |&tri_vtx| (tri_vtx, dw_normalized_term));
+
+    let seen = std::cell::RefCell::new(vec![false; surface_vertices.len()]);
 
     // Compute Jacobian of the rotation matrix Qs multiplied by multiplier.
-    face_unit_normal_gradient_iter(sample, surface_vertices, surface_topo).map(
-        move |unit_nml_grad| {
-            let rot_jac = rodrigues_rotation_jacobian_product_at(
-                q,
-                sample,
-                kernel,
-                grad_phi,
-                unit_nml_grad,
-                dw_neigh_normalized,
-                ddw_neigh_normalized,
-                weight_sum_inv,
-                closest_d,
-                nml_dot_grad,
-                multiplier,
-                transpose,
-            );
-            first_term + rot_jac * w_normalized
-        },
-    )
+    let second_term_entries = samples_view
+        .into_iter()
+        .flat_map(|col_sample| {
+            surface_topo[col_sample.index]
+                .iter()
+                .filter_map(|&tri_vtx| {
+                    if seen.borrow()[tri_vtx] {
+                        return None;
+                    } else {
+                        seen.borrow_mut()[tri_vtx] = true;
+                    }
+                    let dw_normalized_denom_term = -dwdq_neigh_normalized[tri_vtx]
+                        * w
+                        * weight_sum_inv
+                        * (rot * multiplier).transpose();
+                    let jac_grad_phi_t = samples_view
+                        .iter()
+                        .enumerate()
+                        .map(|(which_sample, sample)| {
+                            (
+                                surface_topo[sample.index]
+                                    .iter()
+                                    .position(|&x| x == tri_vtx),
+                                which_sample,
+                                sample,
+                            )
+                        })
+                        .map(|(which_vtx, which_sample, sample)| {
+                            let sample_unit_nml = sample.nml.normalized();
+                            sample_query_hessian_component_at(
+                                q,
+                                sample,
+                                sample_unit_nml,
+                                kernel,
+                                &unit_nml_grads[which_sample],
+                                which_vtx,
+                                dw_neigh_normalized,
+                                ddw_neigh_normalized[tri_vtx],
+                                dwdq_neigh_normalized[tri_vtx],
+                                weight_sum_inv,
+                                closest_d,
+                            )
+                        })
+                        .sum::<Matrix3<T>>()
+                        .transpose();
+
+                    let unit_nml_grad = surface_topo[sample.index]
+                        .iter()
+                        .position(|&x| x == tri_vtx)
+                        .map(|which_vtx| unit_nml_grads[which_sample][which_vtx])
+                        .unwrap_or_else(Vector3::zero);
+
+                    let rot_jac = rodrigues_rotation_jacobian_product_at(
+                        sample_unit_nml,
+                        grad_phi,
+                        jac_grad_phi_t,
+                        unit_nml_grad,
+                        nml_dot_grad,
+                        multiplier,
+                        transpose,
+                    );
+                    Some((tri_vtx, dw_normalized_denom_term + rot_jac * w_normalized))
+                })
+        })
+        .collect::<Vec<_>>();
+    dw_normalized_entries.chain(second_term_entries.into_iter())
 }
 
 /// Jacobian of `Qs^T b` for some multiplier `b`.
 ///
 /// Returns a column-major matrix.
-pub(crate) fn rodrigues_rotation_jacobian_product_at<'a, T, K: 'a>(
-    q: Vector3<T>,
-    sample: Sample<T>,
-    kernel: K,
+pub(crate) fn rodrigues_rotation_jacobian_product_at<T>(
+    sample_unit_nml: Vector3<T>,
     grad_phi: Vector3<T>,
+    jac_grad_phi_t: Matrix3<T>,
     unit_nml_grad: Matrix3<T>,
-    dw_neigh_normalized: Vector3<T>,
-    ddw_neigh_normalized: Matrix3<T>,
-    weight_sum_inv: T,
-    closest_d: T,
     nml_dot_grad: T,
     multiplier: Vector3<T>,
     transpose: bool,
 ) -> Matrix3<T>
 where
     T: Real,
-    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
-    // Taking the transpose allows us to take apart the jacobian column by column.
-    let jac_grad_phi_t = sample_query_hessian_at(
-        q,
-        sample,
-        kernel,
-        unit_nml_grad,
-        dw_neigh_normalized,
-        ddw_neigh_normalized,
-        weight_sum_inv,
-        closest_d,
-    )
-    .transpose();
-
     // First term (-jac n x grad_phi x b)
     let d_n_cross_grad_phi = [
-        unit_nml_grad[0].cross(grad_phi) + sample.nml.cross(jac_grad_phi_t[0]),
-        unit_nml_grad[1].cross(grad_phi) + sample.nml.cross(jac_grad_phi_t[1]),
-        unit_nml_grad[2].cross(grad_phi) + sample.nml.cross(jac_grad_phi_t[2]),
+        unit_nml_grad[0].cross(grad_phi) + sample_unit_nml.cross(jac_grad_phi_t[0]),
+        unit_nml_grad[1].cross(grad_phi) + sample_unit_nml.cross(jac_grad_phi_t[1]),
+        unit_nml_grad[2].cross(grad_phi) + sample_unit_nml.cross(jac_grad_phi_t[2]),
     ];
 
     let first = [
@@ -1401,7 +1643,7 @@ where
     ]
     .into_tensor();
 
-    let n_cross_grad_phi = sample.nml.cross(grad_phi);
+    let n_cross_grad_phi = sample_unit_nml.cross(grad_phi);
 
     let n_cross_grad_phi_cross_b = n_cross_grad_phi.cross(multiplier);
 
@@ -1426,7 +1668,7 @@ where
     }; // heuristic
 
     let jac_scalar_factor =
-        (unit_nml_grad * grad_phi + jac_grad_phi_t * sample.nml) * (-factor * factor);
+        (unit_nml_grad * grad_phi + jac_grad_phi_t * sample_unit_nml) * (-factor * factor);
 
     // Note that this is a transpose of what is written in the notes since we are returning a column-major matrix here.
     let third = jac_scalar_factor * n_cross_grad_phi.cross(n_cross_grad_phi_cross_b).transpose();
@@ -1438,13 +1680,17 @@ where
 ///
 /// This is `jac_q grad_x Psi` where the Jacobian is with respect to vertices of triangle
 /// corresponding to sample s.
-pub(crate) fn sample_query_hessian_at<'a, T, K: 'a>(
+/// Note that this function computes only a component of the whole derivative.
+pub(crate) fn sample_query_hessian_component_at<'a, T, K: 'a>(
     q: Vector3<T>,
     sample: Sample<T>,
+    sample_unit_nml: Vector3<T>,
     kernel: K,
-    unit_nml_grad: Matrix3<T>,
+    unit_nml_grads: &[Matrix3<T>],
+    which_vtx: Option<usize>,
     dw_neigh_normalized: Vector3<T>,
-    ddw_neigh_normalized: Matrix3<T>,
+    ddwdq_neigh_normalized: Matrix3<T>,
+    dwdq_neigh_normalized: Vector3<T>,
     weight_sum_inv: T,
     closest_d: T,
 ) -> Matrix3<T>
@@ -1452,30 +1698,38 @@ where
     T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
-    let unit_nml = sample.nml * (T::one() / sample.nml.norm());
-
     let w = kernel.with_closest_dist(closest_d).eval(q, sample.pos);
     let dw = kernel.with_closest_dist(closest_d).grad(q, sample.pos);
     let ddw = kernel.with_closest_dist(closest_d).hess(q, sample.pos);
-    let psi = T::from(sample.value).unwrap() + sample.nml.dot(q - sample.pos);
+    let psi = T::from(sample.value).unwrap() + sample_unit_nml.dot(q - sample.pos);
     let dw_normalized = (dw - dw_neigh_normalized * w) * weight_sum_inv;
-    let grad_psi = dw_normalized * psi + (unit_nml * w) * weight_sum_inv;
+    let grad_psi = dw_normalized * psi + (sample_unit_nml * w) * weight_sum_inv;
 
     let third = T::from(1.0 / 3.0).unwrap();
 
     // 1
-    grad_psi * (kernel.with_closest_dist(closest_d).grad(q, sample.pos).transpose() * (-weight_sum_inv * third))
+    let mut res = -grad_psi * (dwdq_neigh_normalized.transpose()); // Note a 1/3 factor is already in dwdq_neigh_normalized
+                                                                   // last part of 3
+    res += (dw_neigh_normalized * (dwdq_neigh_normalized.transpose()) - ddwdq_neigh_normalized)
+        * w
+        * psi
+        * weight_sum_inv;
+    if let Some(vtx_idx) = which_vtx {
         // 2
-        + dw_normalized * (unit_nml_grad * (q - sample.pos) - unit_nml).transpose()
-        + (
-        // 3
-        (-ddw + dw_neigh_normalized * dw.transpose() + (dw_neigh_normalized * (dw.transpose() * weight_sum_inv) - ddw_neigh_normalized) * w) * psi * third
-        // 4
-        -unit_nml * (dw.transpose() * third) + unit_nml_grad.transpose() * w
-    ) * weight_sum_inv
+        res += dw_normalized
+            * (unit_nml_grads[vtx_idx] * (q - sample.pos) - sample_unit_nml * third).transpose();
+        res += (
+            // first part of 3
+            (-ddw + dw_neigh_normalized * dw.transpose()) * psi * third
+            // 4
+            - sample_unit_nml * (dw.transpose() * third)
+                + unit_nml_grads[vtx_idx].transpose() * w
+        ) * weight_sum_inv
+    }
+    res
 }
 
-/// Helper function to print the dense Hessian given by a vector of vectors.
+/// Helper function to print the dense Hessian given by a vector of vectors in column-major format.
 /// This can also be used elsewhere for testing that involves hessians (e.g. background field).
 #[cfg(test)]
 #[allow(dead_code)]
@@ -1497,6 +1751,7 @@ pub(crate) fn print_full_hessian(hess: &[Vec<f64>], size: usize, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::jacobian::consolidate_contact_jacobian;
     use crate::kernel;
     use autodiff::F1;
     use geo::mesh::builder::*;
@@ -1878,6 +2133,171 @@ mod tests {
         Ok(())
     }
 
+    /// High level test of the contact Hessian as the derivative of the contact Jacobian.
+    fn full_contact_hessian_tester(
+        query_points: &[[f64; 3]],
+        surf_mesh: &TriMesh<f64>,
+        kernel: KernelType,
+        max_step: f64,
+        bg_field_params: BackgroundFieldParams,
+    ) -> Result<(), Error> {
+        let params = crate::Params {
+            kernel,
+            background_field: bg_field_params,
+            sample_type: SampleType::Face,
+            max_step,
+            base_radius: None,
+        };
+
+        let surf = crate::mls_from_trimesh::<F1>(&surf_mesh, params)
+            .expect("Failed to construct an implicit surface.");
+
+        let mut ad_tri_verts: Vec<_> = surf_mesh
+            .vertex_position_iter()
+            .map(|&x| Vector3::new(x).mapd(|x| F1::cst(x)).into_data())
+            .collect();
+        let num_verts = ad_tri_verts.len();
+        let ad_query_points: Vec<_> = query_points
+            .iter()
+            .map(|&a| Vector3::new(a).mapd(|x| F1::cst(x)).into_data())
+            .collect();
+        let num_query_points = query_points.len();
+
+        let mut query_surf = surf.query_topo(&ad_query_points);
+        let num_neighs = query_surf.num_neighborhoods();
+        let mut multipliers = vec![[F1::cst(0.0); 3]; num_neighs];
+
+        let num_jac_entries = query_surf.num_contact_jacobian_entries();
+
+        // Compute the complete Hessian product.
+        let mut jac_values = vec![F1::cst(0.0); num_jac_entries];
+        let mut jac_values2 = vec![F1::cst(0.0); num_jac_entries];
+
+        let mut hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
+        let mut ad_hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
+
+        let query_neighborhood_sizes = query_surf.neighborhood_sizes();
+        // dbg!(&query_neighborhood_sizes);
+
+        // We use the multipliers to isolate the hessian for each query point.
+        for (mult_idx, q_idx) in (0..num_query_points)
+            .filter(|&q_idx| query_neighborhood_sizes[q_idx] != 0)
+            .enumerate()
+        {
+            for k in 0..3 {
+                multipliers[mult_idx][k] = F1::cst(1.0);
+
+                let hess_entries: Vec<(usize, usize, [[F1; 3]; 3])> = query_surf
+                    .contact_hessian_product_indexed_blocks_iter(&ad_query_points, &multipliers)
+                    .expect("Failed to compute hessian product")
+                    .collect();
+
+                let mut success = true;
+
+                // Test the accuracy of each component of the hessian against an autodiff version of the
+                // second derivative.
+                for vtx in 0..num_verts {
+                    for i in 0..3 {
+                        // Set a variable to take the derivative with respect to, using autodiff.
+                        ad_tri_verts[vtx][i] = F1::var(ad_tri_verts[vtx][i]);
+                        query_surf.update_surface(ad_tri_verts.iter().cloned());
+
+                        query_surf.contact_jacobian_values(&ad_query_points, &mut jac_values);
+                        let (jac_rows, jac_cols): (Vec<_>, Vec<_>) =
+                            query_surf.contact_jacobian_indices_iter().unzip();
+                        assert_eq!(jac_rows.len(), jac_values.len());
+
+                        let jac2: Vec<_> = query_surf
+                            .contact_jacobian_matrices_par_iter(&ad_query_points)
+                            .collect();
+                        // let values: Vec<_> = jac2.iter().flat_map(|(_,_,b)| b.iter().flat_map(|r| r.iter().cloned())).collect();
+                        // eprintln!("parvals: {values:?}");
+                        // eprintln!("vals   : {:?}", &jac_values);
+
+                        let mut djac_q2 = vec![0.0; num_verts * 3];
+                        for (row, col, block) in jac2.iter() {
+                            if *row == q_idx {
+                                for ii in 0..3 {
+                                    djac_q2[3 * *col + ii] += block[k][ii].deriv();
+                                }
+                            }
+                        }
+
+                        // Get the Jacobian for the specific query point we are interested in.
+                        let mut djac_q = vec![0.0; num_verts * 3];
+                        for (&r, &c, &jac) in
+                            zip!(jac_rows.iter(), jac_cols.iter(), jac_values.iter())
+                        {
+                            if r == 3 * q_idx + k {
+                                djac_q[c] += jac.deriv();
+                            }
+                        }
+
+                        assert!(djac_q2.iter().zip(djac_q.iter()).all(|(a, b)| a == b));
+
+                        // Consolidate the Hessian to the particular vertex and component we are
+                        // interested in.
+                        let mut hess_vtx = vec![F1::cst(0.0); num_verts * 3];
+                        for (r, c, h) in hess_entries.iter() {
+                            if *c == vtx {
+                                for j in 0..3 {
+                                    hess_vtx[3 * *r + j] += h[i][j];
+                                }
+                            }
+                        }
+
+                        for (linear_j, (jac, hes)) in djac_q.iter().zip(hess_vtx).enumerate() {
+                            // Check the derivative of the autodiff with our previously computed Jacobian.
+                            if !relative_eq!(hes.value(), jac, max_relative = 1e-6, epsilon = 1e-12)
+                            {
+                                println!("{:.5} vs {:.5}", hes.value(), jac);
+                                success = false;
+                            }
+                            ad_hess_full[3 * vtx + i][linear_j] += jac;
+                            hess_full[3 * vtx + i][linear_j] += hes.value();
+                        }
+
+                        // Reset the variable back to being a constant.
+                        ad_tri_verts[vtx][i] = F1::cst(ad_tri_verts[vtx][i]);
+                    }
+                }
+                if !success {
+                    print_full_hessian(&hess_full, 3 * num_verts, "Full Hessian");
+                    print_full_hessian(&ad_hess_full, 3 * num_verts, "Full Autodiff Hessian");
+                }
+                assert!(success, "Hessian does not match its AutoDiff counterpart");
+                multipliers[mult_idx][k] = F1::cst(0.0); // reset multiplier
+            }
+        }
+        Ok(())
+    }
+
+    /// Test the highest level surface Hessian functions with a tetrahedron.
+    #[test]
+    fn one_tet_full_contact_hessian_test() -> Result<(), Error> {
+        let qs: Vec<_> = (0..4).map(|i| [0.0, -0.5 + 0.25 * i as f64, 0.0]).collect();
+
+        let trimesh = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
+
+        for i in 1..10 {
+            let radius_multiplier = 1.0 + 0.5 * (i as f64);
+            let bg_params = BackgroundFieldParams {
+                field_type: BackgroundFieldType::Zero,
+                weighted: false,
+            };
+            let run = |kernel| full_contact_hessian_tester(&qs, &trimesh, kernel, 0.0, bg_params);
+
+            run(KernelType::Interpolating { radius_multiplier })?;
+            run(KernelType::Approximate {
+                tolerance: 0.00001,
+                radius_multiplier,
+            })?;
+            run(KernelType::Cubic { radius_multiplier })?;
+            run(KernelType::Global { tolerance: 0.00001 })?;
+        }
+        Ok(())
+    }
+
     fn one_tet_face_hessian<P: FnMut() -> Vector3<f64>>(
         radius: f64,
         bg_field_params: BackgroundFieldParams,
@@ -2173,6 +2593,230 @@ mod tests {
             run_test(BackgroundFieldType::FromInput, true);
             run_test(BackgroundFieldType::DistanceBased, false);
             run_test(BackgroundFieldType::DistanceBased, true);
+        }
+    }
+
+    fn one_tet_contact_hessian<P: FnMut() -> Vector3<f64>>(
+        radius: f64,
+        bg_field_params: BackgroundFieldParams,
+        perturb: &mut P,
+    ) {
+        let tet = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
+        let qs: Vec<_> = (0..4)
+            .map(|i| Vector3::new([0.1, -0.5 + 0.25 * i as f64, 0.0]))
+            .collect();
+
+        for q in qs.into_iter() {
+            contact_hessian_at_tester(q, &tet, radius, 0.0, bg_field_params);
+            contact_hessian_at_tester(q + perturb(), &tet, radius, 0.0, bg_field_params);
+            contact_hessian_at_tester(q + perturb(), &tet, radius, 1.0, bg_field_params);
+        }
+    }
+
+    fn one_triangle_contact_hessian<P: FnMut() -> Vector3<f64>>(
+        radius: f64,
+        bg_field_params: BackgroundFieldParams,
+        perturb: &mut P,
+    ) {
+        let tri_verts: Vec<_> = make_test_triangle(0.0, perturb)
+            .into_iter()
+            .map(|x| x.into_data())
+            .collect();
+        let tri = TriMesh::new(tri_verts, vec![[0, 1, 2]]);
+        let qs = vec![
+            Vector3::new([0.0, 0.2, 0.0]),
+            Vector3::new([0.0, 0.0001, 0.0]),
+            Vector3::new([0.0, -0.4, 0.0]),
+        ];
+
+        for q in qs.into_iter() {
+            contact_hessian_at_tester(q, &tri, radius, 0.0, bg_field_params);
+            contact_hessian_at_tester(q + perturb(), &tri, radius, 0.0, bg_field_params);
+            contact_hessian_at_tester(q + perturb(), &tri, radius, 1.0, bg_field_params);
+        }
+    }
+
+    /// Test the `contact_hessian_at` function. This verifies that it indeed produces the derivative
+    /// of the `contact_jacobian_at` function.
+    fn contact_hessian_at_tester(
+        q: Vector3<f64>,
+        mesh: &TriMesh<f64>,
+        radius: f64,
+        max_step: f64,
+        bg_field_params: BackgroundFieldParams,
+    ) {
+        let q = q.mapd(|x| F1::cst(x)); // convert to autodiff
+        let mut tri_verts: Vec<_> = mesh
+            .vertex_position_iter()
+            .map(|&x| Vector3::new(x).mapd(|x| F1::cst(x)).into())
+            .collect();
+        let tri_faces = mesh.indices.as_slice();
+        let num_verts = tri_verts.len();
+
+        let dual_topo = ImplicitSurfaceBuilder::compute_dual_topo(num_verts, &tri_faces);
+
+        let samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
+
+        let neighbors: Vec<_> = samples
+            .iter()
+            .filter(|s| (q - s.pos).norm() < F1::cst(radius + max_step))
+            .map(|sample| sample.index)
+            .collect();
+
+        if neighbors.is_empty() {
+            return;
+        }
+
+        // Radius is such that samples are captured by the query point.
+        let kernel = kernel::LocalApproximate::new(radius, 0.00001);
+
+        let view = SamplesView::new(neighbors.as_ref(), &samples);
+
+        let mut success = true;
+
+        for k in 0..1 {
+            let mut multiplier: Vector3<F1> = Vector3::zero();
+            multiplier[k] = F1::cst(1.0);
+
+            // Compute the complete Hessian.
+            let hess: Vec<(usize, usize, [[F1; 3]; 3])> = contact_hessian_at(
+                q,
+                view,
+                kernel,
+                &tri_verts,
+                tri_faces,
+                dual_topo.as_slice(),
+                bg_field_params,
+                multiplier,
+            )
+            .collect();
+            // dbg!(&tri_faces);
+
+            let mut hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
+
+            for &(r, c, h) in hess.iter() {
+                for i in 0..3 {
+                    for j in 0..3 {
+                        hess_full[3 * c + i][3 * r + j] += h[i][j].value();
+                    }
+                }
+            }
+
+            let mut ad_hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
+
+            // Test the accuracy of each component of the hessian against an autodiff version of the
+            // second derivative.
+            for vtx in 0..num_verts {
+                for i in 0..3 {
+                    // eprintln!("vtx: {vtx}; i: {i}");
+                    // Set a variable to take the derivative with respect to, using autodiff.
+                    tri_verts[vtx][i] = F1::var(tri_verts[vtx][i]);
+
+                    // We need to update samples to make sure the normals and centroids are recomputed
+                    // using the correct wrt autodiff variable.
+                    let samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
+                    let view = SamplesView::new(neighbors.as_ref(), &samples);
+
+                    // Debug code
+                    // End of debug code
+
+                    // Compute the Jacobian. After calling this function, calling
+                    // `.deriv()` on the output will give us the second derivative.
+                    let sample_jac: Vec<_> =
+                        jacobian::contact_jacobian_at(q, view, kernel, bg_field_params)
+                            .0
+                            .collect();
+
+                    let vert_jac =
+                        consolidate_contact_jacobian(view, &sample_jac, &tri_faces, num_verts);
+
+                    // Consolidate the hessian to this particular vertex and component.
+                    let mut hess_vtx_i = vec![Vector3::zero(); num_verts];
+                    for &(r, c, h) in hess.iter() {
+                        if c == vtx {
+                            hess_vtx_i[r] += Matrix3::from(h)[i];
+                        }
+                    }
+
+                    for (vtx_idx, (jac, hes)) in vert_jac.iter().zip(hess_vtx_i).enumerate() {
+                        for j in 0..3 {
+                            // Check the derivative of the autodiff with our previously computed Jacobian.
+                            if !relative_eq!(
+                                hes[j].value(),
+                                jac[k][j].deriv(),
+                                max_relative = 1e-6,
+                                epsilon = 1e-12
+                            ) {
+                                println!(
+                                    "col_vtx = {}; j = {}; {:14.10} vs {:14.10}",
+                                    vtx_idx,
+                                    j,
+                                    hes[j].value(),
+                                    jac[k][j].deriv()
+                                );
+                                success = false;
+                            }
+                            ad_hess_full[3 * vtx + i][3 * vtx_idx + j] += jac[k][j].deriv();
+                        }
+                    }
+
+                    // Reset the variable back to being a constant.
+                    tri_verts[vtx][i] = F1::cst(tri_verts[vtx][i]);
+                }
+            }
+
+            if !success {
+                print_full_hessian(&hess_full, 3 * num_verts, "Block Lower Triangular Hessian");
+                print_full_hessian(&ad_hess_full, 3 * num_verts, "Full Autodiff Hessian");
+            }
+        }
+
+        assert!(success, "Hessian does not match its AutoDiff counterpart");
+    }
+
+    #[test]
+    fn one_tet_contact_hessian_test() {
+        let mut no_perturb = || Vector3::zero();
+        let mut perturb = make_perturb_fn();
+        for i in 1..25 {
+            let radius = 0.3 * (i as f64);
+            let mut run_test = |field_type, weighted| {
+                let bg_params = BackgroundFieldParams {
+                    field_type,
+                    weighted,
+                };
+                // Unperturbed tet
+                one_tet_contact_hessian(radius, bg_params, &mut no_perturb);
+                // Perturbed tet
+                one_tet_contact_hessian(radius, bg_params, &mut perturb);
+            };
+
+            run_test(BackgroundFieldType::Zero, false);
+            run_test(BackgroundFieldType::Zero, true);
+        }
+    }
+
+    #[test]
+    fn one_triangle_contact_hessian_test() {
+        let mut no_perturb = || Vector3::zero();
+        let mut perturb = make_perturb_fn();
+        for i in 1..25 {
+            let radius = 0.2 * (i as f64);
+
+            let mut run_test = |field_type, weighted| {
+                let bg_params = BackgroundFieldParams {
+                    field_type,
+                    weighted,
+                };
+                // Unperturbed triangle. This test is easier to debug.
+                one_triangle_contact_hessian(radius, bg_params, &mut no_perturb);
+                // Test with a perturbed triangle. This test verifies that the derivative is robust
+                // against perturbation.
+                one_triangle_contact_hessian(radius, bg_params, &mut perturb);
+            };
+
+            run_test(BackgroundFieldType::Zero, false);
+            run_test(BackgroundFieldType::Zero, true);
         }
     }
 

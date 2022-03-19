@@ -308,9 +308,7 @@ impl<T: Real> QueryTopo<T> {
      */
 
     /// This function returns precomputed neighbors.
-    pub fn trivial_neighborhood_par<'a>(
-        &'a self,
-    ) -> impl IndexedParallelIterator<Item = &'a [usize]> + 'a {
+    pub fn trivial_neighborhood_par(&self) -> impl IndexedParallelIterator<Item = &[usize]> + '_ {
         match self {
             QueryTopo::Local { neighborhood, .. } => {
                 Either::Left(neighborhood.trivial_set().par_iter().map(|x| x.as_slice()))
@@ -328,7 +326,7 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// This function returns precomputed closest samples.
-    pub fn closest_samples_par<'a>(&'a self) -> impl IndexedParallelIterator<Item = usize> + 'a {
+    pub fn closest_samples_par(&self) -> impl IndexedParallelIterator<Item = usize> + '_ {
         match self {
             QueryTopo::Local { neighborhood, .. } => {
                 Either::Left(neighborhood.closest_set().par_iter().cloned())
@@ -340,9 +338,7 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// This function returns precomputed neighbors.
-    pub fn extended_neighborhood_par<'a>(
-        &'a self,
-    ) -> impl IndexedParallelIterator<Item = &'a [usize]> + 'a {
+    pub fn extended_neighborhood_par(&self) -> impl IndexedParallelIterator<Item = &[usize]> + '_ {
         match self {
             QueryTopo::Local { neighborhood, .. } => {
                 Either::Left(neighborhood.extended_set().par_iter().map(|x| x.as_slice()))
@@ -389,10 +385,10 @@ impl<T: Real> QueryTopo<T> {
     ///
     /// This function only works with surfaces with local support, and will panic if called on
     /// `QueryTopo::Global` types.
-    pub fn trivial_neighborhood_par_chunks<'a>(
-        &'a self,
+    pub fn trivial_neighborhood_par_chunks(
+        &self,
         chunk_size: usize,
-    ) -> impl IndexedParallelIterator<Item = &'a [Vec<usize>]> + 'a {
+    ) -> impl IndexedParallelIterator<Item = &[Vec<usize>]> + '_ {
         match self {
             QueryTopo::Local { neighborhood, .. } => {
                 neighborhood.trivial_set().par_chunks(chunk_size)
@@ -402,10 +398,10 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// This function returns precomputed closest samples.
-    pub fn closest_samples_par_chunks<'a>(
-        &'a self,
+    pub fn closest_samples_par_chunks(
+        &self,
         chunk_size: usize,
-    ) -> impl IndexedParallelIterator<Item = &'a [usize]> + 'a {
+    ) -> impl IndexedParallelIterator<Item = &[usize]> + '_ {
         match self {
             QueryTopo::Local { neighborhood, .. } => {
                 Either::Left(neighborhood.closest_set().par_chunks(chunk_size))
@@ -417,10 +413,10 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// This function returns precomputed neighbors in chunks.
-    pub fn extended_neighborhood_par_chunks<'a>(
-        &'a self,
+    pub fn extended_neighborhood_par_chunks(
+        &self,
         chunk_size: usize,
-    ) -> impl IndexedParallelIterator<Item = &'a [Vec<usize>]> + 'a {
+    ) -> impl IndexedParallelIterator<Item = &[Vec<usize>]> + '_ {
         match self {
             QueryTopo::Local { neighborhood, .. } => {
                 Either::Left(neighborhood.extended_set().par_chunks(chunk_size))
@@ -432,9 +428,7 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// This function returns precomputed neighbors.
-    pub fn trivial_neighborhood_seq<'a>(
-        &'a self,
-    ) -> Box<dyn ExactSizeIterator<Item = &'a [usize]> + 'a> {
+    pub fn trivial_neighborhood_seq(&self) -> Box<dyn ExactSizeIterator<Item = &[usize]> + '_> {
         match self {
             QueryTopo::Local { neighborhood, .. } => {
                 Box::new(neighborhood.trivial_set().iter().map(|x| x.as_slice()))
@@ -448,7 +442,7 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// This function returns precomputed closest samples.
-    pub fn closest_samples_seq<'a>(&'a self) -> Box<dyn Iterator<Item = usize> + 'a> {
+    pub fn closest_samples_seq(&self) -> Box<dyn Iterator<Item = usize> + '_> {
         match self {
             QueryTopo::Local { neighborhood, .. } => {
                 Box::new(neighborhood.closest_set().iter().cloned())
@@ -460,7 +454,7 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// This function returns precomputed neighbors.
-    pub fn extended_neighborhood_seq<'a>(&'a self) -> Box<dyn Iterator<Item = &'a [usize]> + 'a> {
+    pub fn extended_neighborhood_seq(&self) -> Box<dyn Iterator<Item = &[usize]> + '_> {
         match self {
             QueryTopo::Local { neighborhood, .. } => {
                 Box::new(neighborhood.extended_set().iter().map(|x| x.as_slice()))

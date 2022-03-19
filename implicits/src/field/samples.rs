@@ -183,7 +183,7 @@ impl<T: Real> Samples<T> {
         } = self;
 
         let new_iter = triangles.iter().map(|tri_indices| {
-            let tri = Triangle::from_indexed_slice(tri_indices, &vertices);
+            let tri = Triangle::from_indexed_slice(tri_indices, vertices);
             let v = Vector3::new(tri[1].into()) - Vector3::new(tri[0].into()); // tangent direction
             (tri.centroid(), tri.area_normal(), v / v.norm())
         });
@@ -194,7 +194,7 @@ impl<T: Real> Samples<T> {
             .zip(velocities.iter_mut()))
         .zip(new_iter)
         {
-            *pos = From::<[T; 3]>::from(new_pos);
+            *pos = new_pos;
             *nml = new_nml;
             *vel = new_vel;
         }
@@ -211,7 +211,7 @@ impl<T: Real> Samples<T> {
     }
 
     #[inline]
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item = Sample<T>> + Clone + 'a {
+    pub fn iter(&self) -> impl Iterator<Item = Sample<T>> + Clone + '_ {
         let Samples {
             ref positions,
             ref normals,
@@ -261,7 +261,7 @@ impl<T: Real> Samples<T> {
 
 impl<T: Scalar + Send + Sync> Samples<T> {
     #[inline]
-    pub fn par_iter<'a>(&'a self) -> impl IndexedParallelIterator<Item = Sample<T>> + Clone + 'a {
+    pub fn par_iter(&self) -> impl IndexedParallelIterator<Item = Sample<T>> + Clone + '_ {
         let Samples {
             ref positions,
             ref normals,
@@ -361,10 +361,10 @@ impl<'i, 'd: 'i, T: Scalar> SamplesView<'i, 'd, T> {
     #[inline]
     pub fn at_index(&self, idx: usize) -> Sample<T> {
         let SamplesView {
-            ref positions,
-            ref normals,
-            ref velocities,
-            ref values,
+            positions,
+            normals,
+            velocities,
+            values,
             ..
         } = self;
         Sample {

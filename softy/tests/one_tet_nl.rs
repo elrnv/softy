@@ -98,7 +98,7 @@ fn volume_penalty() -> Result<(), Error> {
     let mut solver = SolverBuilder::new(static_nl_params())
         .set_mesh(mesh)
         .set_material(material)
-        .set_volume_penalty_params(vec![1.0], vec![0.0001], vec![true])
+        .set_volume_penalty_params(vec![1.0], vec![0.0001], vec![false])
         .build::<f64>()?;
     solver.step()?;
     Ok(())
@@ -121,6 +121,7 @@ fn volume_penalty_triangles() -> Result<(), Error> {
     let mut solver = SolverBuilder::new(static_nl_params())
         .set_mesh(mesh)
         .set_material(material)
+        .set_volume_penalty_params(vec![1.0], vec![0.0001], vec![false])
         .build::<f64>()?;
     solver.step()?;
     Ok(())

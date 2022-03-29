@@ -2,6 +2,7 @@ use geo::mesh::VertexPositions;
 pub use softy::test_utils::*;
 
 /// Utility function to compare positions of two meshes.
+#[allow(dead_code)]
 pub fn compare_meshes<M1, M2>(solution: &M1, expected: &M2, tol: f64)
 where
     M1: VertexPositions<Element = [f64; 3]>,

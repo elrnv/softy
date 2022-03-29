@@ -2318,7 +2318,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         for (solid_idx, vc) in self.volume_constraints.iter() {
             let n = vc.borrow().constraint_size();
             vc.borrow_mut().constraint(
-                q_cur_solid.at(*solid_idx).into_storage(),
                 q_next_solid.at(*solid_idx).into_storage(),
                 &mut g[count..count + n],
             );

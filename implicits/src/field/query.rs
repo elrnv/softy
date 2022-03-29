@@ -224,7 +224,7 @@ impl<T: Real> QueryTopo<T> {
 
     /// Return the indices of all neighborhood vertices.
     pub fn neighborhood_vertex_indices(&self) -> Vec<usize> {
-        use hashbrown::HashSet;
+        use ahash::AHashSet as HashSet;
         let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {

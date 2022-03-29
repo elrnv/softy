@@ -125,9 +125,9 @@ pub fn make_one_deformed_tri_mesh() -> TriMesh {
 /// Two triangles forming a quad unconstrained undeformed.
 pub fn make_two_tri_mesh() -> TriMesh {
     let mut verts = vec![
-        [1.0, 0.0, 0.25], // slight bend
+        [1.0, 0.0, 0.0],
         [0.0, 1.0, 0.0],
-        [0.0; 3],
+        [0.0, 0.0, 0.25], // slight bend
         [1.0, 1.0, 0.0],
     ];
 
@@ -151,7 +151,7 @@ pub fn make_two_tri_mesh() -> TriMesh {
     .unwrap();
 
     // Reference configuration is flat.
-    verts[0][2] = 0.0;
+    verts[2][2] = 0.0;
 
     let verts_f32: Vec<_> = verts
         .iter()

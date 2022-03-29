@@ -1,4 +1,5 @@
 pub const SOURCE_INDEX_ATTRIB: &str = "src_idx";
+pub const STATE_INDEX_ATTRIB: &str = "state_idx";
 pub const FIXED_ATTRIB: &str = "fixed";
 pub const MATERIAL_ID_ATTRIB: &str = "mtl_id";
 pub const OBJECT_ID_ATTRIB: &str = "obj_id";
@@ -49,6 +50,7 @@ use optsolver_defines::*;
 
 pub(crate) type StrainEnergyType = f64;
 pub type SourceIndexType = usize;
+pub type StateIndexType = i32;
 pub type OriginalVertexIndexType = usize;
 pub type FixedIntType = i8;
 pub type MaterialIdType = i32;

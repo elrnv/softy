@@ -15,7 +15,7 @@ image = "0.23"
 unroll = "0.1"
 num-traits = "0.2"
 rayon = "1.5"
-autodiff = { version = "0.3", optional = true }
+autodiff = { git = "https://github.com/elrnv/autodiff.git", optional = true }
 packed_simd = { version = "0.3", optional = true }
 approx = { version = "0.4", optional = true }
 tensr = { git = "https://github.com/elrnv/tensr.git", features = ["autodiff"] }

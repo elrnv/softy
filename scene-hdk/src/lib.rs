@@ -102,6 +102,8 @@ mod ffi {
         // Constraints
         pub volume_constraint: bool,
         pub frictional_contacts: Vec<FrictionalContactParams>,
+        pub zone_pressurizations: Vec<f32>,
+        pub compression_coefficients: Vec<f32>,
 
         // TODO: move these into FrictionalContactParams.
         pub friction_tolerance: f32, // epsilon

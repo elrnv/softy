@@ -52,7 +52,7 @@ fn simple_static_undeformed() {
     init_logger();
     let mut mesh = make_two_tri_mesh();
 
-    mesh.vertex_positions_mut()[0][2] = 0.0; // Unbend
+    mesh.vertex_positions_mut()[2][2] = 0.0; // Unbend
 
     let mut solver = SolverBuilder::new(SimParams {
         ..STATIC_OPT_PARAMS

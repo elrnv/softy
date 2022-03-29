@@ -1,6 +1,8 @@
 pub mod penalty_point_contact;
 pub mod point_contact;
+#[cfg(feature = "optsolver")]
 pub mod volume;
+pub mod volume_change_penalty;
 
 #[cfg(feature = "optsolver")]
 use crate::attrib_defines::*;
@@ -15,7 +17,9 @@ use crate::Real;
 //pub use self::linearized_point_contact::*;
 pub use self::penalty_point_contact::*;
 pub use self::point_contact::*;
+#[cfg(feature = "optsolver")]
 pub use self::volume::*;
+pub use self::volume_change_penalty::*;
 use tensr::*;
 
 /// An struct describing a fixed, rigid or deformable contact surface.

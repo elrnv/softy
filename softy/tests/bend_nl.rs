@@ -48,14 +48,12 @@ fn equilibrium() {
 }
 
 #[test]
-fn simple_quasi_static_undeformed() -> Result<(), Error> {
+fn simple_quasi_static_two_tri() -> Result<(), Error> {
     init_logger();
-    let mut mesh = make_two_tri_mesh();
-
-    mesh.vertex_positions_mut()[0][2] = 0.0; // Unbend
+    let mesh = make_two_tri_mesh();
 
     let mut solver = SolverBuilder::new(SimParams {
-        velocity_clear_frequency: 100.0,
+        velocity_clear_frequency: 2.0,
         time_step: Some(0.01),
         ..static_nl_params()
     })
@@ -69,15 +67,16 @@ fn simple_quasi_static_undeformed() -> Result<(), Error> {
         solver.step()?;
     }
 
+    geo::io::save_mesh(&solver.mesh(), "./out/two_tri.vtk").unwrap();
+
     let verts = solver.vertex_positions();
 
     // Check that all the vertices are in x-y plane
     for i in 0..3 {
-        assert_relative_eq!(verts[i][2], 0.0, max_relative = 1e-5, epsilon = 1e-5);
+        assert_relative_eq!(verts[i][2], 0.0, max_relative = 1e-2, epsilon = 1e-3);
     }
 
-    // Check that that bottom verts are slightly below the xz plane (due to stretching).
-    assert!(verts[0][1] < 0.0);
+    // Check that that the unfixed bottom vert is slightly below the xz plane (due to stretching).
     assert!(verts[2][1] < 0.0);
     Ok(())
 }
@@ -98,7 +97,7 @@ fn quasi_static_deformed() -> Result<(), Error> {
     .expect("Failed to build a solver for a three triangle test.");
 
     // Simulate for 1 second.
-    for _ in 0..40 {
+    for _ in 0..10 {
         solver.step()?;
     }
 

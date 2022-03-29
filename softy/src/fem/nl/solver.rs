@@ -3,6 +3,7 @@ use std::cell::RefCell;
 
 use geo::attrib::Attrib;
 use geo::mesh::{topology::*, VertexPositions};
+use geo::Index;
 use tensr::*;
 
 use super::mcp::*;
@@ -28,6 +29,9 @@ pub struct SolverBuilder {
     mesh: Mesh,
     materials: Vec<Material>,
     frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
+    zone_pressurizations: Vec<f32>,
+    compression_coefficients: Vec<f32>,
+    hessian_approximation: Vec<bool>,
 }
 
 ///// The index of the object subject to the appropriate contact constraint.
@@ -66,18 +70,27 @@ impl SolverBuilder {
             mesh: Mesh::default(),
             materials: Vec::new(),
             frictional_contacts: Vec::new(),
+            zone_pressurizations: Vec::new(),
+            compression_coefficients: Vec::new(),
+            hessian_approximation: Vec::new(),
         }
     }
 
     /// Set the simulation mesh representing all objects in the scene.
-    pub fn set_mesh(&mut self, mesh: Mesh) -> &mut Self {
-        self.mesh = mesh;
+    pub fn set_mesh(&mut self, mesh: impl Into<Mesh>) -> &mut Self {
+        self.mesh = mesh.into();
         self
     }
 
-    /// Set the set materials used by the elements in this solver.
-    pub fn set_materials(&mut self, materials: Vec<Material>) -> &mut Self {
-        self.materials = materials;
+    /// Set the materials used by the elements in this solver.
+    pub fn set_materials(&mut self, materials: impl Into<Vec<Material>>) -> &mut Self {
+        self.materials = materials.into();
+        self
+    }
+
+    /// Set a single material used by the elements in this solver.
+    pub fn set_material(&mut self, material: impl Into<Material>) -> &mut Self {
+        self.materials = vec![material.into()];
         self
     }
 
@@ -105,15 +118,37 @@ impl SolverBuilder {
         self
     }
 
+    /// Sets parameters that control how each zone resists volume change.
+    pub fn set_volume_penalty_params(
+        &mut self,
+        zone_pressurizations: impl Into<Vec<f32>>,
+        compression_coefficients: impl Into<Vec<f32>>,
+        hessian_approximation: impl Into<Vec<bool>>,
+    ) -> &mut Self {
+        self.zone_pressurizations = zone_pressurizations.into();
+        self.compression_coefficients = compression_coefficients.into();
+        self.hessian_approximation = hessian_approximation.into();
+        self
+    }
+
     /// Helper function to initialize volume constraints from a set of solids.
     fn build_volume_constraints(
         mesh: &Mesh,
         materials: &[Material],
-    ) -> Result<Vec<RefCell<VolumeConstraint>>, Error> {
-        Ok(VolumeConstraint::try_from_mesh(mesh, materials)?
-            .into_iter()
-            .map(RefCell::new)
-            .collect())
+        zone_pressurizations: &[f32],
+        compression_coefficients: &[f32],
+        hessian_approximation: &[bool],
+    ) -> Result<Vec<RefCell<VolumeChangePenalty>>, Error> {
+        Ok(VolumeChangePenalty::try_from_mesh(
+            mesh,
+            materials,
+            zone_pressurizations,
+            compression_coefficients,
+            hessian_approximation,
+        )?
+        .into_iter()
+        .map(RefCell::new)
+        .collect())
     }
 
     fn build_frictional_contact_constraints<T: Real>(
@@ -123,8 +158,8 @@ impl SolverBuilder {
     ) -> Result<Vec<FrictionalContactConstraint<T>>, crate::Error> {
         use super::problem::ObjectId;
         use crate::TriMesh;
+        use ahash::AHashMap as HashMap;
         use geo::algo::*;
-        use hashbrown::HashMap;
 
         let object_ids = mesh
             .attrib_as_slice::<ObjectIdType, CellIndex>(OBJECT_ID_ATTRIB)
@@ -160,6 +195,20 @@ impl SolverBuilder {
                 {
                     surface_mesh.sort_vertices_by_key(|i| orig_vertex_index[i]);
                 }
+                // Remove duplicates.
+                surface_mesh
+                    .fuse_vertices_by_attrib::<OriginalVertexIndexType, _>(
+                        ORIGINAL_VERTEX_INDEX_ATTRIB,
+                        |verts| {
+                            verts.iter().fold([0.0; 3], |mut acc, p| {
+                                acc[0] += p[0] / verts.len() as f64;
+                                acc[1] += p[1] / verts.len() as f64;
+                                acc[2] += p[2] / verts.len() as f64;
+                                acc
+                            })
+                        },
+                    )
+                    .unwrap();
                 (id_map[part_index], surface_mesh)
             })
             .collect();
@@ -170,9 +219,15 @@ impl SolverBuilder {
                 .ok_or(Error::ContactObjectIdError { id })?;
             // Detecting if the whole mesh is fixed allows us to skip generating potentially expensive Jacobians for the entire mesh.
             // TODO: Investigate if this is perhaps more efficient if done on a per vertex level.
-            let is_fixed = mesh
-                .face_iter()
-                .all(|face| face.iter().all(|&i| vertex_type[i] == VertexType::Fixed));
+            let vtx_idx = mesh
+                .attrib_as_slice::<OriginalVertexIndexType, VertexIndex>(
+                    ORIGINAL_VERTEX_INDEX_ATTRIB,
+                )
+                .unwrap();
+            let is_fixed = mesh.face_iter().all(|face| {
+                face.iter()
+                    .all(|&i| vertex_type[vtx_idx[i]] == VertexType::Fixed)
+            });
             Ok(if is_fixed {
                 ContactSurface::fixed(mesh)
             } else {
@@ -530,10 +585,17 @@ impl SolverBuilder {
             mut mesh,
             materials,
             frictional_contacts,
+            zone_pressurizations,
+            compression_coefficients,
+            hessian_approximation,
         } = self.clone();
 
         // Keep the original mesh around for easy inspection and visualization purposes.
         let orig_mesh = mesh.clone();
+
+        // Save the indices into state vertices from original mesh vertices.
+        // This is useful when writing back state vectors and for debugging purposes.
+        let mut state_vertex_indices = vec![Index::INVALID; mesh.num_vertices()];
 
         // Compute the reference position attribute temporarily.
         // This is used when building the simulation elements and constraints of the mesh.
@@ -546,6 +608,15 @@ impl SolverBuilder {
         Self::init_fixed_attribute(&mut mesh)?;
 
         let vertex_type = crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
+
+        // Fill state_vertex_indices for optimization and debugging purposes.
+        for (idx, &orig_idx) in mesh
+            .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)
+            .unwrap()
+            .enumerate()
+        {
+            state_vertex_indices[orig_idx] = idx.into();
+        }
 
         // Keeps track of vertices as they appear in state for meshes used in contact.
         Self::init_original_vertex_index_attribute(&mut mesh);
@@ -565,7 +636,13 @@ impl SolverBuilder {
 
         // Initialize constraints.
 
-        let volume_constraints = Self::build_volume_constraints(&mesh, &materials)?;
+        let volume_constraints = Self::build_volume_constraints(
+            &mesh,
+            &materials,
+            &zone_pressurizations,
+            &compression_coefficients,
+            &hessian_approximation,
+        )?;
 
         // Early exit if we detect any self contacts.
         if frictional_contacts.iter().any(|(_, (i, j))| i == j) {
@@ -674,6 +751,7 @@ impl SolverBuilder {
 
         Ok(NLProblem {
             state: RefCell::new(state),
+            state_vertex_indices,
             kappa: 1.0e2 / params.contact_tolerance as f64,
             delta: params.contact_tolerance as f64,
             epsilon: params.friction_tolerance as f64,
@@ -1003,7 +1081,7 @@ where
         // Loop to resolve all contacts.
         let mut first_iteration = true;
         loop {
-            /***     Main solve step     ***/
+            /****    Main solve step    ****/
             log::debug!("Begin main nonlinear solve.");
             let result = solver.solve_with(solution.as_mut_slice(), first_iteration);
             first_iteration = false;

@@ -240,7 +240,7 @@ fn sliding_tet_on_points() -> Result<(), Error> {
         friction_params: Some(fc_params(0.2)),
     };
 
-    let mut tetmesh = PlatonicSolidBuilder::build_tetrahedron();
+    let tetmesh = PlatonicSolidBuilder::build_tetrahedron();
     let mut surface = GridBuilder {
         rows: 10,
         cols: 10,

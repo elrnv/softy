@@ -1,7 +1,7 @@
 SoftShell((
     id: 0,
     properties: (
-        bending_stiffness: Some(1000.0),
+        bending_stiffness: Some(10.0),
         deformable: (
             elasticity: Some((
                 model: NeoHookean,

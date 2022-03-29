@@ -651,6 +651,9 @@ where
         let (j_rows, j_cols) = problem.jacobian_indices();
         assert_eq!(j_rows.len(), j_cols.len());
         let j_nnz = j_rows.len();
+        if j_nnz == 0 {
+            return;
+        }
         log::debug!("Number of Jacobian non-zeros: {}", j_nnz);
         sparse_jacobian.j_rows = j_rows;
         sparse_jacobian.j_cols = j_cols;
@@ -848,6 +851,15 @@ where
         log::debug!("{}", info);
         stats.push(info);
 
+        if sparse_jacobian.j_rows.is_empty() {
+            return SolveResult {
+                iterations: 0,
+                status: Status::NothingToSolve,
+                timings,
+                stats,
+            };
+        }
+
         // Prepare initial Jacobian used in the merit function.
         problem.jacobian_values(
             x,
@@ -870,7 +882,7 @@ where
             .borrow_mut()
             .expect("Uninitialized iterative sparse solver.");
         #[cfg(target_os = "macos")]
-        {
+        if false {
             init_sparse_solver.update_values(init_sparse_jacobian_vals);
             if let Err(err) = init_sparse_solver.refactor() {
                 return SolveResult {
@@ -1122,6 +1134,7 @@ where
 
             // Compute the residual for the full step.
             problem.residual(x, r_next.as_mut_slice());
+            // dbg!(r_next.as_slice());
 
             let (ls_count, alpha) = add_time! {
                 timings.line_search;

@@ -259,6 +259,8 @@ pub(crate) fn new_scene(mesh: Option<Mesh>, params: SimParams) -> Result<SceneCo
         }
     }
 
+    scene.set_volume_zones(params.zone_pressurizations, params.compression_coefficients);
+
     Ok(scene)
 }
 

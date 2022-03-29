@@ -1,3 +1,4 @@
+use ahash::AHashMap as HashMap;
 use unroll::unroll_for_loops;
 
 use flatk::{Get, View};
@@ -261,6 +262,9 @@ impl InteriorEdge {
     //}
 
     /// Compute the reflex of the dihedral angle made by the faces neighboring this edge.
+    //
+    // NOTE: This function does not differentiate automatically.
+    //       So a derivative test of this function will fail at zero.
     #[inline]
     pub(crate) fn edge_angle<T, F>(&self, pos: &[[T; 3]], faces: F) -> T
     where
@@ -268,8 +272,15 @@ impl InteriorEdge {
         F: Fn(usize, usize) -> usize + Clone,
     {
         let [an0, an1] = self.face_area_normals(pos, faces.clone());
-        let t = self.face0_tangent(pos, faces);
-        Float::atan2(an0.cross(an1).norm(), an0.dot(an1)) * -Float::signum(an1.dot(t))
+        // This way of computing y makes auto-differentiation work for the zero case.
+        // y = norm(an0.cross(an1)) produces a 0/0 factor when auto-differentiated, which kills
+        // the derivative. Here this factor is eliminated.
+        let e0 = self.edge_vector(pos, faces.clone());
+        let e2 = self.face1_tangent(pos, faces);
+        let y = e0.norm() * e2.dot(an0);
+        -Float::atan2(y, an0.dot(an1))
+        // Float::atan2(y, an0.dot(an1)) * -Float::signum(an1.dot(t))
+        // Float::atan2(an0.cross(an1).norm(), an0.dot(an1)) * -Float::signum(an1.dot(t))
     }
 
     /// Compute the reflex of the dihedral angle made by the faces neighboring this edge from
@@ -337,6 +348,7 @@ impl InteriorEdge {
         let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
 
         let ref_angle_proj = Self::project_angle(ref_angle);
+        // dbg!(self.edge_angle(pos, faces.clone()));
         let mut angle_diff = self.edge_angle(pos, faces) - ref_angle_proj;
         if angle_diff < -pi {
             angle_diff += two_pi;
@@ -559,11 +571,11 @@ pub(crate) fn compute_interior_edge_topology_from_mesh(
     #[cfg(test)]
     let mut edges = {
         // We want our tests to be deterministic, so we opt for hardcoding the seeds here.
-        let hash_builder = hashbrown::hash_map::DefaultHashBuilder::with_seeds(7, 47, 271, 101);
-        hashbrown::HashMap::with_capacity_and_hasher(mesh.num_cells(), hash_builder)
+        let hash_builder = ahash::RandomState::with_seeds(7, 47, 271, 101);
+        HashMap::with_capacity_and_hasher(mesh.num_cells(), hash_builder)
     };
     #[cfg(not(test))]
-    let mut edges = hashbrown::HashMap::with_capacity(mesh.num_cells());
+    let mut edges = HashMap::with_capacity(mesh.num_cells());
 
     let add_face_edges = |(face_idx, face): (usize, [usize; 3])| {
         for i in 0..3 {
@@ -651,7 +663,7 @@ pub(crate) fn compute_interior_edge_topology_from_mesh(
             if dihedral
                 .verts(|f, i| mesh.cell_to_vertex(f, i).unwrap().into_inner())
                 .iter()
-                .all(|&v| vertex_type[v] != VertexType::Fixed)
+                .any(|&v| vertex_type[v] != VertexType::Fixed)
             {
                 // Only include that dihedral if at least one vertex is not fixed.
                 interior_edges.push(dihedral);
@@ -660,6 +672,13 @@ pub(crate) fn compute_interior_edge_topology_from_mesh(
     }
 
     interior_edges.shrink_to_fit();
+
+    // interior_edges.sort_by(|a,b| {
+    //     a.verts(|f,i| mesh.cell_to_vertex(f,i).unwrap().into_inner()).partial_cmp(
+    //         &b.verts(|f,i| mesh.cell_to_vertex(f,i).unwrap().into_inner())).unwrap_or(std::cmp::Ordering::Less)
+    // });
+    //
+    // dbg!(&interior_edges);
 
     Ok(interior_edges)
 }
@@ -677,11 +696,11 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &crate::TriMesh) -> Vec<In
     #[cfg(test)]
     let mut edges = {
         // We want our tests to be deterministic, so we opt for hardcoding the seeds here.
-        let hash_builder = hashbrown::hash_map::DefaultHashBuilder::with_seeds(7, 47, 271, 101);
-        hashbrown::HashMap::with_capacity_and_hasher(trimesh.num_faces(), hash_builder)
+        let hash_builder = ahash::RandomState::with_seeds(7, 47, 271, 101);
+        HashMap::with_capacity_and_hasher(trimesh.num_faces(), hash_builder)
     };
     #[cfg(not(test))]
-    let mut edges = hashbrown::HashMap::with_capacity(trimesh.num_faces());
+    let mut edges = HashMap::with_capacity(trimesh.num_faces());
 
     let add_face_edges = |(face_idx, face): (usize, &[usize; 3])| {
         for i in 0..3 {
@@ -761,6 +780,8 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &crate::TriMesh) -> Vec<In
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "optsolver")]
+    use ahash::AHashSet as HashSet;
     use approx::*;
     use autodiff::F1;
 
@@ -1057,11 +1078,11 @@ mod tests {
 
         let trimesh = TriMesh::new(pos, verts);
 
-        let interior_edges: hashbrown::HashSet<_> = compute_interior_edge_topology(&trimesh)
+        let interior_edges: HashSet<_> = compute_interior_edge_topology(&trimesh)
             .into_iter()
             .collect();
 
-        let expected_interior_edges: hashbrown::HashSet<_> = vec![
+        let expected_interior_edges: HashSet<_> = vec![
             InteriorEdge {
                 faces: [1, 4],
                 edge_start: [1, 0],
@@ -1149,11 +1170,11 @@ mod tests {
 
         let trimesh = TriMesh::new(pos, verts);
 
-        let interior_edges: hashbrown::HashSet<_> = compute_interior_edge_topology(&trimesh)
+        let interior_edges: HashSet<_> = compute_interior_edge_topology(&trimesh)
             .into_iter()
             .collect();
 
-        let expected_interior_edges: hashbrown::HashSet<_> = vec![
+        let expected_interior_edges: HashSet<_> = vec![
             InteriorEdge {
                 faces: [3, 5],
                 edge_start: [0, 2],

@@ -1,8 +1,13 @@
 mod test_utils;
 
+use geo::attrib::Attrib;
+use geo::topology::{CellIndex, FaceIndex, NumCells, NumFaces};
 use softy::fem::nl::SimParams as NLParams;
 use softy::fem::nl::*;
-use softy::{load_material, Elasticity, Error, Material, Mesh, PointCloud, SolidMaterial, TetMesh};
+use softy::{
+    load_material, Elasticity, Error, Material, Mesh, PointCloud, SolidMaterial, TetMesh,
+    VolumeZoneIdType, VOLUME_ZONE_ID_ATTRIB,
+};
 use std::path::PathBuf;
 pub use test_utils::*;
 
@@ -63,39 +68,93 @@ fn stretch_plain_large() -> Result<(), Error> {
     init_logger();
     let mesh = make_stretched_box(10);
     let material: Material = load_material("assets/medium_solid_material.ron")?;
-    //geo::io::save_tetmesh(&mesh, "./out/box_stretch_init_20.vtk");
     let mut solver = SolverBuilder::new(NLParams {
         gravity: [0.0f32, 0.0, 0.0],
-        //time_step: Some(0.1),
         ..static_nl_params()
     })
     .set_mesh(Mesh::from(mesh))
     .set_materials(vec![material])
     .build::<f64>()?;
     solver.step()?;
-    //geo::io::save_mesh(&solver.mesh(), "./out/box_stretch_result_20.vtk");
     Ok(())
 }
 
-/*
 #[test]
-fn stretch_volume_constraint() -> Result<(), Error> {
+fn stretch_volume_penalty() -> Result<(), Error> {
     init_logger();
-    let incompressible_material = medium_solid_material().with_volume_preservation(true);
-    let mesh = make_stretched_box(4);
+    let material: Material = load_material("assets/medium_solid_material.ron")?;
+    let mut mesh = make_stretched_box(4);
+    mesh.insert_attrib_data::<VolumeZoneIdType, CellIndex>(
+        VOLUME_ZONE_ID_ATTRIB,
+        vec![1; mesh.num_cells()],
+    )?;
     let mut solver = SolverBuilder::new(NLParams {
-        ..stretch_nl_params()
+        gravity: [0.0f32, 0.0, 0.0],
+        // Skip derivative test since volume penalty does not use full hessian for high compression coefficients.
+        derivative_test: 0,
+        ..static_nl_params()
     })
-    .add_solid(mesh, incompressible_material)
+    .set_mesh(Mesh::from(mesh))
+    .set_materials(vec![material])
+    .set_volume_penalty_params(vec![1.0], vec![0.1], vec![true])
     .build()?;
     solver.step()?;
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk"))?;
-    let solution = &solver.solid(0).tetmesh;
-    compare_meshes(solution, &expected, 1e-3);
+    let solution_verts = PointCloud::new(solver.vertex_positions());
+    compare_meshes(&solution_verts, &expected, 1e-3);
     Ok(())
 }
-*/
+
+#[test]
+fn stretch_triangles() -> Result<(), Error> {
+    init_logger();
+    let material: Material = load_material("assets/soft_shell_material.ron")?;
+    let mesh = make_stretched_box(2);
+    let mesh = mesh.surface_trimesh();
+
+    let mut solver = SolverBuilder::new(NLParams {
+        gravity: [0.0f32, 0.0, 0.0],
+        ..static_nl_params()
+    })
+    .set_mesh(Mesh::from(mesh))
+    .set_materials(vec![material])
+    .build()?;
+    solver.step()?;
+    let expected: TetMesh =
+        geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_triangles.vtk"))?;
+    let solution_verts = PointCloud::new(solver.vertex_positions());
+    compare_meshes(&solution_verts, &expected, 1e-3);
+    Ok(())
+}
+
+#[test]
+fn stretch_volume_penalty_triangles() -> Result<(), Error> {
+    use geo::attrib::Attrib;
+    init_logger();
+    let material: Material = load_material("assets/soft_shell_material.ron")?;
+    let mesh = make_stretched_box(3);
+    let mut mesh = mesh.surface_trimesh();
+    mesh.insert_attrib_data::<VolumeZoneIdType, FaceIndex>(
+        VOLUME_ZONE_ID_ATTRIB,
+        vec![1; mesh.num_faces()],
+    )?;
+    let mut solver = SolverBuilder::new(NLParams {
+        gravity: [0.0f32, 0.0, 0.0],
+        ..static_nl_params()
+    })
+    .set_mesh(Mesh::from(mesh))
+    .set_materials(vec![material])
+    .set_volume_penalty_params(vec![1.0], vec![0.01], vec![false])
+    .build()?;
+    solver.step()?;
+    let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from(
+        "assets/box_stretched_const_volume_triangles.vtk",
+    ))?;
+    let solution_verts = PointCloud::new(solver.vertex_positions());
+    compare_meshes(&solution_verts, &expected, 1e-3);
+    Ok(())
+}
 
 #[test]
 fn twist_plain() -> Result<(), Error> {
@@ -117,29 +176,40 @@ fn twist_plain() -> Result<(), Error> {
     Ok(())
 }
 
-/*
+#[cfg(not(debug_assertions))]
 #[test]
-fn twist_dynamic_volume_constraint() -> Result<(), Error> {
+fn twist_dynamic_volume_penalty() -> Result<(), Error> {
     init_logger();
-    let material = medium_solid_material()
-        .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0))
-        .with_volume_preservation(true);
+    let material: Material = load_material("assets/no_poisson_soft_solid_material.ron")?;
 
     // We use a large time step to get the simulation to settle to the static sim with less
     // iterations.
     let params = NLParams {
-        time_step: Some(2.0),
-        ..DYNAMIC_NL_PARAMS
+        gravity: [0.0; 3],
+        time_step: Some(0.1),
+        // Skip derivative test since volume penalty does not use full hessian for high compression coefficients.
+        derivative_test: 0,
+        ..static_nl_params()
     };
 
-    let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
+    let mut mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
+    mesh.insert_attrib_data::<VolumeZoneIdType, CellIndex>(
+        VOLUME_ZONE_ID_ATTRIB,
+        vec![1; mesh.num_cells()],
+    )?;
     let mut solver = SolverBuilder::new(params.clone())
-        .add_solid(mesh, material)
+        .set_mesh(mesh)
+        .set_material(material)
+        .set_volume_penalty_params(vec![1.0], vec![0.1], vec![false])
         .build()?;
 
     // The dynamic sim needs to settle
-    for _ in 1u32..15 {
+    for i in 1u32..150 {
         let result = solver.step()?;
+        geo::io::save_mesh(
+            &solver.mesh(),
+            &format!("out/box_twisted/box_twisted_const_volume_{i}.vtk"),
+        )?;
         assert!(
             result.iterations <= params.max_iterations,
             "Unconstrained solver ran out of outer iterations."
@@ -148,60 +218,35 @@ fn twist_dynamic_volume_constraint() -> Result<(), Error> {
 
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
-    let solution = &solver.solid(0).tetmesh;
-    //geo::io::save_tetmesh(solution, &PathBuf::from("out/box_twisted_const_volume.vtk"))?;
-    compare_meshes(solution, &expected, 1e-2);
+    let solution = PointCloud::new(solver.vertex_positions());
+    compare_meshes(&solution, &expected, 1e-2);
     Ok(())
 }
 
 #[test]
-fn twist_volume_constraint() -> Result<(), Error> {
+fn twist_volume_penalty() -> Result<(), Error> {
     init_logger();
-    let material = medium_solid_material()
-        .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0))
-        .with_volume_preservation(true);
-    let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
+    let material: Material = load_material("assets/no_poisson_soft_solid_material.ron")?;
+    let mut mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
+    mesh.insert_attrib_data::<VolumeZoneIdType, CellIndex>(
+        VOLUME_ZONE_ID_ATTRIB,
+        vec![1; mesh.num_cells()],
+    )?;
     let params = NLParams {
-        ..stretch_nl_params()
+        gravity: [0.0; 3],
+        // // Skip derivative test since volume penalty does not use full hessian for high compression coefficients.
+        // derivative_test: 0,
+        ..static_nl_params()
     };
     let mut solver = SolverBuilder::new(params)
-        .add_solid(mesh, material)
+        .set_mesh(mesh)
+        .set_material(material)
+        .set_volume_penalty_params(vec![1.0], vec![0.1], vec![false])
         .build()?;
     solver.step()?;
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
-    let solution = &solver.solid(0).tetmesh;
-    compare_meshes(solution, &expected, 1e-6);
+    let solution = PointCloud::new(solver.vertex_positions());
+    compare_meshes(&solution, &expected, 1e-6);
     Ok(())
 }
-
-/// This test insures that a non-linearized constraint like volume doesn't cause multiple outer
-/// iterations, and converges after the first solve.
-#[test]
-fn twist_volume_constraint_consistent_outer_iterations() -> Result<(), Error> {
-    init_logger();
-    let material = medium_solid_material()
-        .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0))
-        .with_volume_preservation(true);
-
-    let params = NLParams {
-        tolerance: 1e-5, // This is a fairly strict tolerance.
-        ..stretch_nl_params()
-    };
-
-    let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
-    let mut solver = SolverBuilder::new(params)
-        .add_solid(mesh, material)
-        .build()?;
-    let solve_result = solver.step()?;
-    assert_eq!(solve_result.iterations, 1);
-
-    // This test should produce the exact same mesh as the original
-    // box_twist_volume_constraint_test
-    let expected: TetMesh =
-        geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
-    let solution = &solver.solid(0).tetmesh;
-    compare_meshes(solution, &expected, 1e-6);
-    Ok(())
-}
-*/

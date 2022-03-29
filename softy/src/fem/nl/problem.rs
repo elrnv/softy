@@ -4,15 +4,17 @@ use std::time::Instant;
 use autodiff as ad;
 use flatk::*;
 use geo::attrib::*;
+use geo::index::CheckedIndex;
 use geo::mesh::{topology::*, VertexPositions};
+use geo::Index;
 use num_traits::Zero;
 use tensr::{AsMutTensor, AsTensor, IntoData, IntoTensor, Matrix, Norm, Tensor, Vector3};
 
 use super::state::*;
 use crate::attrib_defines::*;
 use crate::constraints::{
-    penalty_point_contact::PenaltyPointContactConstraint, volume::VolumeConstraint,
-    FrictionJacobianTimings,
+    penalty_point_contact::PenaltyPointContactConstraint,
+    volume_change_penalty::VolumeChangePenalty, FrictionJacobianTimings,
 };
 use crate::contact::ContactJacobianView;
 use crate::energy::{Energy, EnergyGradient, EnergyHessian, EnergyHessianTopology};
@@ -122,6 +124,10 @@ pub struct NLProblem<T: Real> {
     /// This includes all primal variables and any additional mesh data required
     /// for simulation.
     pub state: RefCell<State<T, ad::FT<T>>>,
+    /// The index of state vertices for each vertex from the original mesh used to create this problem.
+    ///
+    /// This vector is useful for debugging and optimization.
+    pub state_vertex_indices: Vec<Index>,
     /// Contact penalty multiplier.
     ///
     /// This quantity is used to dynamically enforce non-penetration.
@@ -134,7 +140,7 @@ pub struct NLProblem<T: Real> {
     pub frictional_contact_constraints: Vec<FrictionalContactConstraint<T>>,
     pub frictional_contact_constraints_ad: Vec<FrictionalContactConstraint<ad::FT<T>>>,
     /// Constraint on the volume of different regions of the simulation.
-    pub volume_constraints: Vec<RefCell<VolumeConstraint>>,
+    pub volume_constraints: Vec<RefCell<VolumeChangePenalty>>,
     /// Gravitational potential energy.
     pub gravity: [f64; 3],
     /// The time step defines the amount of time elapsed between steps (calls to `advance`).
@@ -259,6 +265,7 @@ impl<T: Real64> NLProblem<T> {
         //self.compute_residual(&mut mesh);
         mesh
     }
+
     /// Returns a reference to the original mesh used to create this problem with updated values.
     pub fn mesh(&self) -> Mesh {
         let mut mesh = self.original_mesh.clone();
@@ -289,6 +296,17 @@ impl<T: Real64> NLProblem<T> {
         mesh.remove_attrib::<VertexIndex>(VELOCITY_ATTRIB).ok(); // Removing attrib
         mesh.insert_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, out_vel)
             .unwrap(); // No panic: removed above.
+
+        debug_assert_eq!(mesh.num_vertices(), self.state_vertex_indices.len());
+        mesh.remove_attrib::<VertexIndex>(STATE_INDEX_ATTRIB).ok(); // Removing attrib
+        mesh.insert_attrib_data::<StateIndexType, VertexIndex>(
+            STATE_INDEX_ATTRIB,
+            self.state_vertex_indices
+                .iter()
+                .map(|&x| x.unwrap() as i32)
+                .collect(),
+        )
+        .unwrap(); // No panic: removed above.
 
         self.compute_residual_on_mesh(&mut mesh);
         self.compute_distance_potential(&mut mesh);
@@ -1504,8 +1522,7 @@ impl<T: Real64> NLProblem<T> {
         }
 
         for vc in self.volume_constraints.iter() {
-            num +=
-                2 * vc.borrow().constraint_hessian_size() - vc.borrow().num_hessian_diagonal_nnz()
+            num += vc.borrow().penalty_hessian_size();
         }
 
         // let State {
@@ -1611,6 +1628,10 @@ impl<T: Real64> NLProblem<T> {
         energy += shell.elasticity().energy(cur.pos, next.pos);
         energy += shell.gravity(self.gravity).energy(cur.pos, next.pos);
 
+        for vc in self.volume_constraints.iter() {
+            energy += vc.borrow().compute_penalty(cur.pos, next.pos);
+        }
+
         let delta = self.delta as f32;
         let kappa = self.kappa as f32;
         //let epsilon = self.epsilon as f32;
@@ -1640,7 +1661,7 @@ impl<T: Real64> NLProblem<T> {
     /// `r` is the output stacked force vector.
     fn subtract_constraint_forces<S: Real>(
         &self,
-        _prev_pos: &[T],
+        prev_pos: &[T],
         pos: &[S],
         vel: &[S],
         r: &mut [S],
@@ -1648,7 +1669,11 @@ impl<T: Real64> NLProblem<T> {
     ) {
         assert_eq!(pos.len(), vel.len());
         assert_eq!(r.len(), pos.len());
-        // let mut f = vec![S::zero(); r.len()];
+
+        // Add volume constraint indices
+        for vc in self.volume_constraints.iter() {
+            vc.borrow().subtract_pressure_force(prev_pos, pos, r);
+        }
 
         // Compute contact lambda.
         for fc in frictional_contact_constraints.iter() {
@@ -1679,9 +1704,6 @@ impl<T: Real64> NLProblem<T> {
             //     self.epsilon as f32,
             // );
         }
-        // let f_out = &mut *self.debug_friction.borrow_mut();
-        // f_out.clear();
-        // f_out.extend(r.iter().map(|&x| T::from(x).unwrap()));
     }
 
     /// Compute the acting force for the problem.
@@ -1714,9 +1736,9 @@ impl<T: Real64> NLProblem<T> {
                 .add_energy_gradient(cur.pos, next.pos, r);
         });
 
-        let dbgdata_out = &mut *self.debug_friction.borrow_mut();
-        dbgdata_out.clear();
-        dbgdata_out.extend(r.iter().map(|&x| T::from(x).unwrap()));
+        // let dbgdata_out = &mut *self.debug_friction.borrow_mut();
+        // dbgdata_out.clear();
+        // dbgdata_out.extend(r.iter().map(|&x| T::from(x).unwrap()));
 
         self.subtract_constraint_forces(cur.pos, next.pos, next.vel, r, frictional_contacts);
 
@@ -2035,15 +2057,6 @@ impl<T: Real64> NLProblem<T> {
             count += n;
         }
 
-        // Add volume constraint indices
-        for vc in self.volume_constraints.iter() {
-            for MatrixElementIndex { row, col } in vc.borrow().constraint_hessian_indices_iter() {
-                rows[count] = row;
-                cols[count] = col;
-                count += 1;
-            }
-        }
-
         // eprintln!("i lower triangular = {count}");
 
         // Duplicate off-diagonal indices to form a complete matrix.
@@ -2073,6 +2086,18 @@ impl<T: Real64> NLProblem<T> {
             .count();
 
         count += num_off_diagonals;
+
+        // Add volume constraint indices
+        for vc in self.volume_constraints.iter() {
+            let mut nh = 0;
+            for MatrixElementIndex { row, col } in vc.borrow().penalty_hessian_indices_iter() {
+                rows[count] = row;
+                cols[count] = col;
+                count += 1;
+                nh += 1;
+            }
+            assert_eq!(nh, vc.borrow().penalty_hessian_size());
+        }
 
         // eprintln!("i pre contact = {count}");
 
@@ -2242,26 +2267,6 @@ impl<T: Real64> NLProblem<T> {
             count += n;
         }
 
-        // Add volume constraint entries.
-        for vc in self.volume_constraints.iter() {
-            let nh = vc.borrow().constraint_hessian_size();
-            vc.borrow_mut()
-                .constraint_hessian_values(
-                    cur.pos,
-                    next.pos,
-                    &[T::one()][..], // TOOD: update this multiplier
-                    dqdv * force_multiplier * self.volume_constraint_scale(),
-                    &mut vals[count..count + nh],
-                )
-                .unwrap();
-
-            for v in &mut vals[count..count + nh] {
-                *v = -*v;
-            }
-
-            count += nh;
-        }
-
         // eprintln!("lower triangular = {count}");
 
         // Duplicate off-diagonal entries.
@@ -2290,12 +2295,52 @@ impl<T: Real64> NLProblem<T> {
             })
             .count();
 
+        // // DEBUG CODE
+        // let mut hess = vec![vec![0.0; num_active_coords]; num_active_coords];
+        // for vc in self.volume_constraints.iter() {
+        //     let vc = vc.borrow_mut();
+        //     for (idx, val) in vc.constraint_hessian_indices_iter().zip(vc.constraint_hessian_values_iter(
+        //             cur.pos,
+        //             next.pos,
+        //             &[T::one()][..],
+        //         )) {
+        //         if idx.row < num_active_coords && idx.col < num_active_coords {
+        //             hess[idx.row][idx.col] += val.to_f64().unwrap();
+        //         }
+        //     }
+        // }
+        // eprintln!("h = [");
+        // for row in hess.iter() {
+        //     for entry in row.iter() {
+        //         eprint!("{entry:?} ");
+        //     }
+        //     eprintln!(";");
+        // }
+        // eprintln!("]");
+        // // END OF DEBUG CODE
+
+        // Add volume constraint entries.
+        for vc in self.volume_constraints.iter() {
+            let nh = vc.borrow().penalty_hessian_size();
+            vc.borrow_mut()
+                .penalty_hessian_values(
+                    cur.pos,
+                    next.pos,
+                    &[T::one()][..],
+                    dqdv * force_multiplier * self.volume_constraint_scale(),
+                    &mut vals[count..count + nh],
+                )
+                .unwrap();
+
+            count += nh;
+        }
+
         // eprintln!("pre contact = {count}");
 
         // Compute friction derivatives.
         // Note that friction Jacobian is non-symmetric and so must appear after the symmetrization above.
 
-        let mut jac = vec![vec![0.0; num_active_coords]; num_active_coords];
+        // let mut jac = vec![vec![0.0; num_active_coords]; num_active_coords];
 
         // Add contact constraint jacobian entries here.
         for fc in self.frictional_contact_constraints.iter() {
@@ -2308,9 +2353,9 @@ impl<T: Real64> NLProblem<T> {
             count += constraint
                 .constraint_hessian_indexed_values_iter(delta, kappa, num_active_coords / 3)
                 .zip(vals[count..].iter_mut())
-                .map(|((idx, val), out_val)| {
+                .map(|((_, val), out_val)| {
                     *out_val = -dqdv * force_multiplier * factor * val;
-                    jac[idx.row][idx.col] += out_val.to_f64().unwrap();
+                    // jac[idx.row][idx.col] += out_val.to_f64().unwrap();
                 })
                 .count();
         }
@@ -2879,6 +2924,7 @@ impl<T: Real64> NLProblem<T> {
     pub fn clone_as_autodiff(&self) -> NLProblem<ad::F1> {
         let Self {
             state,
+            state_vertex_indices,
             kappa,
             delta,
             epsilon,
@@ -2927,6 +2973,7 @@ impl<T: Real64> NLProblem<T> {
         };
         NLProblem {
             state,
+            state_vertex_indices,
             kappa,
             delta,
             epsilon,

@@ -103,7 +103,7 @@ impl<'a, E> TriShellElasticity<'a, E> {
 
         // Diagonal part
         for vtx in 0..4 {
-            let mut i = 0; // x,y,z component counter.
+            let mut i = 0; // lower triangular entry counter.
             let mut h = diag_hess(vtx);
             for row in 0..3 {
                 for col in 0..row + 1 {
@@ -287,6 +287,8 @@ impl<X: Real, T: Real, E: TriEnergy<T>> EnergyGradient<X, T> for TriShellElastic
 
         let di_elems = &self.shell.dihedral_elements;
 
+        // let mut gradient_dbg = vec![Vector3::zeros(); gradient.len()];
+
         // Gradient of bending energy.
         for (&edge, &prev_theta, &ref_theta, &ref_shape, &stiffness) in zip!(
             di_elems.dihedrals.iter(),
@@ -295,7 +297,7 @@ impl<X: Real, T: Real, E: TriEnergy<T>> EnergyGradient<X, T> for TriShellElastic
             di_elems.ref_length.iter(),
             di_elems.bending_stiffness.iter(),
         ) {
-            let dW_dx = DiscreteShellBendingEnergy {
+            let dihedral = DiscreteShellBendingEnergy {
                 cur_pos: pos1,
                 faces: di_elems.triangles.as_slice(),
                 edge,
@@ -303,19 +305,25 @@ impl<X: Real, T: Real, E: TriEnergy<T>> EnergyGradient<X, T> for TriShellElastic
                 ref_theta: T::from(ref_theta).unwrap(),
                 ref_shape: T::from(ref_shape).unwrap(),
                 stiffness: T::from(stiffness).unwrap(),
-            }
-            .energy_gradient();
+            };
+            let dW_dx = dihedral.energy_gradient();
             // Distribute gradient.
             let verts = edge.verts(|f, i| di_elems.triangles[f][i]);
             for i in 0..4 {
                 gradient[verts[i]] += dW_dx[i];
+                // eprintln!("g({:?}) = {:?}", verts[i], dW_dx[i]);
+                // gradient_dbg[verts[i]] += dW_dx[i];
             }
         }
+
+        // dbg!(gradient_dbg);
     }
 }
 
 impl<E: Send + Sync> EnergyHessianTopology for TriShellElasticity<'_, E> {
     fn energy_hessian_size(&self) -> usize {
+        // dbg!(self.shell.triangle_elements.num_elements());
+        // dbg!(self.shell.dihedral_elements.num_elements());
         NUM_HESSIAN_TRIPLETS_PER_TRI * self.shell.triangle_elements.num_elements()
             + NUM_HESSIAN_TRIPLETS_PER_DIHEDRAL * self.shell.dihedral_elements.num_elements()
     }
@@ -331,6 +339,7 @@ impl<E: Send + Sync> EnergyHessianTopology for TriShellElasticity<'_, E> {
         rows: &mut [I],
         cols: &mut [I],
     ) {
+        // dbg!(offset);
         assert_eq!(rows.len(), self.energy_hessian_size());
         assert_eq!(cols.len(), self.energy_hessian_size());
 
@@ -453,7 +462,7 @@ impl<E: Send + Sync> EnergyHessianTopology for TriShellElasticity<'_, E> {
 
         // Bending Hessian indices
         {
-            // Break up the hessian indices into chunks of elements for each edge.
+            // Break up the Hessian indices into chunks of elements for each edge.
             let hess_chunks: &mut [[MatrixElementIndex; NUM_HESSIAN_TRIPLETS_PER_DIHEDRAL]] =
                 unsafe { reinterpret::reinterpret_mut_slice(&mut indices[tri_entries..]) };
 
@@ -504,6 +513,7 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
         let tri_entries = NUM_HESSIAN_TRIPLETS_PER_TRI * tri_elems.num_elements();
 
         let pos1 = Chunked3::from_flat(x1).into_arrays();
+        // dbg!(&pos1);
 
         // Membrane Hessian
         {
@@ -562,6 +572,7 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
 
         // Bending Hessian
         {
+            // let len = values.len() - tri_entries;
             // Break up the Hessian triplets into chunks of elements for each triangle.
             let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_DIHEDRAL]] =
                 unsafe { reinterpret::reinterpret_mut_slice(&mut values[tri_entries..]) };
@@ -614,6 +625,74 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
                     );
                 },
             );
+
+            // let mut rows = vec![0usize; len];
+            // let mut cols = vec![0usize; len];
+            //
+            // let hess_row_chunks_usize: &mut [[usize; NUM_HESSIAN_TRIPLETS_PER_DIHEDRAL]] =
+            //     unsafe { reinterpret::reinterpret_mut_slice(&mut rows) };
+            // let hess_col_chunks_usize: &mut [[usize; NUM_HESSIAN_TRIPLETS_PER_DIHEDRAL]] =
+            //     unsafe { reinterpret::reinterpret_mut_slice(&mut cols) };
+            // assert_eq!(hess_col_chunks_usize.len(), hess_row_chunks_usize.len());
+            // assert_eq!(hess_col_chunks_usize.len(), hess_chunks.len());
+            //
+            // let hess_iter = hess_row_chunks_usize
+            //     .iter_mut()
+            //     .zip(hess_col_chunks_usize.iter_mut())
+            //     .zip(self.shell.dihedral_elements.dihedrals.iter());
+            //
+            // hess_iter.for_each(|((edge_hess_rows, edge_hess_cols), edge)| {
+            //     let verts = edge.verts(|f, i| self.shell.dihedral_elements.triangles[f][i]);
+            //     let (diag_rows, lower_rows) =
+            //         edge_hess_rows.split_at_mut(NUM_HESSIAN_TRIPLETS_PER_DIHEDRAL_DIAG);
+            //     let (diag_cols, lower_cols) =
+            //         edge_hess_cols.split_at_mut(NUM_HESSIAN_TRIPLETS_PER_DIHEDRAL_DIAG);
+            //     Self::edge_hessian_for_each(
+            //         |_| (),
+            //         |_, _| (),
+            //         |triplet_idx, vtx, (row, col), _, _| {
+            //             let global_row = 3 * verts[vtx] + row;
+            //             let global_col = 3 * verts[vtx] + col;
+            //             diag_rows[triplet_idx] = global_row;
+            //             diag_cols[triplet_idx] = global_col;
+            //         },
+            //         |triplet_idx, (row_vtx, col_vtx), (row, col), _| {
+            //             let mut global_row = 3 * verts[row_vtx] + row;
+            //             let mut global_col = 3 * verts[col_vtx] + col;
+            //             if verts[row_vtx] < verts[col_vtx] {
+            //                 // In the upper triangular part of the global matrix, transpose
+            //                 std::mem::swap(&mut global_row, &mut global_col);
+            //             }
+            //             lower_rows[triplet_idx] = global_row;
+            //             lower_cols[triplet_idx] = global_col;
+            //         },
+            //     );
+            // });
+            //
+            // let mut mtx = vec![vec![0.0; pos1.len()*3]; pos1.len()*3];
+            // for (v, (row, col)) in hess_chunks.iter().zip(hess_row_chunks_usize.iter().zip(hess_col_chunks_usize.iter())) {
+            //     assert_eq!(v.len(), row.len());
+            //     assert_eq!(v.len(), col.len());
+            //     for (v, (row, col)) in v.iter().zip(row.iter().zip(col.iter())) {
+            //         if *row == 2 && *col == 2 {
+            //             eprintln!("({}, {}) += {}", row, col, v);
+            //         }
+            //         mtx[*row][*col] += v.to_f64().unwrap();
+            //         // eprintln!("({}, {}) = {}", row, col, v);
+            //     }
+            //     // eprintln!("");
+            // }
+            //
+            // // eprintln!("dihedral_values = {:?}", values);
+            //
+            // eprintln!("dihedral_hess = [");
+            // for r in mtx.iter() {
+            //     for v in r.iter() {
+            //         eprint!("{} ", v);
+            //     }
+            //     eprintln!();
+            // }
+            // eprintln!("]");
         }
     }
 }

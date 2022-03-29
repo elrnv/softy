@@ -269,12 +269,19 @@ impl Scene {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ZoneParams {
+    pub zone_pressurizations: Vec<f32>,
+    pub compression_coefficients: Vec<f32>,
+}
+
 /// Scene configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SceneConfig {
     pub sim_params: SimParams,
     pub materials: Vec<Material>,
     pub frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
+    pub volume_zones: ZoneParams,
     pub scene: Scene,
 }
 
@@ -285,6 +292,7 @@ impl SceneConfig {
             sim_params,
             materials: Vec::new(),
             frictional_contacts: Vec::new(),
+            volume_zones: ZoneParams::default(),
             scene: Scene::new(mesh),
         }
     }
@@ -317,8 +325,19 @@ impl SceneConfig {
     }
 
     /// Set the set materials used by the elements in this solver.
-    pub fn set_materials(&mut self, materials: Vec<Material>) -> &mut Self {
-        self.materials = materials;
+    pub fn set_materials(&mut self, materials: impl Into<Vec<Material>>) -> &mut Self {
+        self.materials = materials.into();
+        self
+    }
+
+    /// Set the set materials used by the elements in this solver.
+    pub fn set_volume_zones(
+        &mut self,
+        zone_pressurizations: impl Into<Vec<f32>>,
+        compression_coefficients: impl Into<Vec<f32>>,
+    ) -> &mut Self {
+        self.volume_zones.zone_pressurizations = zone_pressurizations.into();
+        self.volume_zones.compression_coefficients = compression_coefficients.into();
         self
     }
 

@@ -462,6 +462,12 @@ fn get_frictional_contacts<'a>(
 
 trait SolverBuilder {
     fn set_mesh(&mut self, mesh: Mesh, params: &SimParams) -> Result<(), Error>;
+    fn set_volume_zone_coefficients(
+        &mut self,
+        zone_pressurizations: Vec<f32>,
+        compression_coefficients: Vec<f32>,
+        hessian_approximation: Vec<bool>,
+    );
     fn add_frictional_contact(
         &mut self,
         fc: softy::FrictionalContactParams,
@@ -525,6 +531,13 @@ impl SolverBuilder for fem::opt::SolverBuilder {
         }
         Ok(())
     }
+    fn set_volume_zone_coefficients(
+        &mut self,
+        zone_pressurizations: Vec<f32>,
+        compression_coefficients: Vec<f32>,
+        hessian_approximation: Vec<bool>,
+    ) {
+    }
     fn add_frictional_contact(
         &mut self,
         fc: softy::FrictionalContactParams,
@@ -543,6 +556,19 @@ impl SolverBuilder for fem::nl::SolverBuilder {
         mesh.reverse_if(|_, cell_type| matches!(cell_type, geo::mesh::CellType::Triangle));
         fem::nl::SolverBuilder::set_mesh(self, mesh);
         Ok(())
+    }
+    fn set_volume_zone_coefficients(
+        &mut self,
+        zone_pressurizations: Vec<f32>,
+        compression_coefficients: Vec<f32>,
+        hessian_approximation: Vec<bool>,
+    ) {
+        fem::nl::SolverBuilder::set_volume_penalty_params(
+            self,
+            zone_pressurizations,
+            compression_coefficients,
+            hessian_approximation,
+        );
     }
     fn add_frictional_contact(
         &mut self,
@@ -591,6 +617,16 @@ pub(crate) fn register_new_solver(
                 .add_frictional_contact(frictional_contact, (indices.0, collider_index as usize));
         }
     }
+
+    solver_builder.set_volume_zone_coefficients(
+        params.zone_pressurizations,
+        params.compression_coefficients,
+        params
+            .hessian_approximation
+            .iter()
+            .map(|&x| x != 0)
+            .collect(),
+    );
 
     let solver = solver_builder.build()?;
 

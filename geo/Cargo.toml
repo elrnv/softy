@@ -5,4 +5,4 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-meshx = { version = "0.3", git = "https://github.com/elrnv/meshx.git", features = ["io", "serde_all"] }
+meshx = { version = "0.4", git = "https://github.com/elrnv/meshx.git", features = ["io", "serde_all"] }

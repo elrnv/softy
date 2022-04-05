@@ -2,7 +2,7 @@ use autodiff as ad;
 use flatk::Component;
 use geo::attrib::Attrib;
 use geo::mesh::{topology::*, VertexPositions};
-use num_traits::Zero;
+use num_traits::{Float, Zero};
 use tensr::*;
 use unroll::unroll_for_loops;
 
@@ -703,6 +703,16 @@ impl<T: Real> State<T, ad::FT<T>> {
         }
     }
 
+    /// Copies entries from the vertex residual to the dof residual for vertex degrees of freedom
+    /// using dual numbers.
+    pub fn dof_residual_ad_from_vertices(&mut self) {
+        self.dof.view_mut().isolate(VERTEX_DOFS).r_ad.iter_mut()
+            .zip(self.vtx.residual_ad.storage().iter())
+            .for_each(|(dof_r, vtx_r)| {
+                *dof_r = *vtx_r;
+            });
+    }
+
     /// Copies entries from the vertex residual to the dof residual for vertex degrees of freedom.
     pub fn dof_residual_from_vertices(&self, r: &mut [T]) {
         r.iter_mut()
@@ -711,10 +721,6 @@ impl<T: Real> State<T, ad::FT<T>> {
             .for_each(|(dof_r, vtx_r)| {
                 *dof_r = *vtx_r;
             });
-    }
-
-    pub fn update_cur_vertices_with_bdf2(&mut self) {
-        self.update_cur_vertices_with_lerp(-1.0 / 3.0, 4.0 / 3.0)
     }
 
     /// Set current vertex state to be some blend between previous and current degrees of freedom.
@@ -945,7 +951,7 @@ impl<T: Real> State<T, ad::FT<T>> {
             .isolate(VERTEX_DOFS)
             .into_iter()
             .for_each(|StepState { cur, next, .. }| {
-                *next.q = num_traits::Float::mul_add(
+                *next.q = Float::mul_add(
                     *next.dq,
                     F::from(dt).unwrap(),
                     F::from(*cur.q).unwrap(),
@@ -987,16 +993,15 @@ impl<T: Real> State<T, ad::FT<T>> {
 
     /// Take a blended step in `q` between current and previous `v` values.
     ///
-    /// This type of step is used in trapezoidal rule, implicit Newmark
-    /// integration and other SDIRK variants.
+    /// This type of step is used in trapezoidal rule and implicit Newmark
+    /// integration.
     ///
-    /// `q_next = q_cur + h*((1-alpha)*v_next + alpha*v_cur)`
+    /// `q_next = q_cur + h*((1-alpha)*v_cur + alpha*v_next)`
     pub fn lerp_step<S: Real>(
         state: ChunkedView<StepState<&[T], &[S], &mut [S]>>,
         dt: f64,
         alpha: f64,
     ) {
-        use num_traits::Float;
         debug_assert!(dt > 0.0);
 
         let dt = S::from(dt).unwrap();
@@ -1007,12 +1012,12 @@ impl<T: Real> State<T, ad::FT<T>> {
             .isolate(VERTEX_DOFS)
             .into_iter()
             .for_each(|StepState { cur, next, .. }| {
-                // `q_next = q_cur + h*((1-alpha)*v_next + alpha*dq_cur)`
+                // `q_next = q_cur + h*((1-alpha)*v_cur + alpha*v_next)`
                 *next.q = Float::mul_add(
                     Float::mul_add(
                         *next.dq,
-                        S::one() - alpha,
-                        S::from(*cur.dq).unwrap() * alpha,
+                        alpha,
+                        S::from(*cur.dq).unwrap() * (S::one() - alpha),
                     ),
                     dt,
                     S::from(*cur.q).unwrap(),
@@ -1047,45 +1052,75 @@ impl<T: Real> State<T, ad::FT<T>> {
         //}
     }
 
-    /// Standalone BDF2 step.
-    pub fn bdf2_step<S: Real>(state: ChunkedView<StepState<&[T], &[S], &mut [S]>>, dt: f64) {
-        State::mixed_bdf2_step(state, dt, 0.25, 1.0 / 3.0);
-    }
-
-    /// Take a `alpha`-`beta` parametrized BDF2 step in `q` computed in the state workspace.
+    /// Take a blended step in `q` between current and previous `v` values, advancing prev `q`.
     ///
-    /// Use
-    /// - `alpha = 1/4`, `beta = 1/3` for standalone BDF2.
-    /// - `alpha = 1/2`, `beta = 2/3` for half BDF2 step following half a TR or BE step.
-    /// - `alpha = 2 - sqrt(2)`, `beta = sqrt(2)/2` for `2 - sqrt(2)` of TR or BE step followed by `1 - sqrt(2)` BDF2 step.
-    pub fn mixed_bdf2_step<S: Real>(
+    /// This type of step is used in SDIRK2 time integration.
+    /// This is like the `lerp_step`, but uses `q_prev` to advance.
+    ///
+    /// `q_next = q_prev + h*((1-alpha)*v_cur + alpha*v_next)`
+    pub fn sdirk2_step<S: Real>(
         state: ChunkedView<StepState<&[T], &[S], &mut [S]>>,
         dt: f64,
         alpha: f64,
-        beta: f64,
     ) {
         debug_assert!(dt > 0.0);
 
         let dt = S::from(dt).unwrap();
         let alpha = S::from(alpha).unwrap();
-        let beta = S::from(beta).unwrap();
+
+        // In static simulations, velocity is simply displacement.
+        state
+            .isolate(VERTEX_DOFS)
+            .into_iter()
+            .for_each(|StepState { prev_q, cur, next, .. }| {
+                // `q_next = q_prev + h*((1-alpha)*v_cur + alpha*v_next)`
+                *next.q = Float::mul_add(
+                    Float::mul_add(
+                        *next.dq,
+                        alpha,
+                        S::from(*cur.dq).unwrap() * (S::one() - alpha),
+                    ),
+                    dt,
+                    S::from(*prev_q).unwrap(),
+                );
+            });
+    }
+
+    /// Standalone BDF2 step.
+    pub fn bdf2_step<S: Real>(state: ChunkedView<StepState<&[T], &[S], &mut [S]>>, dt: f64) {
+        // Reuse the code from the mixed BDF2 step.
+        State::mixed_bdf2_step(state, 2.0*dt, 0.5);
+    }
+
+    /// Take a `gamma` parametrized mixed BDF2 step in `q` computed in the state workspace.
+    ///
+    /// Use
+    ///   - `gamma = 1/2` with `dt=2*dt` for standalone BDF2.
+    ///   - `gamma = 1/2` for halved for half BDF2 step following half a TR or BE step.
+    ///   - `gamma = 2 - sqrt(2)` for `2 - sqrt(2)` of TR or BE step followed by `1 - sqrt(2)` BDF2 step.
+    pub fn mixed_bdf2_step<S: Real>(
+        state: ChunkedView<StepState<&[T], &[S], &mut [S]>>,
+        dt: f64,
+        gamma: f64,
+    ) {
+        debug_assert!(dt > 0.0);
 
         // Compute coefficients
-        // let a = _1 / (gamma * (_2 - gamma));
-        let a = beta / alpha;
-        // let b = (_1 - gamma) * (_1 - gamma) / (gamma * (_2 - gamma));
-        let b = S::one() - a;
-        // let c = (_1 - gamma) / (_2 - gamma);
-        let c = S::one() - beta;
+        let a = 1.0 / (gamma * (2.0 - gamma));
+        // let a = beta / alpha;
+        let b = -(1.0 - gamma) * (1.0 - gamma) / (gamma * (2.0 - gamma));
+        // let b = S::one() - a;
+        let c = (1.0 - gamma) / (2.0 - gamma);
+        // let c = S::one() - beta;
 
         // Integrate all (positional) degrees of freedom using standard implicit euler.
         state.isolate(VERTEX_DOFS).into_iter().for_each(
             |StepState {
                  prev_q, cur, next, ..
              }| {
-                *next.q = *next.dq * c * dt
-                    + S::from(*cur.q).unwrap() * a
-                    + S::from(*prev_q).unwrap() * b;
+                *next.q = *next.dq * S::from(c * dt).unwrap()
+                    + S::from(*cur.q).unwrap() * S::from(a).unwrap()
+                    + S::from(*prev_q).unwrap() * S::from(b).unwrap();
             },
         );
 

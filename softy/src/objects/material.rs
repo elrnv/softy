@@ -24,10 +24,9 @@ pub struct DeformableProperties {
     pub elasticity: Option<Elasticity>,
     /// The density of the material. If `None`, we will look for a density attribute in the mesh.
     pub density: Option<f32>,
-    /// Coefficient measuring the amount of artificial viscosity as dictated by the Rayleigh
-    /// damping model. This value should be premultiplied by the timestep reciprocal to save
-    /// passing the time step around to elastic energy models which are otherwise independent of
-    /// time step.
+    /// Unitless coefficient measuring the amount of artificial damping.
+    ///
+    /// This number controls how much force is applied opposing elastic forces.
     pub damping: f32,
 }
 
@@ -260,11 +259,11 @@ impl ShellMaterial {
     /// Add damping to this material.
     ///
     /// This function converts this material to a `SoftShellMaterial`.
-    pub fn with_damping(self, damping: f32, time_step: f32) -> Self {
+    pub fn with_damping(self, damping: f32) -> Self {
         match self {
-            ShellMaterial::Fixed(m) => m.with_damping(damping, time_step),
-            ShellMaterial::Rigid(m) => m.with_damping(damping, time_step),
-            ShellMaterial::Soft(m) => m.with_damping(damping, time_step),
+            ShellMaterial::Fixed(m) => m.with_damping(damping),
+            ShellMaterial::Rigid(m) => m.with_damping(damping),
+            ShellMaterial::Soft(m) => m.with_damping(damping),
         }
         .into()
     }
@@ -304,8 +303,8 @@ impl FixedMaterial {
     /// Add damping to this material.
     ///
     /// This function converts this material to a `SoftShellMaterial`.
-    pub fn with_damping(self, damping: f32, time_step: f32) -> SoftShellMaterial {
-        SoftShellMaterial::from(self).with_damping(damping, time_step)
+    pub fn with_damping(self, damping: f32) -> SoftShellMaterial {
+        SoftShellMaterial::from(self).with_damping(damping)
     }
 
     /// Add density to this material.
@@ -334,8 +333,8 @@ impl RigidMaterial {
     /// Add damping to this material.
     ///
     /// This function converts this material to a `SoftShellMaterial`.
-    pub fn with_damping(self, damping: f32, time_step: f32) -> SoftShellMaterial {
-        SoftShellMaterial::from(self).with_damping(damping, time_step)
+    pub fn with_damping(self, damping: f32) -> SoftShellMaterial {
+        SoftShellMaterial::from(self).with_damping(damping)
     }
 
     /// Construct a new `RigidMaterial` for the current one with the given density parameter.
@@ -360,8 +359,8 @@ impl SoftShellMaterial {
     }
 
     /// Construct a new `SoftShellMaterial` from this one with the given damping parameter.
-    pub fn with_damping(mut self, damping: f32, time_step: f32) -> SoftShellMaterial {
-        self.properties.deformable = self.properties.deformable.with_damping(damping, time_step);
+    pub fn with_damping(mut self, damping: f32) -> SoftShellMaterial {
+        self.properties.deformable = self.properties.deformable.with_damping(damping);
         self
     }
 
@@ -393,8 +392,8 @@ impl SolidMaterial {
         self.properties.deformable.density = Some(density);
         self
     }
-    pub fn with_damping(mut self, damping: f32, time_step: f32) -> SolidMaterial {
-        self.properties.deformable = self.properties.deformable.with_damping(damping, time_step);
+    pub fn with_damping(mut self, damping: f32) -> SolidMaterial {
+        self.properties.deformable = self.properties.deformable.with_damping(damping);
         self
     }
     pub fn with_volume_preservation(mut self, volume_preservation: bool) -> SolidMaterial {
@@ -425,13 +424,7 @@ impl DeformableProperties {
             ..self
         }
     }
-    pub fn with_damping(self, mut damping: f32, time_step: f32) -> DeformableProperties {
-        damping *= if time_step != 0.0 {
-            1.0 / time_step
-        } else {
-            0.0
-        };
-
+    pub fn with_damping(self, damping: f32) -> DeformableProperties {
         DeformableProperties { damping, ..self }
     }
 

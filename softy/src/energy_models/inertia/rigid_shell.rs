@@ -52,7 +52,7 @@ impl<T: Real> Energy<T> for RigidShellInertia {
 
 impl<X: Real, T: Real> EnergyGradient<X, T> for RigidShellInertia {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T], _dt: f64) {
         debug_assert_eq!(grad_f.len(), v0.len());
 
         // There are translation and rotation dofs only for rigid bodies.
@@ -142,7 +142,7 @@ impl EnergyHessianTopology for RigidShellInertia {
 
 impl<T: Real> EnergyHessian<T> for RigidShellInertia {
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {
+    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T], _dt: f64) {
         debug_assert_eq!(values.len(), self.energy_hessian_size());
         for v in values.iter_mut().take(3) {
             *v = T::from(self.mass).unwrap() * scale;

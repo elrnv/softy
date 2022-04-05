@@ -33,8 +33,8 @@ pub trait EnergyGradient<X: Real, T: Real> {
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     /// differential of `x` but it often is.
     ///
-    /// This derivative is with respect to `dx`.
-    fn add_energy_gradient(&self, x: &[X], dx: &[T], grad: &mut [T]);
+    /// This derivative is with respect to `x`.
+    fn add_energy_gradient(&self, x: &[X], dx: &[T], grad: &mut [T], dt: f64);
 }
 
 /// The topology (sparsity) of the energy hessian.
@@ -168,8 +168,8 @@ pub trait EnergyHessian<T: Real>: EnergyHessianTopology {
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     /// differential of `x` but it often is.
     ///
-    /// This derivative is with respect to `dx`.
-    fn energy_hessian_values(&self, x: &[T], dx: &[T], scale: T, values: &mut [T]);
+    /// This derivative is with respect to `x`.
+    fn energy_hessian_values(&self, x: &[T], dx: &[T], scale: T, values: &mut [T], dt: f64);
 
     /*
      * Below are convenience functions for auxiliary applications. Users should provide custom
@@ -185,7 +185,7 @@ pub trait EnergyHessian<T: Real>: EnergyHessianTopology {
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     /// differential of `x` but it often is.
     ///
-    /// This derivative is with respect to `dx`.
+    /// This derivative is with respect to `x`.
     fn energy_hessian_offset(
         &self,
         x: &[T],
@@ -193,12 +193,13 @@ pub trait EnergyHessian<T: Real>: EnergyHessianTopology {
         offset: MatrixElementIndex,
         scale: T,
         triplets: &mut [MatrixElementTriplet<T>],
+        dt: f64,
     ) {
         let n = self.energy_hessian_size();
         let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; n];
         self.energy_hessian_indices_offset(offset, indices.as_mut_slice());
         let mut values = vec![T::zero(); n];
-        self.energy_hessian_values(x, dx, scale, values.as_mut_slice());
+        self.energy_hessian_values(x, dx, scale, values.as_mut_slice(), dt);
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices.iter().zip(values.iter())) {
             *trip = MatrixElementTriplet::new(idx.row, idx.col, *val);
         }
@@ -211,15 +212,16 @@ pub trait EnergyHessian<T: Real>: EnergyHessianTopology {
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     /// differential of `x` but it often is.
     ///
-    /// This derivative is with respect to `dx`.
+    /// This derivative is with respect to `x`.
     fn energy_hessian(
         &self,
         x: &[T],
         dx: &[T],
         scale: T,
         triplets: &mut [MatrixElementTriplet<T>],
+        dt: f64
     ) {
-        self.energy_hessian_offset(x, dx, (0, 0).into(), scale, triplets)
+        self.energy_hessian_offset(x, dx, (0, 0).into(), scale, triplets, dt)
     }
 }
 
@@ -234,6 +236,7 @@ fn energy_hessian_af<E: EnergyHessian<f64>>(
     x: &[f64],
     dx: &[f64],
     scale: f64,
+    dt: f64,
 ) -> af::Array<f64> {
     let nnz = e.energy_hessian_size();
     let mut rows = vec![0i32; nnz];
@@ -251,7 +254,7 @@ fn energy_hessian_af<E: EnergyHessian<f64>>(
     }
 
     let mut values = vec![0.0; nnz];
-    e.energy_hessian_values(x, dx, scale, &mut values);
+    e.energy_hessian_values(x, dx, scale, &mut values, dt);
 
     // Build arrayfire matrix
     let nnz = nnz as u64;
@@ -279,6 +282,7 @@ fn energy_hessian_sprs<E: EnergyHessian<f64>>(
     x: &[f64],
     dx: &[f64],
     scale: f64,
+    dt: f64,
 ) -> sprs::CsMat<f64> {
     let nnz = e.energy_hessian_size();
     let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; nnz];
@@ -290,7 +294,7 @@ fn energy_hessian_sprs<E: EnergyHessian<f64>>(
         .unzip();
 
     let mut values = vec![0.0; nnz];
-    e.energy_hessian_values(x, dx, scale, &mut values);
+    e.energy_hessian_values(x, dx, scale, &mut values, dt);
 
     let num_rows = x.len();
     let num_cols = x.len();

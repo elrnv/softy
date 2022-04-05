@@ -22,6 +22,7 @@ use crate::objects::trishell::*;
 use crate::objects::*;
 use crate::{Error, Mesh, PointCloud};
 use crate::{Real, Real64};
+use crate::nl_fem::{SingleStepTimeIntegration};
 
 #[derive(Clone, Debug)]
 pub struct SolverBuilder {
@@ -579,6 +580,7 @@ impl SolverBuilder {
         1.0
     }
 
+    // TODO: Move this to problem.rs.
     pub(crate) fn build_problem<T: Real>(&self) -> Result<NLProblem<T>, Error> {
         let SolverBuilder {
             sim_params: params,
@@ -771,7 +773,8 @@ impl SolverBuilder {
             prev_force: vec![T::zero(); num_verts * 3],
             candidate_force_ad: RefCell::new(vec![autodiff::FT::<T>::zero(); num_verts * 3]),
             prev_force_ad: vec![autodiff::FT::<T>::zero(); num_verts * 3],
-            time_integration: params.time_integration,
+            // Time integration is set during time stepping and can change between subsequent steps.
+            time_integration: SingleStepTimeIntegration::BE,
             line_search_ws: RefCell::new(LineSearchWorkspace {
                 pos_cur: Chunked3::default(),
                 pos_next: Chunked3::default(),
@@ -980,6 +983,8 @@ where
 
             // Advance internal state (positions and velocities) of the problem.
             solver.problem_mut().advance(solution);
+            //TODO Remove debug code:
+            // solution.iter_mut().for_each(|x| *x = T::zero());
         }
 
         // Reduce max_step for next iteration if the solution was a good one.
@@ -1000,6 +1005,7 @@ where
                 }
             }
         }
+
     }
 
     ///// Revert previously committed solution. We just advance in the opposite direction.
@@ -1045,28 +1051,14 @@ where
     pub fn step(&mut self) -> Result<SolveResult, Error> {
         let dt = self.time_step();
         self.iteration_count += 1;
-        let Self {
-            sim_params,
-            solver,
-            solution,
-            ..
-        } = self;
 
         log::debug!("Updating constraint set...");
-        solver.problem_mut().update_constraint_set();
+        self.solver.problem_mut().update_constraint_set();
 
-        // Update the current vertex data using the current dof state.
-        solver.problem_mut().update_cur_vertices();
+        let mut contact_iterations = self.sim_params.contact_iterations as i64;
 
-        solver
-            .problem()
-            .check_jacobian(sim_params.derivative_test, solution.as_slice(), false)
-            .unwrap(); //?;
-
-        let mut contact_iterations = sim_params.contact_iterations as i64;
-
-        let velocity_clear_steps = if sim_params.velocity_clear_frequency > 0.0 {
-            (1.0 / (f64::from(sim_params.velocity_clear_frequency) * dt))
+        let velocity_clear_steps = if self.sim_params.velocity_clear_frequency > 0.0 {
+            (1.0 / (f64::from(self.sim_params.velocity_clear_frequency) * dt))
                 .round()
                 .to_u32()
                 .unwrap_or(u32::MAX)
@@ -1078,83 +1070,115 @@ where
         // Prepare warm start.
         //solver.problem().compute_warm_start(solution.as_mut_slice());
 
-        // Loop to resolve all contacts.
-        let mut first_iteration = true;
-        loop {
-            /****    Main solve step    ****/
-            log::debug!("Begin main nonlinear solve.");
-            let result = solver.solve_with(solution.as_mut_slice(), first_iteration);
-            first_iteration = false;
-            /*******************************/
+        let true_time_step = self.solver.problem_mut().time_step;
+        let time_integration = self.sim_params.time_integration;
 
-            match result.status {
-                Status::Success | Status::MaximumIterationsExceeded => {
-                    // Compute contact violation.
-                    let constraint = solver
-                        .problem_mut()
-                        .contact_constraint(solution.as_slice())
-                        .into_storage();
-                    //let mut orig_lambda = constraint.clone();
-                    //let mut shifted_lambda = constraint.clone();
-                    let deepest = constraint
-                        .iter()
-                        .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
-                        .copied()
-                        .unwrap_or_else(T::zero)
-                        .to_f64()
-                        .unwrap();
+        log::debug!("Begin main nonlinear solve.");
+        let mut result = SolveResult::default();
+        for stage in 0..time_integration.num_stages() {
+            let (step_integrator, factor) = time_integration.step_integrator(stage);
+            self.solver.problem_mut().time_integration = step_integrator;
+            self.solver.problem_mut().time_step = true_time_step * factor as f64;
 
-                    let delta = sim_params.contact_tolerance as f64;
-                    let largest_penalty = ContactPenalty::new(delta).b(deepest);
-                    let bump_ratio: f64 = ContactPenalty::new(delta).db(deepest)
-                        / ContactPenalty::new(delta).db(0.5 * delta);
+            // Update the current vertex data using the current dof state.
+            self.solver.problem_mut().update_cur_vertices();
 
-                    log::debug!("Bump ratio: {}", bump_ratio);
-                    log::debug!("Kappa: {}", solver.problem().kappa);
-                    let contact_violation = 0.0_f64.max(-deepest);
-                    log::debug!("Contact violation: {}", contact_violation);
+            // No need to do this every time.
+            self.solver
+                .problem()
+                .check_jacobian(self.sim_params.derivative_test, self.solution.as_slice(), false)
+                .unwrap(); //?;
 
-                    contact_iterations -= 1;
+            // Loop to resolve all contacts.
+            let mut first_contact_iteration = true;
+            loop {
+                /****    Main solve step    ****/
+                result = self.solver.solve_with(self.solution.as_mut_slice(), first_contact_iteration);
+                // if stage < time_integration.num_stages() - 1 {
+                //     match result.status {
+                //         Status::Success | Status::MaximumIterationsExceeded => {
+                //             // Commit all stages except the last immediately.
+                //             // The last stage is subject to contact correction.
+                //             self.commit_solution(false);
+                //         }
+                //         _ => {
+                //             return Err(Error::NLSolveError { result });
+                //         }
+                //     }
+                // }
+                first_contact_iteration = false;
+                /*******************************/
 
-                    if contact_iterations < 0 {
-                        break Err(Error::NLSolveError {
-                            result: SolveResult {
-                                status: Status::MaximumContactIterationsExceeded,
-                                ..result
-                            },
-                        });
-                    }
+                match result.status {
+                    Status::Success | Status::MaximumIterationsExceeded => {
+                        // Compute contact violation.
+                        let constraint = self.solver
+                            .problem_mut()
+                            .contact_constraint(self.solution.as_slice())
+                            .into_storage();
+                        //let mut orig_lambda = constraint.clone();
+                        //let mut shifted_lambda = constraint.clone();
+                        let deepest = constraint
+                            .iter()
+                            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                            .copied()
+                            .unwrap_or_else(T::zero)
+                            .to_f64()
+                            .unwrap();
 
-                    if contact_violation > 0.0 {
-                        solver.problem_mut().kappa *= bump_ratio.max(2.0);
-                    }
+                        let delta = self.sim_params.contact_tolerance as f64;
+                        let largest_penalty = ContactPenalty::new(delta).b(deepest);
+                        let bump_ratio: f64 = ContactPenalty::new(delta).db(deepest)
+                            / ContactPenalty::new(delta).db(0.5 * delta);
 
-                    let max_step_violation = solver.problem().max_step_violation();
-                    if max_step_violation {
-                        solver.problem_mut().update_constraint_set();
-                    }
+                        log::debug!("Bump ratio: {}", bump_ratio);
+                        log::debug!("Kappa: {}", self.solver.problem().kappa);
+                        let contact_violation = 0.0_f64.max(-deepest);
+                        log::debug!("Contact violation: {}", contact_violation);
 
-                    if contact_violation > 0.0 || max_step_violation {
-                        continue;
-                    } else {
-                        // Relax kappa
-                        if largest_penalty == 0.0
-                            && solver.problem().kappa > 1.0e2 / sim_params.contact_tolerance as f64
-                        {
-                            solver.problem_mut().kappa /= 2.0;
+                        contact_iterations -= 1;
+
+                        if contact_iterations < 0 {
+                            return Err(Error::NLSolveError {
+                                result: SolveResult {
+                                    status: Status::MaximumContactIterationsExceeded,
+                                    ..result
+                                },
+                            });
                         }
-                        self.commit_solution(false);
-                        // Kill velocities if needed.
-                        if self.iteration_count % velocity_clear_steps == 0 {
-                            self.solver.problem_mut().clear_velocities();
+
+                        if contact_violation > 0.0 {
+                            self.solver.problem_mut().kappa *= bump_ratio.max(2.0);
                         }
-                        break Ok(result);
+
+                        let max_step_violation = self.solver.problem().max_step_violation();
+                        if max_step_violation {
+                            self.solver.problem_mut().update_constraint_set();
+                        }
+
+                        if contact_violation > 0.0 || max_step_violation {
+                            continue;
+                        } else {
+                            // Relax kappa
+                            if largest_penalty == 0.0
+                                && self.solver.problem().kappa > 1.0e2 / self.sim_params.contact_tolerance as f64
+                            {
+                                self.solver.problem_mut().kappa /= 2.0;
+                            }
+                            self.commit_solution(false);
+                            // Kill velocities if needed.
+                            if self.iteration_count % velocity_clear_steps == 0 {
+                                self.solver.problem_mut().clear_velocities();
+                            }
+                            break;
+                        }
                     }
-                }
-                _ => {
-                    break Err(Error::NLSolveError { result });
+                    _ => {
+                        return Err(Error::NLSolveError { result });
+                    }
                 }
             }
         }
+        Ok(result)
     }
 }

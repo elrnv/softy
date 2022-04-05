@@ -67,7 +67,7 @@ impl<T: Real> Energy<T> for TetMeshInertia<'_> {
 #[cfg(feature = "optsolver")]
 impl<X: Real, T: Real> EnergyGradient<X, T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T], _dt: f64) {
         let tetmesh = &self.0.tetmesh;
 
         let vel0: &[Vector3<X>] = bytemuck::cast_slice(v0);
@@ -187,7 +187,7 @@ impl EnergyHessianTopology for TetMeshInertia<'_> {
 #[cfg(feature = "optsolver")]
 impl<T: Real> EnergyHessian<T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {
+    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T], _dt: f64) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
         let TetMeshInertia(ref solid) = *self;
@@ -259,7 +259,7 @@ impl<T: Real> Energy<T> for TetSolidInertia<'_> {
 
 impl<X: Real, T: Real> EnergyGradient<X, T> for TetSolidInertia<'_> {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T], _dt: f64) {
         let tet_elems = &self.0;
 
         let vel0: &[Vector3<X>] = bytemuck::cast_slice(v0);
@@ -372,7 +372,7 @@ impl EnergyHessianTopology for TetSolidInertia<'_> {
 
 impl<T: Real> EnergyHessian<T> for TetSolidInertia<'_> {
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {
+    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T], _dt: f64) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
         let tet_elems = &self.0;

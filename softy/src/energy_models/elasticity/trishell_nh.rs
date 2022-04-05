@@ -143,11 +143,11 @@ impl<'a, E> TriShellElasticity<'a, E> {
 /// Define a hyperelastic energy model for `TriMeshShell`s.
 impl<T: Real, E: TriEnergy<T>> Energy<T> for TriShellElasticity<'_, E> {
     #[allow(non_snake_case)]
-    fn energy(&self, x0: &[T], x1: &[T]) -> T {
+    fn energy(&self, x: &[T], v: &[T]) -> T {
         let tri_elems = &self.shell.triangle_elements;
 
-        let pos1 = Chunked3::from_flat(x1).into_arrays();
-        let pos0 = Chunked3::from_flat(x0).into_arrays();
+        let x = Chunked3::from_flat(x).into_arrays();
+        let v = Chunked3::from_flat(v).into_arrays();
 
         // Membrane energy
         let membrane: T = zip!(
@@ -160,22 +160,18 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriShellElasticity<'_, E> {
             tri_elems.mu.iter().map(|&x| T::from(x).unwrap()),
         )
         .map(|(damping, density, area, &DX_inv, face, lambda, mu)| {
-            let tri_x1 = Triangle::from_indexed_slice(face, pos1);
-            let tri_x0 = Triangle::from_indexed_slice(face, pos0);
-            let tri_dx = Triangle::new(
-                (*tri_x1.as_array().as_tensor() - tri_x0.into_array().into_tensor()).into(),
-            );
-            let Dx = Matrix2x3::new(tri_x1.shape_matrix());
+            let tri_x = Triangle::from_indexed_slice(face, x);
+            let tri_v = Triangle::from_indexed_slice(face, v);
+            let Dx = Matrix2x3::new(tri_x.shape_matrix());
             let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
             let half = T::from(0.5).unwrap();
             let tri_energy = E::new(Dx, DX_inv, area, lambda, mu);
-            let dF = tri_energy.deformation_gradient_differential(&tri_dx);
+            let dF = tri_energy.deformation_gradient_differential(&tri_v);
             let dFTdF_tr = dF[0].dot(dF[0]) + dF[1].dot(dF[1]); // trace
             tri_energy.energy() + {
                 // damping (viscosity)
-                // Note: damping is already scaled by dt
                 if density != T::zero() {
-                    area * dFTdF_tr * half * T::from(density).unwrap() * damping
+                    area * area * dFTdF_tr * half * T::from(density).unwrap() * damping
                 } else {
                     T::zero()
                 }
@@ -199,7 +195,7 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriShellElasticity<'_, E> {
         )
         .map(|(&edge, &prev_theta, &ref_theta, &ref_shape, &stiffness)| {
             DiscreteShellBendingEnergy {
-                cur_pos: pos1,
+                cur_pos: x,
                 faces: di_elems.triangles.as_slice(),
                 edge,
                 prev_theta: T::from(prev_theta).unwrap(),
@@ -215,17 +211,19 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriShellElasticity<'_, E> {
     }
 }
 
-impl<X: Real, T: Real, E: TriEnergy<T>> EnergyGradient<X, T> for TriShellElasticity<'_, E> {
+impl<T: Real, E: TriEnergy<T>> EnergyGradient<T, T> for TriShellElasticity<'_, E> {
     #[allow(non_snake_case)]
     #[unroll_for_loops]
-    fn add_energy_gradient(&self, x0: &[X], x1: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, x: &[T], v: &[T], grad_f: &mut [T], dt: f64) {
         let tri_elems = &self.shell.triangle_elements;
 
-        debug_assert_eq!(grad_f.len(), x0.len());
-        debug_assert_eq!(grad_f.len(), x1.len());
+        debug_assert_eq!(grad_f.len(), x.len());
+        debug_assert_eq!(grad_f.len(), v.len());
 
-        let pos1 = Chunked3::from_flat(x1).into_arrays();
-        let pos0 = Chunked3::from_flat(x0).into_arrays();
+        let pos = Chunked3::from_flat(x).into_arrays();
+        let vel = Chunked3::from_flat(v).into_arrays();
+
+        let dt_inv = T::from(1.0/dt).unwrap();
 
         let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad_f);
 
@@ -240,21 +238,16 @@ impl<X: Real, T: Real, E: TriEnergy<T>> EnergyGradient<X, T> for TriShellElastic
             tri_elems.mu.iter(),
         ) {
             // Make deformed tri.
-            let tri_x1 = Triangle::from_indexed_slice(face, pos1);
+            let tri_x = Triangle::from_indexed_slice(face, pos);
             // Make tri displacement.
-            let tri_x0 = Triangle::from_indexed_slice(face, pos0);
-            let tri_dx = Triangle::new(
-                (*tri_x1.as_array().as_tensor()
-                    - tri_x0.into_array().into_tensor().cast_inner::<T>())
-                .into(),
-            );
+            let tri_v = Triangle::from_indexed_slice(face, vel);
 
             let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
             let area = T::from(area).unwrap();
             let lambda = T::from(lambda).unwrap();
             let mu = T::from(mu).unwrap();
 
-            let Dx = Matrix2x3::new(tri_x1.shape_matrix());
+            let Dx = Matrix2x3::new(tri_x.shape_matrix());
 
             let tri_energy = E::new(Dx, DX_inv, area, lambda, mu);
 
@@ -265,13 +258,12 @@ impl<X: Real, T: Real, E: TriEnergy<T>> EnergyGradient<X, T> for TriShellElastic
             }
 
             // Damping
-            // Note: damping is already scaled by dt
             if density != 0.0 {
                 let damping = T::from(damping).unwrap();
                 let density = T::from(density).unwrap();
 
-                let dF = tri_energy.deformation_gradient_differential(&tri_dx);
-                let damp = DX_inv.transpose() * dF * area * density * damping;
+                let dF = tri_energy.deformation_gradient_differential(&tri_v);
+                let damp = DX_inv.transpose() * dF * (density * area * area * damping * dt_inv);
                 for i in 0..2 {
                     gradient[face[i]] += damp[i];
                     gradient[face[2]] -= damp[i];
@@ -298,7 +290,7 @@ impl<X: Real, T: Real, E: TriEnergy<T>> EnergyGradient<X, T> for TriShellElastic
             di_elems.bending_stiffness.iter(),
         ) {
             let dihedral = DiscreteShellBendingEnergy {
-                cur_pos: pos1,
+                cur_pos: pos,
                 faces: di_elems.triangles.as_slice(),
                 edge,
                 prev_theta: T::from(prev_theta).unwrap(),
@@ -507,13 +499,14 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
     for TriShellElasticity<'_, E>
 {
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&self, _: &[T], x1: &[T], scale: T, values: &mut [T]) {
+    fn energy_hessian_values(&self, x: &[T], _: &[T], scale: T, values: &mut [T], dt: f64) {
         assert_eq!(values.len(), self.energy_hessian_size());
         let tri_elems = &self.shell.triangle_elements;
         let tri_entries = NUM_HESSIAN_TRIPLETS_PER_TRI * tri_elems.num_elements();
 
-        let pos1 = Chunked3::from_flat(x1).into_arrays();
-        // dbg!(&pos1);
+        let dt_inv2 = T::from(1.0/(dt*dt)).unwrap();
+
+        let pos = Chunked3::from_flat(x).into_arrays();
 
         // Membrane Hessian
         {
@@ -534,8 +527,8 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
             hess_iter.for_each(
                 |(tri_hess, (damping, density, area, &DX_inv, face, lambda, mu))| {
                     // Make deformed triangle.
-                    let tri_x1 = Triangle::from_indexed_slice(face, pos1);
-                    let Dx = Matrix2x3::new(tri_x1.shape_matrix());
+                    let tri_x = Triangle::from_indexed_slice(face, pos);
+                    let Dx = Matrix2x3::new(tri_x.shape_matrix());
                     let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
                     let tri_energy = E::new(Dx, DX_inv, area, lambda, mu);
 
@@ -544,8 +537,7 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
                     let local_hessians = tri_energy.energy_hessian();
 
                     // Damping
-                    // Note: damping is already scaled by dt
-                    let ddF = DX_inv.transpose() * DX_inv * (area * density * damping);
+                    let ddF = DX_inv.transpose() * DX_inv * (area * area * density * damping * dt_inv2);
                     let id = Matrix3::identity();
 
                     Self::tri_hessian_for_each(
@@ -588,7 +580,7 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
             hess_iter.for_each(
                 |(edge_hess, (&edge, &prev_theta, &ref_theta, &ref_shape, &stiffness))| {
                     let (dth_dx, d2w_dth2, dw_dth, d2th_dx2) = DiscreteShellBendingEnergy {
-                        cur_pos: pos1,
+                        cur_pos: pos,
                         faces: di_elems.triangles.as_slice(),
                         edge,
                         prev_theta: T::from(prev_theta).unwrap(),
@@ -718,14 +710,14 @@ mod tests {
                 ElasticityModel::NeoHookean,
             ))
             .with_density(1.0)
-            .with_damping(1.0, 0.01)
+            .with_damping(1.0)
     }
 
     fn bend_only_material() -> SoftShellMaterial {
         SoftShellMaterial::new(0)
             .with_elasticity(Elasticity::from_lame(0.0, 0.0, ElasticityModel::NeoHookean))
             .with_density(1.0)
-            .with_damping(1.0, 0.01)
+            .with_damping(1.0)
             .with_bending_stiffness(2.0)
     }
 

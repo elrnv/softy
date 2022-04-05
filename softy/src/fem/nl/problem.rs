@@ -20,7 +20,7 @@ use crate::contact::ContactJacobianView;
 use crate::energy::{Energy, EnergyGradient, EnergyHessian, EnergyHessianTopology};
 use crate::energy_models::{gravity::*, inertia::*};
 use crate::matrix::*;
-use crate::nl_fem::{state, ResidualTimings, TimeIntegration};
+use crate::nl_fem::{state, ResidualTimings, SingleStepTimeIntegration};
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
 use crate::Mesh;
@@ -167,7 +167,7 @@ pub struct NLProblem<T: Real> {
     pub prev_force_ad: Vec<ad::FT<T>>,
     pub candidate_force_ad: RefCell<Vec<ad::FT<T>>>,
 
-    pub time_integration: TimeIntegration,
+    pub time_integration: SingleStepTimeIntegration,
 
     pub line_search_ws: RefCell<LineSearchWorkspace<T>>,
 
@@ -271,8 +271,9 @@ impl<T: Real64> NLProblem<T> {
         let mut mesh = self.original_mesh.clone();
         let out_pos = mesh.vertex_positions_mut();
         let mut out_vel = vec![[0.0; 3]; out_pos.len()];
+        let mut out_force = vec![[0.0; 3]; out_pos.len()];
 
-        // Update positions
+        // Update positions, velocities and net force
         {
             let State {
                 vtx: VertexWorkspace {
@@ -281,20 +282,28 @@ impl<T: Real64> NLProblem<T> {
                 ..
             } = &*self.state.borrow();
 
+            let force: Vec<[f32; 3]> = self.prev_force
+                .chunks_exact(3).map(|f| [f[0].to_f32().unwrap(), f[1].to_f32().unwrap(), f[2].to_f32().unwrap()]).collect();
+
             let pos = next.pos.as_arrays();
             let vel = next.vel.as_arrays();
             // TODO: add original_order to state so we can iterate (in parallel) over out instead here.
             orig_index
                 .iter()
-                .zip(pos.iter().zip(vel.iter()))
-                .for_each(|(&i, (pos, vel))| {
+                .zip(pos.iter().zip(vel.iter()).zip(force.iter()))
+                .for_each(|(&i, ((pos, vel), &force))| {
                     out_pos[i] = pos.as_tensor().cast::<f64>().into_data();
                     out_vel[i] = vel.as_tensor().cast::<f64>().into_data();
+                    out_force[i] = force;
                 });
         }
 
         mesh.remove_attrib::<VertexIndex>(VELOCITY_ATTRIB).ok(); // Removing attrib
         mesh.insert_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, out_vel)
+            .unwrap(); // No panic: removed above.
+
+        mesh.remove_attrib::<VertexIndex>(NET_FORCE_ATTRIB).ok(); // Removing attrib
+        mesh.insert_attrib_data::<NetForceType, VertexIndex>(NET_FORCE_ATTRIB, out_force)
             .unwrap(); // No panic: removed above.
 
         debug_assert_eq!(mesh.num_vertices(), self.state_vertex_indices.len());
@@ -343,7 +352,8 @@ impl<T: Real64> NLProblem<T> {
     }
 
     fn compute_residual_on_mesh(&self, mesh: &mut Mesh) {
-        self.compute_vertex_residual();
+        //TODO: determine if we actually need to recompute the residual here.
+        //self.compute_vertex_residual();
         let state = &*self.state.borrow();
         let vertex_residuals = state.vtx.view().map_storage(|state| state.residual);
         let mut orig_order_vertex_residuals = vec![[0.0; 3]; vertex_residuals.len()];
@@ -618,7 +628,7 @@ impl<T: Real64> NLProblem<T> {
     pub fn advance(&mut self, v: &[T]) {
         self.integrate_step(v);
         self.state.borrow_mut().advance(v);
-        // Commit candidate forces. This is used for TR integration.
+        // Commit candidate forces. This is used for TR and SDIRK2 integration.
         self.prev_force.clone_from(&*self.candidate_force.borrow());
         self.prev_force_ad
             .clone_from(&*self.candidate_force_ad.borrow());
@@ -681,17 +691,50 @@ impl<T: Real64> NLProblem<T> {
         //}
     }
 
+    /// A convenience function to integrate the given AD velocity by the internal time step.
+    pub fn integrate_step_ad(&self) {
+        let mut state = self.state.borrow_mut();
+
+        let step_state = state.step_state_ad();
+        let dt = self.time_step();
+
+        match self.time_integration {
+            SingleStepTimeIntegration::BE => State::be_step(step_state, dt),
+            SingleStepTimeIntegration::TR => State::tr_step(step_state, dt),
+            SingleStepTimeIntegration::BDF2 => State::bdf2_step(step_state, dt),
+            SingleStepTimeIntegration::MixedBDF2(t) => {
+                State::mixed_bdf2_step(step_state, dt, 1.0 - t as f64)
+            },
+            SingleStepTimeIntegration::SDIRK2 => {
+                let alpha = 1.0 - 0.5*2.0_f64.sqrt();
+                // let alpha = 1.0;
+                State::sdirk2_step(step_state, dt, alpha)
+            },
+        }
+    }
+
     /// A convenience function to integrate the given velocity by the internal time step.
-    ///
-    /// For implicit integration this boils down to a simple multiply by the time step.
     pub fn integrate_step(&self, v: &[T]) {
         let mut state = self.state.borrow_mut();
 
+        let step_state = state.step_state(v);
+        let dt = self.time_step();
+
         match self.time_integration {
-            TimeIntegration::TR => State::tr_step(state.step_state(v), self.time_step()),
-            TimeIntegration::BE => State::be_step(state.step_state(v), self.time_step()),
-            TimeIntegration::BDF2 => State::bdf2_step(state.step_state(v), self.time_step()),
+            SingleStepTimeIntegration::BE => State::be_step(step_state, dt),
+            SingleStepTimeIntegration::TR => State::tr_step(step_state, dt),
+            SingleStepTimeIntegration::BDF2 => State::bdf2_step(step_state, dt),
+            SingleStepTimeIntegration::MixedBDF2(t) => {
+                State::mixed_bdf2_step(step_state, dt, 1.0 - t as f64)
+            },
+            SingleStepTimeIntegration::SDIRK2 => {
+                let alpha = 1.0 - 0.5*2.0_f64.sqrt();
+                // let alpha = 1.0;
+                State::sdirk2_step(step_state, dt, alpha)
+            },
         }
+        // let step_state = state.step_state(v);
+        // eprintln!("after q: {:?}", &step_state.data.next.q);
     }
 
     /// Convert a given array of contact forces to impulses.
@@ -1586,9 +1629,11 @@ impl<T: Real64> NLProblem<T> {
         solid: &TetSolid,
         shell: &TriShell,
     ) {
+        let dt = self.time_step(); // Ignored
         let ResidualState { cur, next, r } = state;
-        solid.inertia().add_energy_gradient(cur.vel, next.vel, r);
-        shell.inertia().add_energy_gradient(cur.vel, next.vel, r);
+        // eprintln!("cur vel : {:?}", &cur.vel);
+        solid.inertia().add_energy_gradient(cur.vel, next.vel, r, dt);
+        shell.inertia().add_energy_gradient(cur.vel, next.vel, r, dt);
     }
 
     pub fn contact_constraint(&self, _v: &[T]) -> Vec<T> {
@@ -1725,15 +1770,20 @@ impl<T: Real64> NLProblem<T> {
         //     *out_pos = *in_pos;
         // }
 
+        let dt = self.time_step();
+
+        // eprintln!("next.pos = {:?}", &next.pos);
+        // eprintln!("next.vel = {:?}", &next.vel);
+
         add_time!(self.timings.borrow_mut().energy_gradient; {
-            solid.elasticity().add_energy_gradient(cur.pos, next.pos, r);
+            solid.elasticity().add_energy_gradient(next.pos, next.vel, r, dt);
             solid
                 .gravity(self.gravity)
-                .add_energy_gradient(cur.pos, next.pos, r);
-            shell.elasticity().add_energy_gradient(cur.pos, next.pos, r);
+                .add_energy_gradient(next.pos, next.vel, r, dt);
+            shell.elasticity().add_energy_gradient(next.pos, next.vel, r, dt);
             shell
                 .gravity(self.gravity)
-                .add_energy_gradient(cur.pos, next.pos, r);
+                .add_energy_gradient(next.pos, next.vel, r, dt);
         });
 
         // let dbgdata_out = &mut *self.debug_friction.borrow_mut();
@@ -1745,67 +1795,164 @@ impl<T: Real64> NLProblem<T> {
         debug_assert!(r.iter().all(|r| r.is_finite()));
     }
 
-    /// Compute the backward Euler residual with automatic differentiation.
-    fn be_residual_autodiff(&self) {
-        let state = &mut *self.state.borrow_mut();
+    // /// Compute the backward Euler residual with automatic differentiation.
+    // fn be_residual_autodiff(&self) {
+    //     let state = &mut *self.state.borrow_mut();
+    //
+    //     {
+    //         let State {
+    //             vtx, solid, shell, ..
+    //         } = state;
+    //
+    //         // Clear residual vector.
+    //         vtx.residual_ad
+    //             .storage_mut()
+    //             .iter_mut()
+    //             .for_each(|x| *x = ad::F::zero());
+    //
+    //         self.subtract_force(
+    //             vtx.residual_state_ad().into_storage(),
+    //             solid,
+    //             shell,
+    //             self.frictional_contact_constraints_ad.as_slice(),
+    //         );
+    //     }
+    //
+    //     let mut res_state = state.vtx.residual_state_ad();
+    //     let r = &mut res_state.storage_mut().r;
+    //     *r.as_mut_tensor() *= ad::FT::cst(T::from(self.time_step()).unwrap());
+    //
+    //     if !self.is_static() {
+    //         self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
+    //     }
+    //
+    //     // Transfer residual to degrees of freedom.
+    //     state
+    //         .dof
+    //         .view_mut()
+    //         .isolate(VERTEX_DOFS)
+    //         .r_ad
+    //         .iter_mut()
+    //         .zip(state.vtx.residual_ad.storage().iter())
+    //         .for_each(|(dof_r, vtx_r)| {
+    //             *dof_r = *vtx_r;
+    //         })
+    // }
+    //
+    // /// Compute the trapezoidal rule residual with automatic differentiation.
+    // fn tr_residual_autodiff(&self) {
+    //     let state = &mut *self.state.borrow_mut();
+    //
+    //     let State {
+    //         vtx, solid, shell, ..
+    //     } = state;
+    //
+    //     // Clear residual vector.
+    //     vtx.residual_ad
+    //         .storage_mut()
+    //         .iter_mut()
+    //         .for_each(|x| *x = ad::F::zero());
+    //
+    //     self.subtract_force(
+    //         vtx.residual_state_ad().into_storage(),
+    //         solid,
+    //         shell,
+    //         self.frictional_contact_constraints_ad.as_slice(),
+    //     );
+    //
+    //     self.candidate_force_ad
+    //         .borrow_mut()
+    //         .clone_from(vtx.residual_ad.storage());
+    //
+    //     // Add prev force
+    //     vtx.residual_ad
+    //         .storage_mut()
+    //         .iter_mut()
+    //         .zip(self.prev_force_ad.iter())
+    //         .for_each(|(residual, &force)| *residual += force);
+    //
+    //     let mut res_state = state.vtx.residual_state_ad();
+    //     let r = &mut res_state.storage_mut().r;
+    //     *r.as_mut_tensor() *= ad::FT::cst(T::from(0.5 * self.time_step()).unwrap());
+    //
+    //     if !self.is_static() {
+    //         self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
+    //     }
+    //
+    //     // Transfer residual to degrees of freedom.
+    //     state
+    //         .dof
+    //         .view_mut()
+    //         .isolate(VERTEX_DOFS)
+    //         .r_ad
+    //         .iter_mut()
+    //         .zip(state.vtx.residual_ad.storage().iter())
+    //         .for_each(|(dof_r, vtx_r)| {
+    //             *dof_r = *vtx_r;
+    //         })
+    // }
+    //
+    // /// Compute the BDF2 residual with automatic differentiation.
+    // fn bdf2_residual_autodiff(&self) {
+    //     // Reuse the mixed bdf2 code.
+    //     // For gamma = -1, (1-gamma)/(2-gamma) = 2/3;
+    //     self.mixed_bdf2_residual_autodiff(-1.0);
+    // }
+    //
+    // /// Compute the mixed BDF2 residual with automatic differentiation.
+    // fn mixed_bdf2_residual_autodiff(&self, gamma: f32) {
+    //     let state = &mut *self.state.borrow_mut();
+    //
+    //     {
+    //         let State {
+    //             vtx, solid, shell, ..
+    //         } = state;
+    //
+    //         // Clear residual vector.
+    //         vtx.residual_ad
+    //             .storage_mut()
+    //             .iter_mut()
+    //             .for_each(|x| *x = ad::F::zero());
+    //
+    //         self.subtract_force(
+    //             vtx.residual_state_ad().into_storage(),
+    //             solid,
+    //             shell,
+    //             self.frictional_contact_constraints_ad.as_slice(),
+    //         );
+    //     }
+    //
+    //     let f = ((1.0 - gamma)/ (2.0 - gamma)) as f64;
+    //
+    //     let mut res_state = state.vtx.residual_state_ad();
+    //     let r = &mut res_state.storage_mut().r;
+    //     *r.as_mut_tensor() *= ad::FT::cst(T::from(f * self.time_step()).unwrap());
+    //
+    //     if !self.is_static() {
+    //         self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
+    //     }
+    //
+    //     // Transfer residual to degrees of freedom.
+    //     state
+    //         .dof
+    //         .view_mut()
+    //         .isolate(VERTEX_DOFS)
+    //         .r_ad
+    //         .iter_mut()
+    //         .zip(state.vtx.residual_ad.storage().iter())
+    //         .for_each(|(dof_r, vtx_r)| {
+    //             *dof_r = *vtx_r;
+    //         })
+    // }
 
-        {
-            // Integrate position.
-            State::be_step(state.step_state_ad(), self.time_step());
-        }
-        state.update_vertices_ad();
-
-        {
-            let State {
-                vtx, solid, shell, ..
-            } = state;
-
-            // Clear residual vector.
-            vtx.residual_ad
-                .storage_mut()
-                .iter_mut()
-                .for_each(|x| *x = ad::F::zero());
-
-            self.subtract_force(
-                vtx.residual_state_ad().into_storage(),
-                solid,
-                shell,
-                self.frictional_contact_constraints_ad.as_slice(),
-            );
-        }
-
-        let mut res_state = state.vtx.residual_state_ad();
-        let r = &mut res_state.storage_mut().r;
-        *r.as_mut_tensor() *= ad::FT::cst(T::from(self.time_step()).unwrap());
-
-        if !self.is_static() {
-            self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
-        }
-
-        // Transfer residual to degrees of freedom.
-        state
-            .dof
-            .view_mut()
-            .isolate(VERTEX_DOFS)
-            .r_ad
-            .iter_mut()
-            .zip(state.vtx.residual_ad.storage().iter())
-            .for_each(|(dof_r, vtx_r)| {
-                *dof_r = *vtx_r;
-            })
-    }
-
-    /// Compute the trapezoidal rule residual with automatic differentiation.
-    fn tr_residual_autodiff(&self) {
-        let state = &mut *self.state.borrow_mut();
-
-        // Integrate position.
-        State::tr_step(state.step_state_ad(), self.time_step());
-        state.update_vertices_ad();
-
+    /// Compute the residual on simulated vertices using dual numbers.
+    ///
+    /// This function takes a current force multiplier and previous force multiplier.
+    /// For backward Euler, one should pass `force_mul = 1.0` and `prev_force_mul = 0.0`.
+    fn compute_vertex_residual_ad_impl(&self, force_mul: f64, prev_force_mul: f64) {
         let State {
             vtx, solid, shell, ..
-        } = state;
+        } = &mut *self.state.borrow_mut();
 
         // Clear residual vector.
         vtx.residual_ad
@@ -1820,95 +1967,92 @@ impl<T: Real64> NLProblem<T> {
             self.frictional_contact_constraints_ad.as_slice(),
         );
 
+        let dt = ad::FT::cst(T::from(self.time_step()).unwrap());
+        let force_mul = ad::FT::cst(T::from(force_mul).unwrap());
+
+        // Save the current force for when the step is advanced.
+        // At that moment prev_force is updated to be candidate_force.
         self.candidate_force_ad
             .borrow_mut()
             .clone_from(vtx.residual_ad.storage());
 
-        // add prev force
-        vtx.residual_ad
-            .storage_mut()
-            .iter_mut()
-            .zip(self.prev_force_ad.iter())
-            .for_each(|(residual, &force)| *residual += force);
+        // If previous-force multiplier is zero, we don't need to keep track of forces between steps.
+        if prev_force_mul > 0.0 {
+            let prev_force_mul = ad::FT::cst(T::from(prev_force_mul).unwrap());
 
-        let mut res_state = state.vtx.residual_state_ad();
-        let r = &mut res_state.storage_mut().r;
-        *r.as_mut_tensor() *= ad::FT::cst(T::from(0.5 * self.time_step()).unwrap());
-
-        if !self.is_static() {
-            self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
-        }
-
-        // Transfer residual to degrees of freedom.
-        state
-            .dof
-            .view_mut()
-            .isolate(VERTEX_DOFS)
-            .r_ad
-            .iter_mut()
-            .zip(state.vtx.residual_ad.storage().iter())
-            .for_each(|(dof_r, vtx_r)| {
-                *dof_r = *vtx_r;
-            })
-    }
-
-    /// Compute the backward Euler residual with automatic differentiation.
-    fn bdf2_residual_autodiff(&self) {
-        let state = &mut *self.state.borrow_mut();
-
-        {
-            // Integrate position.
-            State::bdf2_step(state.step_state_ad(), self.time_step());
-        }
-        state.update_vertices_ad();
-
-        {
-            let State {
-                vtx, solid, shell, ..
-            } = state;
-
-            // Clear residual vector.
+            // blend between cur and prev force
             vtx.residual_ad
                 .storage_mut()
                 .iter_mut()
-                .for_each(|x| *x = ad::F::zero());
-
-            self.subtract_force(
-                vtx.residual_state_ad().into_storage(),
-                solid,
-                shell,
-                self.frictional_contact_constraints_ad.as_slice(),
-            );
+                .zip(self.prev_force_ad.iter())
+                .for_each(|(cur_f, &prev_f)| {
+                    *cur_f *= force_mul;
+                    *cur_f += prev_f * prev_force_mul;
+                    *cur_f *= dt;
+                });
+        } else {
+            *vtx.residual_ad.storage_mut().as_mut_tensor() *= force_mul * dt;
         }
-
-        let mut res_state = state.vtx.residual_state_ad();
-        let r = &mut res_state.storage_mut().r;
-        *r.as_mut_tensor() *= ad::FT::cst(T::from(2.0 * self.time_step() / 3.0).unwrap());
 
         if !self.is_static() {
-            self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
+            let res_state = vtx.residual_state_ad();
+            self.add_momentum_diff(res_state.into_storage(), &solid, &shell);
         }
+    }
+
+    #[inline]
+    fn residual_ad(&self) {
+        self.integrate_step_ad();
+        self.state.borrow_mut().update_vertices_ad();
+
+        self.compute_vertex_residual_ad();
 
         // Transfer residual to degrees of freedom.
-        state
-            .dof
-            .view_mut()
-            .isolate(VERTEX_DOFS)
-            .r_ad
-            .iter_mut()
-            .zip(state.vtx.residual_ad.storage().iter())
-            .for_each(|(dof_r, vtx_r)| {
-                *dof_r = *vtx_r;
-            })
+        self.state.borrow_mut().dof_residual_ad_from_vertices();
+    }
+
+    /// Compute the residual on simulated vertices using dual numbers.
+    #[inline]
+    fn compute_vertex_residual_ad(&self) {
+        match self.time_integration {
+            SingleStepTimeIntegration::BE => self.compute_vertex_residual_ad_impl(1.0, 0.0),
+            SingleStepTimeIntegration::TR => self.compute_vertex_residual_ad_impl(0.5, 0.5),
+            SingleStepTimeIntegration::BDF2 => self.compute_vertex_residual_ad_impl(2.0 / 3.0, 0.0),
+            SingleStepTimeIntegration::MixedBDF2(t) => {
+                let factor = t /(1.0 + t);
+                self.compute_vertex_residual_ad_impl(factor as f64, 0.0)
+            },
+            SingleStepTimeIntegration::SDIRK2 => {
+                let factor = 0.5*2.0_f64.sqrt();
+                self.compute_vertex_residual_ad_impl(1.0 - factor, factor)
+                // self.compute_vertex_residual_ad_impl(1.0, 0.0)
+            }
+        }
     }
 
     /// Update current vertex state to coincide with current dof state.
     pub fn update_cur_vertices(&mut self) {
         let state = &mut *self.state.borrow_mut();
+        // eprintln!("during update cur prev dq = {:?}", &state.dof.data.prev.dq);
         match self.time_integration {
-            TimeIntegration::BDF2 => state.update_cur_vertices_with_bdf2(),
+            SingleStepTimeIntegration::BDF2 => state.update_cur_vertices_with_lerp(-1.0 / 3.0, 4.0 / 3.0),
+            SingleStepTimeIntegration::MixedBDF2(t) => {
+                let t = t as f64;
+                // Comments correspond to quantities directly from the TRBDF2 formula.
+                // let gamma = 1.0 - t;
+                // let a = 1.0 / (gamma * (2.0 - gamma));
+                let a = 1.0 / (1.0 - t*t);
+                // let b = (1.0 - gamma)^2 / (gamma * (2 - gamma));
+                let b = t*t / (1.0 - t*t);
+                state.update_cur_vertices_with_lerp(-b, a)
+            },
+            SingleStepTimeIntegration::SDIRK2 => {
+                // For SDIRK2 we use the previous state since it's a two step method.
+                state.update_cur_vertices_with_lerp(1.0, 0.0)
+            },
             _ => state.update_cur_vertices_direct(),
         }
+        // eprintln!("cur vel : {:?}", &state.vtx.cur.vel);
     }
 
     /// Clear current velocity dofs.
@@ -1925,20 +2069,20 @@ impl<T: Real64> NLProblem<T> {
             vtx, solid, shell, ..
         } = &mut *self.state.borrow_mut();
 
+        let mut objective = T::zero();
         if prev_force_mul > 0.0 {
             // TR objective should have an extra term (compared to BE): h/2 grad W ^T v
             // To activate this term prev_force_mul should be 0.5.
 
-            let mut objective: T = self
+            objective += self
                 .prev_force
                 .iter()
                 .zip(vtx.next.vel.storage().iter())
                 .map(|(&r, &v)| r * v)
-                .sum();
-            objective *= T::from(prev_force_mul).unwrap() * self.time_step();
+                .sum::<T>() * T::from(prev_force_mul).unwrap() * self.time_step();
         }
 
-        let mut objective = self.energy(
+        objective += T::from(1.0 - prev_force_mul).unwrap() * self.energy(
             vtx.residual_state().into_storage(),
             solid,
             shell,
@@ -1973,30 +2117,38 @@ impl<T: Real64> NLProblem<T> {
             self.frictional_contact_constraints.as_slice(),
         );
 
-        let dt = self.time_step();
+        // eprintln!("after force = {:?}", vtx.residual.storage());
+
+        let dt = T::from(self.time_step()).unwrap();
+        let force_mul = T::from(force_mul).unwrap();
+
+        // eprintln!("dt = {:?}; force_mul = {:?}; prev_force_mul = {:?}", dt, force_mul, prev_force_mul);
+
+        // Save the current force for when the step is advanced.
+        // At that moment prev_force is updated to be candidate_force.
+        self.candidate_force
+            .borrow_mut()
+            .clone_from(vtx.residual.storage());
 
         // If previous-force multiplier is zero, we don't need to keep track of forces between steps.
         if prev_force_mul > 0.0 {
-            // Save the current force for when the step is advanced.
-            // At that moment prev_force is updated to be candidate_force.
-            self.candidate_force
-                .borrow_mut()
-                .clone_from(vtx.residual.storage());
+            let prev_force_mul = T::from(prev_force_mul).unwrap();
 
-            // Multiply current force by the multiplier and time step.
-            *vtx.residual.storage_mut().as_mut_tensor() *= T::from(force_mul * dt).unwrap();
-
-            // Add prev force multiplied by the given multiplier.
+            // Blend between prev and cur forces using the given multipliers
             vtx.residual
                 .storage_mut()
                 .iter_mut()
                 .zip(self.prev_force.iter())
-                .for_each(|(residual, &force)| {
-                    *residual += force * T::from(prev_force_mul * dt).unwrap()
+                .for_each(|(cur_f, &prev_f)| {
+                    *cur_f *= force_mul;
+                    *cur_f += prev_f * prev_force_mul;
+                    *cur_f *= dt;
                 });
         } else {
-            *vtx.residual.storage_mut().as_mut_tensor() *= T::from(force_mul * dt).unwrap();
+            *vtx.residual.storage_mut().as_mut_tensor() *= force_mul * dt;
         }
+
+        // eprintln!("final residual = {:?}", vtx.residual.storage());
 
         if !self.is_static() {
             let res_state = vtx.residual_state();
@@ -2008,10 +2160,19 @@ impl<T: Real64> NLProblem<T> {
     #[inline]
     fn compute_vertex_residual(&self) {
         match self.time_integration {
-            TimeIntegration::BE => self.compute_vertex_residual_impl(1.0, 0.0),
-            TimeIntegration::TR => self.compute_vertex_residual_impl(0.5, 0.5),
-            TimeIntegration::BDF2 => self.compute_vertex_residual_impl(2.0 / 3.0, 0.0),
-            //TimeIntegration::TRBDF2 => self.compute_vertex_trbdf2_residual(),
+            SingleStepTimeIntegration::BE => self.compute_vertex_residual_impl(1.0, 0.0),
+            SingleStepTimeIntegration::TR => self.compute_vertex_residual_impl(0.5, 0.5),
+            SingleStepTimeIntegration::BDF2 => self.compute_vertex_residual_impl(2.0 / 3.0, 0.0),
+            // SingleStepTimeIntegration::BDF2 => self.compute_vertex_residual_impl(1.0, 0.0),
+            SingleStepTimeIntegration::MixedBDF2(t) => {
+                let factor = t /(1.0 + t);
+                self.compute_vertex_residual_impl(factor as f64, 0.0)
+            },
+            SingleStepTimeIntegration::SDIRK2 => {
+                let factor = 0.5*2.0_f64.sqrt();
+                self.compute_vertex_residual_impl(1.0 - factor, factor)
+                // self.compute_vertex_residual_impl(1.0, 0.0)
+            }
         }
     }
 
@@ -2176,7 +2337,7 @@ impl<T: Real64> NLProblem<T> {
         vals: &mut [T],
     ) {
         let dt = T::from(self.time_step()).unwrap();
-        self.jacobian_values(dq, r, rows, cols, vals, dt, dt, State::be_step);
+        self.jacobian_values(dq, r, rows, cols, vals, dt, dt);
     }
 
     fn tr_jacobian_values(
@@ -2188,7 +2349,7 @@ impl<T: Real64> NLProblem<T> {
         vals: &mut [T],
     ) {
         let half_dt = T::from(0.5 * self.time_step()).unwrap();
-        self.jacobian_values(dq, r, rows, cols, vals, half_dt, half_dt, State::tr_step);
+        self.jacobian_values(dq, r, rows, cols, vals, half_dt, half_dt);
     }
 
     fn bdf2_jacobian_values(
@@ -2200,12 +2361,38 @@ impl<T: Real64> NLProblem<T> {
         vals: &mut [T],
     ) {
         let factor = T::from(2.0 * self.time_step() / 3.0).unwrap();
-        self.jacobian_values(dq, r, rows, cols, vals, factor, factor, State::bdf2_step);
+        self.jacobian_values(dq, r, rows, cols, vals, factor, factor);
     }
 
-    fn jacobian_values<'v, F>(
+    fn mixed_bdf2_jacobian_values(
         &self,
-        dq: &'v [T],
+        dq: &[T],
+        r: &[T],
+        rows: &[usize],
+        cols: &[usize],
+        vals: &mut [T],
+        gamma: f64,
+    ) {
+        let factor = T::from(((1.0 - gamma)/(2.0 - gamma)) * self.time_step()).unwrap();
+        self.jacobian_values(dq, r, rows, cols, vals, factor, factor);
+    }
+
+    fn sdirk2_jacobian_values(
+        &self,
+        dq: &[T],
+        r: &[T],
+        rows: &[usize],
+        cols: &[usize],
+        vals: &mut [T],
+    ) {
+        let factor = T::from((1.0 - 0.5*2.0_f64.sqrt())  * self.time_step()).unwrap();
+        // let factor = T::from(self.time_step()).unwrap();
+        self.jacobian_values(dq, r, rows, cols, vals, factor, factor);
+    }
+
+    fn jacobian_values<'v>(
+        &self,
+        _dq: &'v [T],
         _r: &[T],
         rows: &[usize],
         cols: &[usize],
@@ -2214,19 +2401,17 @@ impl<T: Real64> NLProblem<T> {
         dqdv: T,
         // Multiplier for force Jacobians
         force_multiplier: T,
-        step: F,
-    ) where
-        F: FnOnce(ChunkedView<StepState<&[T], &'v [T], &mut [T]>>, f64),
+    )
     {
         let num_active_coords = self.num_variables();
         let state = &mut *self.state.borrow_mut();
-        step(state.step_state(dq), self.time_step());
-        state.update_vertices(dq);
 
         let mut count = 0; // Values counter
 
         // Multiply energy hessian by objective factor and scaling factors.
         let factor = T::from(self.impulse_inv_scale()).unwrap();
+
+        let dt = self.time_step();
 
         let State {
             vtx, solid, shell, ..
@@ -2236,34 +2421,36 @@ impl<T: Real64> NLProblem<T> {
         let elasticity = solid.elasticity::<T>();
         let n = elasticity.energy_hessian_size();
         elasticity.energy_hessian_values(
-            cur.pos,
             next.pos,
+            next.vel,
             dqdv * force_multiplier * factor,
             &mut vals[count..count + n],
+            dt,
         );
         count += n;
 
         if !self.is_static() {
             let inertia = solid.inertia();
             let n = inertia.energy_hessian_size();
-            inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n]);
+            inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n], dt);
             count += n;
         }
 
         let elasticity = shell.elasticity::<T>();
         let n = elasticity.energy_hessian_size();
         elasticity.energy_hessian_values(
-            cur.pos,
             next.pos,
+            next.vel,
             dqdv * force_multiplier * factor,
             &mut vals[count..count + n],
+            dt,
         );
         count += n;
 
         if !self.is_static() {
             let inertia = shell.inertia();
             let n = inertia.energy_hessian_size();
-            inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n]);
+            inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n], dt);
             count += n;
         }
 
@@ -2501,11 +2688,8 @@ impl<T: Real64> NLProblem<T> {
             // End of dynamic mutable borrow.
         }
 
-        match self.time_integration {
-            TimeIntegration::BE => self.be_residual_autodiff(),
-            TimeIntegration::TR => self.tr_residual_autodiff(),
-            TimeIntegration::BDF2 => self.bdf2_residual_autodiff(),
-        }
+        // Compute residual using dual numbers, the result is stored in dof residual.
+        self.residual_ad();
 
         let State { dof, .. } = &mut *self.state.borrow_mut();
         for (jp, r_ad) in jp.iter_mut().zip(dof.storage_mut().r_ad.iter()) {
@@ -2649,17 +2833,17 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
     #[inline]
     fn objective(&self, dq: &[T]) -> T {
-        {
-            self.integrate_step(dq);
-            self.state.borrow_mut().update_vertices(dq);
-        }
+        self.integrate_step(dq);
+        self.state.borrow_mut().update_vertices(dq);
 
         match self.time_integration {
-            TimeIntegration::BE => self.compute_objective(0.0),
-            TimeIntegration::TR => self.compute_objective(0.5),
+            SingleStepTimeIntegration::BE => self.compute_objective(0.0),
+            SingleStepTimeIntegration::TR => self.compute_objective(0.5),
+            SingleStepTimeIntegration::SDIRK2 => self.compute_objective(0.5*2.0_f64.sqrt()),
             // BDF2 objective is computed same as BE, but note that vtx.cur is different.
             // vtx.cur is set in update_cur_vertices at the beginning of the step.
-            TimeIntegration::BDF2 => self.compute_objective(0.0),
+            SingleStepTimeIntegration::BDF2 => self.compute_objective(0.0),
+            SingleStepTimeIntegration::MixedBDF2(_) => self.compute_objective(0.0),
         }
     }
 
@@ -2875,11 +3059,10 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
     #[inline]
     fn residual(&self, dq: &[T], r: &mut [T]) {
+        // eprintln!("dq = {dq:?}");
         let t_begin = Instant::now();
-        {
-            self.integrate_step(dq);
-            self.state.borrow_mut().update_vertices(dq);
-        }
+        self.integrate_step(dq);
+        self.state.borrow_mut().update_vertices(dq);
         self.compute_vertex_residual();
 
         // Transfer residual to degrees of freedom.
@@ -2895,11 +3078,14 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
     #[inline]
     fn jacobian_values(&self, v: &[T], r: &[T], rows: &[usize], cols: &[usize], vals: &mut [T]) {
+        self.integrate_step(v);
+        self.state.borrow_mut().update_vertices(v);
         match self.time_integration {
-            TimeIntegration::BE => self.be_jacobian_values(v, r, rows, cols, vals),
-            TimeIntegration::TR => self.tr_jacobian_values(v, r, rows, cols, vals),
-            TimeIntegration::BDF2 => self.bdf2_jacobian_values(v, r, rows, cols, vals),
-            //TimeIntegration::TRBDF2 => self.trbdf2_jacobian_values(v, r, rows, cols, vals),
+            SingleStepTimeIntegration::BE => self.be_jacobian_values(v, r, rows, cols, vals),
+            SingleStepTimeIntegration::TR => self.tr_jacobian_values(v, r, rows, cols, vals),
+            SingleStepTimeIntegration::BDF2 => self.bdf2_jacobian_values(v, r, rows, cols, vals),
+            SingleStepTimeIntegration::MixedBDF2(t) => self.mixed_bdf2_jacobian_values(v, r, rows, cols, vals, 1.0 - t as f64),
+            SingleStepTimeIntegration::SDIRK2 => self.sdirk2_jacobian_values(v, r, rows, cols, vals),
         }
     }
     #[inline]
@@ -3289,7 +3475,7 @@ mod tests {
                 ElasticityModel::NeoHookean,
             ))
             .with_density(10.0)
-            .with_damping(1.0, 0.01)
+            .with_damping(1.0)
     }
 
     fn sample_params() -> SimParams {

@@ -46,8 +46,8 @@ impl<'a> TetSolidGravity<'a> {
 /// Gravity is a position based energy.
 impl<T: Real> Energy<T> for TetSolidGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
-    fn energy(&self, _x0: &[T], x1: &[T]) -> T {
-        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
+    fn energy(&self, x: &[T], _: &[T]) -> T {
+        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x);
         let tet_elems = &self.solid;
         let tet_iter = tet_elems
             .tets
@@ -72,8 +72,8 @@ impl<T: Real> Energy<T> for TetSolidGravity<'_> {
 
 impl<X: Real, T: Real> EnergyGradient<X, T> for TetSolidGravity<'_> {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
-        debug_assert_eq!(grad.len(), _x0.len());
+    fn add_energy_gradient(&self, _x: &[X], _dx: &[T], grad: &mut [T], _dt: f64) {
+        debug_assert_eq!(grad.len(), _x.len());
 
         let tet_elems = &self.solid;
         let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad);
@@ -104,7 +104,7 @@ impl EnergyHessianTopology for TetSolidGravity<'_> {
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
 }
 impl<T: Real> EnergyHessian<T> for TetSolidGravity<'_> {
-    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
+    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T], _dt: f64) {}
 }
 
 /// A constant directional force.
@@ -129,8 +129,8 @@ impl<'a> TetMeshGravity<'a> {
 #[cfg(feature = "optsolver")]
 impl<T: Real> Energy<T> for TetMeshGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
-    fn energy(&self, _x0: &[T], x1: &[T]) -> T {
-        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
+    fn energy(&self, x: &[T], _dx: &[T]) -> T {
+        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x);
         let tetmesh = &self.solid.tetmesh;
         let tet_iter = tetmesh
             .cell_iter()
@@ -224,8 +224,8 @@ impl<'a> SoftTriShellGravity<'a> {
 /// Gravity is a position based energy.
 impl<T: Real> Energy<T> for SoftTriShellGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
-    fn energy(&self, _x0: &[T], x1: &[T]) -> T {
-        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
+    fn energy(&self, x: &[T], _dx: &[T]) -> T {
+        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x);
         let tri_elems = &self.shell.triangle_elements;
         let tri_iter = tri_elems
             .triangles
@@ -248,10 +248,10 @@ impl<T: Real> Energy<T> for SoftTriShellGravity<'_> {
     }
 }
 
-impl<X: Real, T: Real> EnergyGradient<X, T> for SoftTriShellGravity<'_> {
+impl<T: Real> EnergyGradient<T, T> for SoftTriShellGravity<'_> {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
-        debug_assert_eq!(grad.len(), _x0.len());
+    fn add_energy_gradient(&self, _x: &[T], _v: &[T], grad: &mut [T], _dt: f64) {
+        debug_assert_eq!(grad.len(), _x.len());
 
         let tri_elems = &self.shell.triangle_elements;
         let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad);
@@ -285,7 +285,7 @@ impl EnergyHessianTopology for SoftTriShellGravity<'_> {
 }
 
 impl<T: Real> EnergyHessian<T> for SoftTriShellGravity<'_> {
-    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
+    fn energy_hessian_values(&self, _x: &[T], _dx: &[T], _scale: T, _vals: &mut [T], _dt: f64) {}
 }
 
 /*
@@ -409,17 +409,17 @@ impl RigidShellGravity {
 /// Gravity is a position based energy.
 impl<T: Real> Energy<T> for RigidShellGravity {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
-    fn energy(&self, _x0: &[T], x1: &[T]) -> T {
-        let pos = Vector3::new([x1[0], x1[1], x1[2]]);
+    fn energy(&self, x: &[T], _dx: &[T]) -> T {
+        let pos = Vector3::new([x[0], x[1], x[2]]);
         T::from(-self.mass).unwrap() * self.g.cast::<T>().dot(pos)
     }
 }
 
 impl<X: Real, T: Real> EnergyGradient<X, T> for RigidShellGravity {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
+    fn add_energy_gradient(&self, _x: &[X], _dx: &[T], grad: &mut [T], _dt: f64) {
         use tensr::AsMutTensor;
-        debug_assert_eq!(grad.len(), _x0.len());
+        debug_assert_eq!(grad.len(), _x.len());
 
         *grad[0..3].as_mut_tensor() -= self.g.cast::<T>() * T::from(self.mass).unwrap();
     }
@@ -436,7 +436,7 @@ impl EnergyHessianTopology for RigidShellGravity {
 }
 
 impl<T: Real> EnergyHessian<T> for RigidShellGravity {
-    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
+    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T], _dt: f64) {}
 }
 
 #[cfg(test)]

@@ -11,15 +11,15 @@ use num_traits::FromPrimitive;
 /// a fixed mesh can use this energy in place of elasticity, gravity or inertia.
 
 impl<T: Real, E: Energy<T>> Energy<T> for Option<E> {
-    fn energy(&self, x0: &[T], x1: &[T]) -> T {
-        self.as_ref().map_or(T::zero(), |e| e.energy(x0, x1))
+    fn energy(&self, x: &[T], v: &[T]) -> T {
+        self.as_ref().map_or(T::zero(), |e| e.energy(x, v))
     }
 }
 
 impl<X: Real, T: Real, E: EnergyGradient<X, T>> EnergyGradient<X, T> for Option<E> {
-    fn add_energy_gradient(&self, x0: &[X], x1: &[T], g: &mut [T]) {
+    fn add_energy_gradient(&self, x: &[X], v: &[T], g: &mut [T], dt: f64) {
         match self {
-            Some(e) => e.add_energy_gradient(x0, x1, g),
+            Some(e) => e.add_energy_gradient(x, v, g, dt),
             None => {}
         }
     }
@@ -57,9 +57,9 @@ impl<E: EnergyHessianTopology> EnergyHessianTopology for Option<E> {
 }
 
 impl<T: Real + Send + Sync, E: EnergyHessian<T>> EnergyHessian<T> for Option<E> {
-    fn energy_hessian_values(&self, x0: &[T], x1: &[T], scale: T, vals: &mut [T]) {
+    fn energy_hessian_values(&self, x0: &[T], x1: &[T], scale: T, vals: &mut [T], dt: f64) {
         match self {
-            Some(e) => e.energy_hessian_values(x0, x1, scale, vals),
+            Some(e) => e.energy_hessian_values(x0, x1, scale, vals, dt),
             None => {}
         }
     }
@@ -73,10 +73,10 @@ pub enum Either<A, B> {
 }
 
 impl<T: Real, A: Energy<T>, B: Energy<T>> Energy<T> for Either<A, B> {
-    fn energy(&self, x0: &[T], x1: &[T]) -> T {
+    fn energy(&self, x: &[T], v: &[T]) -> T {
         match self {
-            Either::Left(e) => e.energy(x0, x1),
-            Either::Right(e) => e.energy(x0, x1),
+            Either::Left(e) => e.energy(x, v),
+            Either::Right(e) => e.energy(x, v),
         }
     }
 }
@@ -84,10 +84,10 @@ impl<T: Real, A: Energy<T>, B: Energy<T>> Energy<T> for Either<A, B> {
 impl<X: Real, T: Real, A: EnergyGradient<X, T>, B: EnergyGradient<X, T>> EnergyGradient<X, T>
     for Either<A, B>
 {
-    fn add_energy_gradient(&self, x0: &[X], x1: &[T], g: &mut [T]) {
+    fn add_energy_gradient(&self, x: &[X], v: &[T], g: &mut [T], dt: f64) {
         match self {
-            Either::Left(e) => e.add_energy_gradient(x0, x1, g),
-            Either::Right(e) => e.add_energy_gradient(x0, x1, g),
+            Either::Left(e) => e.add_energy_gradient(x, v, g, dt),
+            Either::Right(e) => e.add_energy_gradient(x, v, g, dt),
         }
     }
 }
@@ -132,10 +132,10 @@ impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology f
 impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHessian<T>
     for Either<A, B>
 {
-    fn energy_hessian_values(&self, x0: &[T], x1: &[T], scale: T, vals: &mut [T]) {
+    fn energy_hessian_values(&self, x: &[T], v: &[T], scale: T, vals: &mut [T], dt: f64) {
         match self {
-            Either::Left(e) => e.energy_hessian_values(x0, x1, scale, vals),
-            Either::Right(e) => e.energy_hessian_values(x0, x1, scale, vals),
+            Either::Left(e) => e.energy_hessian_values(x, v, scale, vals, dt),
+            Either::Right(e) => e.energy_hessian_values(x, v, scale, vals, dt),
         }
     }
 }
@@ -145,17 +145,17 @@ impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHess
  */
 
 impl<T: Real, A: Energy<T>, B: Energy<T>> Energy<T> for (A, B) {
-    fn energy(&self, x0: &[T], x1: &[T]) -> T {
-        self.0.energy(x0, x1) + self.1.energy(x0, x1)
+    fn energy(&self, x: &[T], v: &[T]) -> T {
+        self.0.energy(x, v) + self.1.energy(x, v)
     }
 }
 
 impl<X: Real, T: Real, A: EnergyGradient<X, T>, B: EnergyGradient<X, T>> EnergyGradient<X, T>
     for (A, B)
 {
-    fn add_energy_gradient(&self, x0: &[X], x1: &[T], g: &mut [T]) {
-        self.0.add_energy_gradient(x0, x1, g);
-        self.1.add_energy_gradient(x0, x1, g);
+    fn add_energy_gradient(&self, x: &[X], v: &[T], g: &mut [T], dt: f64) {
+        self.0.add_energy_gradient(x, v, g, dt);
+        self.1.add_energy_gradient(x, v, g, dt);
     }
 }
 
@@ -197,11 +197,9 @@ impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology f
 }
 
 impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHessian<T> for (A, B) {
-    fn energy_hessian_values(&self, x0: &[T], x1: &[T], scale: T, vals: &mut [T]) {
-        self.0
-            .energy_hessian_values(x0, x1, scale, &mut vals[..self.0.energy_hessian_size()]);
-        self.1
-            .energy_hessian_values(x0, x1, scale, &mut vals[self.0.energy_hessian_size()..]);
+    fn energy_hessian_values(&self, x: &[T], v: &[T], scale: T, vals: &mut [T], dt: f64) {
+        self.0.energy_hessian_values(x, v, scale, &mut vals[..self.0.energy_hessian_size()], dt);
+        self.1.energy_hessian_values(x, v, scale, &mut vals[self.0.energy_hessian_size()..], dt);
     }
 }
 
@@ -256,23 +254,21 @@ pub(crate) mod test_utils {
 
     /// Construct a step in autodiff format given a set of initial positions. This function returns
     /// initial and current values for the independent variable determined by `ty`.
-    fn autodiff_step(pos: &[f64], ty: EnergyType) -> (Vec<F>, Vec<F>) {
+    fn autodiff_step(pos: &[f64], ty: EnergyType, dt: f64) -> (Vec<F>, Vec<F>, Vec<F>) {
         #[cfg(feature = "optsolver")]
-        let v0 = vec![F::cst(0.0); pos.len()]; // previous vel
-        let v1 = random_displacement(pos.len()); // current vel
-
-        let p0: Vec<F> = pos.iter().map(|&x| F::cst(x)).collect();
-
-        let p1: Vec<F> = pos
+        let dx0 = vec![F::cst(0.0); pos.len()]; // previous disp
+        let dx = random_displacement(pos.len()); // current disp
+        let x0: Vec<F> = pos.iter().map(|&x| F::cst(x)).collect();
+        let x: Vec<F> = x0
             .iter()
-            .zip(v1.iter())
-            .map(|(&x, &v)| F::cst(x + v))
+            .zip(dx.iter())
+            .map(|(&x, &dx)| F::cst(x + dt * dx))
             .collect();
 
         match ty {
-            EnergyType::Position => (p0, p1),
+            EnergyType::Position => (x0, x, dx),
             #[cfg(feature = "optsolver")]
-            EnergyType::Velocity => (v0, v1),
+            EnergyType::Velocity => (x0, dx0, dx),
         }
     }
 
@@ -280,15 +276,17 @@ pub(crate) mod test_utils {
     where
         E: Energy<F> + EnergyGradient<F, F>,
     {
+        let dt = 1.0;
         for (energy, pos) in configurations.iter() {
-            let (x0, mut x1) = autodiff_step(bytemuck::cast_slice(&pos), ty);
+            let (x0, mut x, mut dx) = autodiff_step(bytemuck::cast_slice(&pos), ty, dt);
 
             let mut grad = vec![F::zero(); 3 * pos.len()];
-            energy.add_energy_gradient(&x0, &x1, &mut grad);
+            energy.add_energy_gradient(&x, &dx, &mut grad, dt);
 
-            for i in 0..x0.len() {
-                x1[i] = F::var(x1[i]);
-                let energy = energy.energy(&x0, &x1);
+            for i in 0..x.len() {
+                dx[i] = F::var(dx[i]);
+                x[i] = x0[i] + dx[i] * dt;
+                let energy = energy.energy(&x, &dx);
                 assert_relative_eq!(
                     grad[i].value(),
                     energy.deriv(),
@@ -296,7 +294,8 @@ pub(crate) mod test_utils {
                     epsilon = 1e-10
                 );
 
-                x1[i] = F::cst(x1[i]);
+                dx[i] = F::cst(dx[i]);
+                x[i] = F::cst(x[i]);
             }
         }
     }
@@ -305,20 +304,22 @@ pub(crate) mod test_utils {
     where
         E: EnergyGradient<F, F> + EnergyHessian<F>,
     {
+        let dt = 1.0;
+
         // An arbitrary scale (!=1.0) that will ensure that Hessians are scaled correctly.
         let scale = 0.2;
         use crate::matrix::{MatrixElementIndex as Index, MatrixElementTriplet as Triplet};
 
         for (energy, pos) in configurations.iter() {
-            let (x0, mut x1) = autodiff_step(bytemuck::cast_slice(&pos), ty);
+            let (x0, mut x, mut dx) = autodiff_step(bytemuck::cast_slice(&pos), ty, dt);
 
             let mut hess_triplets =
                 vec![Triplet::new(0, 0, F::zero()); energy.energy_hessian_size()];
-            energy.energy_hessian(&x0, &x1, F::cst(scale), &mut hess_triplets);
+            energy.energy_hessian(&x, &dx, F::cst(scale), &mut hess_triplets, dt);
 
             // Build a dense hessian
-            let mut hess_ad = vec![vec![0.0; x0.len()]; x0.len()];
-            let mut hess = vec![vec![0.0; x0.len()]; x0.len()];
+            let mut hess_ad = vec![vec![0.0; x.len()]; x.len()];
+            let mut hess = vec![vec![0.0; x.len()]; x.len()];
             for Triplet {
                 idx: Index { row, col },
                 val,
@@ -331,12 +332,13 @@ pub(crate) mod test_utils {
             }
 
             let mut success = true;
-            for i in 0..x0.len() {
-                x1[i] = F::var(x1[i]);
-                let mut grad = vec![F::zero(); x0.len()];
-                energy.add_energy_gradient(&x0, &x1, &mut grad);
+            for i in 0..x.len() {
+                dx[i] = F::var(dx[i]);
+                x[i] = x0[i] + dx[i] * dt;
+                let mut grad = vec![F::zero(); x.len()];
+                energy.add_energy_gradient(&x, &dx, &mut grad, 1.0);
                 grad.iter_mut().for_each(|g| *g *= scale);
-                for j in 0..x0.len() {
+                for j in 0..x.len() {
                     let res = relative_eq!(
                         hess[i][j],
                         grad[j].deriv(),
@@ -349,13 +351,14 @@ pub(crate) mod test_utils {
                         eprintln!("({}, {}): {} vs. {}", i, j, hess[i][j], grad[j].deriv());
                     }
                 }
-                x1[i] = F::cst(x1[i]);
+                dx[i] = F::cst(dx[i]);
+                x[i] = F::cst(x[i]);
             }
 
-            if !success && x0.len() < 15 {
+            if !success && x.len() < 15 {
                 // Print dense hessian if its small
                 eprintln!("Actual:");
-                for row in 0..x0.len() {
+                for row in 0..x.len() {
                     for col in 0..=row {
                         eprint!("{:10.2e}", hess[row][col]);
                     }
@@ -363,7 +366,7 @@ pub(crate) mod test_utils {
                 }
 
                 eprintln!("Expected:");
-                for row in 0..x0.len() {
+                for row in 0..x.len() {
                     for col in 0..=row {
                         eprint!("{:10.2e}", hess_ad[row][col]);
                     }

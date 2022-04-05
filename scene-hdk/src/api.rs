@@ -29,8 +29,10 @@ impl From<TimeIntegration> for softy::nl_fem::TimeIntegration {
     fn from(ti: TimeIntegration) -> softy::nl_fem::TimeIntegration {
         match ti {
             TimeIntegration::TR => softy::nl_fem::TimeIntegration::TR,
-            //TimeIntegration::BDF2 => softy::nl_fem::TimeIntegration::BDF2,
-            //TimeIntegration::TRBDF2=> softy::nl_fem::TimeIntegration::TRBDF2,
+            TimeIntegration::BDF2 => softy::nl_fem::TimeIntegration::BDF2,
+            TimeIntegration::TRBDF2 => softy::nl_fem::TimeIntegration::TRBDF2(0.5),
+            TimeIntegration::TRBDF2U => softy::nl_fem::TimeIntegration::TRBDF2(2.0 - 2.0_f32.sqrt()),
+            TimeIntegration::SDIRK2 => softy::nl_fem::TimeIntegration::SDIRK2,
             _ => softy::nl_fem::TimeIntegration::BE,
         }
     }
@@ -114,7 +116,6 @@ fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
     let SimParams {
         ref materials,
         volume_constraint,
-        time_step,
         ..
     } = *params;
 
@@ -151,7 +152,7 @@ fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
                             ))
                             .with_volume_preservation(volume_constraint)
                             .with_density(density)
-                            .with_damping(damping, time_step),
+                            .with_damping(damping),
                     )),
                     ObjectType::Shell => Some(softy::Material::SoftShell(
                         softy::SoftShellMaterial::new(material_id as usize)
@@ -161,7 +162,7 @@ fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
                             ))
                             .with_bending_stiffness(bending_stiffness)
                             .with_density(density)
-                            .with_damping(damping, time_step),
+                            .with_damping(damping),
                     )),
                     ObjectType::Rigid => Some(softy::Material::Rigid(softy::RigidMaterial::new(
                         material_id as usize,

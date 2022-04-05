@@ -54,6 +54,8 @@ mod ffi {
         TR,
         BDF2,
         TRBDF2,
+        TRBDF2U,
+        SDIRK2,
     }
 
     #[derive(Debug)]
@@ -104,6 +106,7 @@ mod ffi {
         pub frictional_contacts: Vec<FrictionalContactParams>,
         pub zone_pressurizations: Vec<f32>,
         pub compression_coefficients: Vec<f32>,
+        pub hessian_approximation: Vec<u8>,
 
         // TODO: move these into FrictionalContactParams.
         pub friction_tolerance: f32, // epsilon

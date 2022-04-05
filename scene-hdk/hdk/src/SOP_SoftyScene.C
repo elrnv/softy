@@ -219,6 +219,39 @@ static const char *theDsFile = R"THEDSFILE(
     }
 
     group {
+        name "zones"
+        label "Volume Zones"
+
+        multiparm {
+            name    "volumezones"
+            cppname "VolumeZones"
+            label    "Volume Zones"
+            default 0
+
+            parm {
+                name "zonepressurization#"
+                label "Zone Pressurization"
+                type float
+                default { "1" }
+                range { 0! 10 }
+            }
+            parm {
+                name "compressioncoefficient#"
+                label "Compression Coefficient"
+                type log
+                default { "1" }
+                range { 0.0 1.0 }
+            }
+            parm {
+                name "hessianapproximation#"
+                label "Hessian Approximation"
+                type toggle
+                default { "on" }
+            }
+        }
+    }
+
+    group {
         name "constraints"
         label "Constraints"
 
@@ -324,6 +357,8 @@ static const char *theDsFile = R"THEDSFILE(
                 "tr" "Trapezoidal Rule (TR)"
                 "bdf2" "BDF2"
                 "trbdf2" "TR-BDF2"
+                "trbdf2u" "TR-BDF2-Uneven"
+                "sdirk2" "SDIRK2"
             }
         }
         parm {
@@ -592,6 +627,12 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftySceneParms &so
         case SOP_SoftySceneEnums::TimeIntegration::TRBDF2:
             sim_params.time_integration = softy::TimeIntegration::TRBDF2;
         break;
+        case SOP_SoftySceneEnums::TimeIntegration::TRBDF2U:
+            sim_params.time_integration = softy::TimeIntegration::TRBDF2U;
+            break;
+        case SOP_SoftySceneEnums::TimeIntegration::SDIRK2:
+            sim_params.time_integration = softy::TimeIntegration::SDIRK2;
+        break;
     }
     sim_params.velocity_clear_frequency = sopparms.getVelocityClearFrequency();
     sim_params.tolerance = sopparms.getInnerTolerance();
@@ -607,6 +648,14 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftySceneParms &so
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
 
     bool collider_material_id_parse_error = false;
+
+    // Get zone pressurizations.
+    const auto &sop_volume_zones = sopparms.getVolumeZones();
+    for (const auto &sop_z : sop_volume_zones) {
+        sim_params.zone_pressurizations.push_back(sop_z.zonepressurization);
+        sim_params.compression_coefficients.push_back(sop_z.compressioncoefficient);
+        sim_params.hessian_approximation.push_back(sop_z.hessianapproximation);
+    }
 
     // Get frictional contact params.
     const auto &sop_frictional_contacts = sopparms.getFrictionalContacts();

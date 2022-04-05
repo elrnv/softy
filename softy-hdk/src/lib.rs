@@ -102,6 +102,8 @@ mod ffi {
         TR,
         BDF2,
         TRBDF2,
+        TRBDF2U,
+        SDIRK2,
     }
 
     #[derive(Debug)]

@@ -424,6 +424,8 @@ static const char *theDsFile = R"THEDSFILE(
                 "tr" "Trapezoidal Rule (TR)"
                 "bdf2" "BDF2"
                 "trbdf2" "TR-BDF2"
+                "trbdf2u" "TR-BDF2-Uneven"
+                "sdirk2" "SDIRK2"
             }
             hidewhen "{ solvertype == ipopt }"
         }
@@ -767,6 +769,12 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
         break;
         case SOP_SoftyEnums::TimeIntegration::TRBDF2:
             sim_params.time_integration = softy::TimeIntegration::TRBDF2;
+        break;
+        case SOP_SoftyEnums::TimeIntegration::TRBDF2U:
+            sim_params.time_integration = softy::TimeIntegration::TRBDF2U;
+            break;
+        case SOP_SoftyEnums::TimeIntegration::SDIRK2:
+            sim_params.time_integration = softy::TimeIntegration::SDIRK2;
         break;
     }
     sim_params.velocity_clear_frequency = sopparms.getVelocityClearFrequency();

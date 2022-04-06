@@ -105,6 +105,13 @@ impl Default for SingleStepTimeIntegration {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ZoneParams {
+    pub zone_pressurizations: Vec<f32>,
+    pub compression_coefficients: Vec<f32>,
+    pub hessian_approximation: Vec<bool>,
+}
+
 /// Simulation parameters.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SimParams {

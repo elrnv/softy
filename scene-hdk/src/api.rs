@@ -260,7 +260,7 @@ pub(crate) fn new_scene(mesh: Option<Mesh>, params: SimParams) -> Result<SceneCo
         }
     }
 
-    scene.set_volume_zones(params.zone_pressurizations, params.compression_coefficients);
+    scene.set_volume_zones_from_params(params.zone_pressurizations, params.compression_coefficients, params.hessian_approximation.into_iter().map(|x| x != 0).collect::<Vec<_>>());
 
     Ok(scene)
 }

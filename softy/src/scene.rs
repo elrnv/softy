@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use flatk::IntoStorage;
 
-use crate::nl_fem::{SimParams, SolveResult, SolverBuilder};
+use crate::nl_fem::{SimParams, SolveResult, SolverBuilder, ZoneParams};
 use crate::{FrictionalContactParams, Material, Mesh};
 
 #[derive(Debug, Error)]
@@ -269,12 +269,6 @@ impl Scene {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ZoneParams {
-    pub zone_pressurizations: Vec<f32>,
-    pub compression_coefficients: Vec<f32>,
-}
-
 /// Scene configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SceneConfig {
@@ -331,13 +325,24 @@ impl SceneConfig {
     }
 
     /// Set the set materials used by the elements in this solver.
-    pub fn set_volume_zones(
+    pub fn set_volume_zones_from_params(
         &mut self,
         zone_pressurizations: impl Into<Vec<f32>>,
         compression_coefficients: impl Into<Vec<f32>>,
+        hessian_approximation: impl Into<Vec<bool>>,
     ) -> &mut Self {
         self.volume_zones.zone_pressurizations = zone_pressurizations.into();
         self.volume_zones.compression_coefficients = compression_coefficients.into();
+        self.volume_zones.hessian_approximation = hessian_approximation.into();
+        self
+    }
+
+    /// Set the set materials used by the elements in this solver.
+    pub fn set_volume_zones(
+        &mut self,
+        volume_zones: impl Into<ZoneParams>,
+    ) -> &mut Self {
+        self.volume_zones = volume_zones.into();
         self
     }
 
@@ -491,7 +496,8 @@ impl SceneConfig {
         let mut solver_builder = SolverBuilder::new(self.sim_params);
         solver_builder
             .set_mesh(mesh)
-            .set_materials(self.materials.clone());
+            .set_materials(self.materials.clone())
+            .set_volume_zones(self.volume_zones.clone());
         for (fc_params, (obj, col)) in self.frictional_contacts.iter() {
             solver_builder.add_frictional_contact(*fc_params, (*obj, *col));
         }

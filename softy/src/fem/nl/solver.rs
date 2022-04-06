@@ -22,7 +22,7 @@ use crate::objects::trishell::*;
 use crate::objects::*;
 use crate::{Error, Mesh, PointCloud};
 use crate::{Real, Real64};
-use crate::nl_fem::{SingleStepTimeIntegration};
+use crate::nl_fem::{SingleStepTimeIntegration, ZoneParams};
 
 #[derive(Clone, Debug)]
 pub struct SolverBuilder {
@@ -30,9 +30,7 @@ pub struct SolverBuilder {
     mesh: Mesh,
     materials: Vec<Material>,
     frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
-    zone_pressurizations: Vec<f32>,
-    compression_coefficients: Vec<f32>,
-    hessian_approximation: Vec<bool>,
+    volume_zones: ZoneParams,
 }
 
 ///// The index of the object subject to the appropriate contact constraint.
@@ -71,9 +69,7 @@ impl SolverBuilder {
             mesh: Mesh::default(),
             materials: Vec::new(),
             frictional_contacts: Vec::new(),
-            zone_pressurizations: Vec::new(),
-            compression_coefficients: Vec::new(),
-            hessian_approximation: Vec::new(),
+            volume_zones: ZoneParams::default(),
         }
     }
 
@@ -126,9 +122,18 @@ impl SolverBuilder {
         compression_coefficients: impl Into<Vec<f32>>,
         hessian_approximation: impl Into<Vec<bool>>,
     ) -> &mut Self {
-        self.zone_pressurizations = zone_pressurizations.into();
-        self.compression_coefficients = compression_coefficients.into();
-        self.hessian_approximation = hessian_approximation.into();
+        self.volume_zones.zone_pressurizations = zone_pressurizations.into();
+        self.volume_zones.compression_coefficients = compression_coefficients.into();
+        self.volume_zones.hessian_approximation = hessian_approximation.into();
+        self
+    }
+
+    /// Sets parameters that control how each zone resists volume change.
+    pub fn set_volume_zones(
+        &mut self,
+        zone_params: impl Into<ZoneParams>,
+    ) -> &mut Self {
+        self.volume_zones = zone_params.into();
         self
     }
 
@@ -136,16 +141,12 @@ impl SolverBuilder {
     fn build_volume_constraints(
         mesh: &Mesh,
         materials: &[Material],
-        zone_pressurizations: &[f32],
-        compression_coefficients: &[f32],
-        hessian_approximation: &[bool],
+        volume_zones: &ZoneParams,
     ) -> Result<Vec<RefCell<VolumeChangePenalty>>, Error> {
         Ok(VolumeChangePenalty::try_from_mesh(
             mesh,
             materials,
-            zone_pressurizations,
-            compression_coefficients,
-            hessian_approximation,
+            volume_zones,
         )?
         .into_iter()
         .map(RefCell::new)
@@ -587,9 +588,7 @@ impl SolverBuilder {
             mut mesh,
             materials,
             frictional_contacts,
-            zone_pressurizations,
-            compression_coefficients,
-            hessian_approximation,
+            volume_zones,
         } = self.clone();
 
         // Keep the original mesh around for easy inspection and visualization purposes.
@@ -641,9 +640,7 @@ impl SolverBuilder {
         let volume_constraints = Self::build_volume_constraints(
             &mesh,
             &materials,
-            &zone_pressurizations,
-            &compression_coefficients,
-            &hessian_approximation,
+            &volume_zones,
         )?;
 
         // Early exit if we detect any self contacts.

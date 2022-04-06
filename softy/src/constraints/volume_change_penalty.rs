@@ -9,6 +9,7 @@ use geo::VertexPositions;
 use geo::{attrib::*, mesh::topology::*, mesh::CellType, ops::Volume, Index};
 use rayon::iter::Either;
 use tensr::{Matrix3, Vector3};
+use crate::nl_fem::ZoneParams;
 
 /// One standard atmospheric pressure in `Pa`.
 const PRESSURE_ATM: f64 = 101325.0;
@@ -58,9 +59,7 @@ impl VolumeChangePenalty {
     pub fn try_from_mesh(
         mesh: &Mesh,
         materials: &[Material],
-        zone_pressurizations: &[f32],
-        compression_coefficients: &[f32],
-        hessian_approximation: &[bool],
+        zone_params: &ZoneParams,
     ) -> Result<Vec<Self>, Error> {
         if materials.is_empty() {
             return Ok(vec![]);
@@ -166,11 +165,11 @@ impl VolumeChangePenalty {
                 Some(VolumeChangePenalty {
                     surface_topo,
                     rest_volume: rest_volume.into(),
-                    pressurization: *zone_pressurizations.get(zone as usize - 1).unwrap_or(&1.0),
-                    compression: *compression_coefficients
+                    pressurization: *zone_params.zone_pressurizations.get(zone as usize - 1).unwrap_or(&1.0),
+                    compression: *zone_params.compression_coefficients
                         .get(zone as usize - 1)
                         .unwrap_or(&1.0),
-                    hessian_approximation: *hessian_approximation
+                    hessian_approximation: *zone_params.hessian_approximation
                         .get(zone as usize - 1)
                         .unwrap_or(&true),
                 })

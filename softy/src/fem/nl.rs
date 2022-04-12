@@ -176,6 +176,27 @@ pub enum Status {
     StepTooLarge,
     NothingToSolve,
     Interrupted,
+    FailedJacobianCheck,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct JacobianTimings {
+    pub total: Duration,
+    pub fem: Duration,
+    pub diag: Duration,
+    pub volume: Duration,
+    pub contact: Duration,
+    pub friction: Duration,
+}
+
+impl JacobianTimings {
+    pub fn clear(&mut self) {
+        self.fem = Duration::new(0, 0);
+        self.diag = Duration::new(0, 0);
+        self.volume = Duration::new(0, 0);
+        self.contact = Duration::new(0, 0);
+        self.friction = Duration::new(0, 0);
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
@@ -185,6 +206,7 @@ pub struct ResidualTimings {
     pub prepare_contact: Duration,
     pub contact_force: Duration,
     pub contact_jacobian: Duration,
+    pub jacobian: JacobianTimings,
     pub friction_force: FrictionTimings,
 }
 
@@ -240,6 +262,36 @@ impl Display for Timings {
             f,
             "    Contact force time:       {}",
             self.residual.contact_force.as_millis()
+        )?;
+        writeln!(
+            f,
+            "    Jacobian values time:     {}",
+            self.residual.jacobian.total.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Jacobian FEM:           {}",
+            self.residual.jacobian.fem.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Jacobian Diagonal:      {}",
+            self.residual.jacobian.diag.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Jacobian Volume:        {}",
+            self.residual.jacobian.volume.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Jacobian Contact:       {}",
+            self.residual.jacobian.contact.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Jacobian Friction:      {}",
+            self.residual.jacobian.friction.as_millis()
         )?;
         writeln!(
             f,

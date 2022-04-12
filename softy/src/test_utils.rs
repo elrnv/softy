@@ -11,6 +11,7 @@ use geo::mesh::builder::*;
 use geo::mesh::topology::{CellIndex, FaceIndex, NumCells, NumFaces, VertexIndex};
 use geo::mesh::VertexPositions;
 use geo::ops::*;
+use geo::topology::{CellVertex, CellVertexIndex};
 
 #[cfg(feature = "optsolver")]
 pub const STATIC_OPT_PARAMS: OptParams = OptParams {
@@ -403,6 +404,15 @@ pub fn make_box(i: usize) -> TetMesh {
     box_mesh
         .insert_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, ref_verts)
         .expect("Failed to add reference positions to box tetmesh");
+    let ref_pos_attrib = box_mesh.attrib::<VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB).unwrap()
+        .promote_with_len(box_mesh.num_cell_vertices(), |output, input| {
+            for (cvi, mut out) in output.into_iter().enumerate() {
+                let ci = cvi / 4;
+                let vi = cvi % 4;
+                out.clone_from_other(input.get(box_mesh.cell_to_vertex(ci, vi).unwrap().into_inner())).unwrap();
+            }
+        });
+    box_mesh.attrib_dict_mut::<CellVertexIndex>().insert(REFERENCE_CELL_VERTEX_POS_ATTRIB.to_string(), ref_pos_attrib);
     box_mesh
         .insert_attrib_data::<MaterialIdType, CellIndex>(
             MATERIAL_ID_ATTRIB,

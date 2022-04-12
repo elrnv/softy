@@ -33,6 +33,10 @@ pub struct NewtonParams {
     pub linsolve: LinearSolver,
     /// Line search method.
     pub line_search: LineSearch,
+    /// Inter step Jacobian check.
+    ///
+    /// If true this causes a fine grained derivative check at each Newton iteration.
+    pub derivative_check: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Error)]
@@ -881,6 +885,7 @@ where
         let init_sparse_solver = init_sparse_solver
             .borrow_mut()
             .expect("Uninitialized iterative sparse solver.");
+
         #[cfg(target_os = "macos")]
         if false {
             init_sparse_solver.update_values(init_sparse_jacobian_vals);
@@ -983,11 +988,19 @@ where
                     // }, x.len());
                     // print_dense(j_dense.view());
 
+                    // problem.jacobian_values(
+                    //     x,
+                    //     r_cur,
+                    //     &sparse_jacobian.j_rows,
+                    //     &sparse_jacobian.j_cols,
+                    //     sparse_jacobian.j_vals.as_mut_slice(),
+                    // );
+
                     linsolve_result = linsolve.solve_precond(
                         |p, out| {
                             let t_begin_jprod = Instant::now();
                             problem.jacobian_product(x, p, r_cur, out);
-                            //sparse_jacobian.compute_product(p, out);
+                            // sparse_jacobian.compute_product(p, out);
                             timings.jacobian_product += Instant::now() - t_begin_jprod;
                             inner_callback.borrow_mut()(CallbackArgs {
                                 residual: r_cur.as_slice(),
@@ -1023,7 +1036,7 @@ where
                     //     x.len(),
                     // );
                     let t_jacobian_values = Instant::now();
-                    log::trace!("Condition number: {:?}", {
+                    if params.derivative_check {
                         let j_dense_ad = j_dense_ad.borrow_mut_with(|| {
                             ChunkedN::from_flat_with_stride(
                                 x.len(),
@@ -1037,7 +1050,7 @@ where
                             },
                             x.len(),
                         );
-                        print_dense(j_dense_ad.view());
+                        // print_dense(j_dense_ad.view());
 
                         let j_dense = j_dense.borrow_mut_with(|| {
                             ChunkedN::from_flat_with_stride(
@@ -1052,24 +1065,47 @@ where
                             &sparse_jacobian.j_vals,
                             x.len(),
                         );
-                        print_dense(j_dense.view());
+                        // dbg!(x.len());
+                        // print_dense(j_dense.view());
                         //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
                         //write_jacobian_img(j_dense.view(), iterations);
 
-                        // let mut success = true;
-                        // for i in 0..j_dense.len() {
-                        //     for j in 0..j_dense.len() {
-                        //         let a = *j_dense.view().at(i).at(j);
-                        //         let b = *j_dense_ad.view().at(j).at(i);
-                        //         if num_traits::Float::abs(a - b) > T::from(1e-4).unwrap() {
-                        //             eprintln!("({},{}): {} vs {}", i, j, a, b);
-                        //             success = false;
-                        //         }
-                        //     }
-                        // }
-                        // if !success {
-                        //     panic!("Jacobian Error");
-                        // }
+                        let mut success = true;
+                        for i in 0..j_dense.len() {
+                            for j in 0..j_dense.len() {
+                                let a = *j_dense.view().at(i).at(j);
+                                let b = *j_dense_ad.view().at(j).at(i);
+                                if num_traits::Float::abs(a - b) > T::from(1e-4).unwrap() {
+                                    eprintln!("({},{}): {} vs {}", i, j, a, b);
+                                    success = false;
+                                }
+                            }
+                        }
+                        if !success {
+                            return SolveResult {
+                                iterations,
+                                status: Status::FailedJacobianCheck,
+                                timings,
+                                stats,
+                            };
+                        }
+                    }
+                    log::trace!("Condition number: {:?}", {
+                        let j_dense = j_dense.borrow_mut_with(|| {
+                            ChunkedN::from_flat_with_stride(
+                                x.len(),
+                                vec![T::zero(); x.len() * r.len()],
+                            )
+                        });
+                        build_dense(
+                            j_dense.view_mut(),
+                            &sparse_jacobian.j_rows,
+                            &sparse_jacobian.j_cols,
+                            &sparse_jacobian.j_vals,
+                            x.len(),
+                        );
+                        //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
+                        //write_jacobian_img(j_dense.view(), iterations);
                         condition_number(j_dense.view())
                     });
                     let t_linsolve_debug_info = Instant::now();
@@ -1232,7 +1268,7 @@ where
                     //     let mut probe_r = vec![T::zero(); r_next.len()];
                     //     let mut probe_x = vec![T::zero(); x.len()];
                     //     for i in 0..=1000 {
-                    //         let alpha: f64 = 2.0*max_alpha*0.001 * i as f64;
+                    //         let alpha: f64 = (4.0*max_alpha).min(1.0)*0.001 * i as f64;
                     //         zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
                     //             |(x, &x0, &p)| {
                     //                 *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);

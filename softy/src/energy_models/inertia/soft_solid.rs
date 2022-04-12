@@ -259,7 +259,7 @@ impl<T: Real> Energy<T> for TetSolidInertia<'_> {
 
 impl<X: Real, T: Real> EnergyGradient<X, T> for TetSolidInertia<'_> {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T], _dt: f64) {
+    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T], _dqdv: T) {
         let tet_elems = &self.0;
 
         let vel0: &[Vector3<X>] = bytemuck::cast_slice(v0);
@@ -372,7 +372,7 @@ impl EnergyHessianTopology for TetSolidInertia<'_> {
 
 impl<T: Real> EnergyHessian<T> for TetSolidInertia<'_> {
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T], _dt: f64) {
+    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T], _dqdv: T) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
         let tet_elems = &self.0;

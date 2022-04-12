@@ -374,7 +374,7 @@ impl VolumeChangePenalty {
         (0..3).flat_map(move |vi| {
             let col_v = tri[vi];
             let row_v = move |off| tri[(vi + off) % 3];
-            (1..=2)
+            (1..3)
                 // .filter(move |&off| row_v(off) > col_v)
                 .flat_map(move |off| {
                     (0..3).flat_map(move |c| {
@@ -458,5 +458,82 @@ impl VolumeChangePenalty {
                     Either::Right(std::iter::empty())
                 })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use approx::relative_eq;
+    use flatk::{Chunked3, IntoStorage};
+    use utils::random_vectors;
+    use crate::load_material;
+    use crate::test_utils::{make_box};
+    use super::*;
+    use autodiff::FT;
+    use num_traits::Zero;
+    use crate::nl_fem::state::VertexType;
+
+    #[test]
+    fn volume_penalty_hessian() {
+        let mut mesh = make_box(1);
+        mesh
+            .insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0; mesh.num_vertices()])
+            .unwrap();
+        mesh
+            .insert_attrib_data::<VertexType, VertexIndex>(
+                VERTEX_TYPE_ATTRIB,
+                vec![VertexType::Free; mesh.num_vertices()],
+            )
+            .unwrap();
+        mesh.insert_attrib_data::<VolumeZoneIdType, CellIndex>(
+            VOLUME_ZONE_ID_ATTRIB,
+            vec![1; mesh.num_cells()],
+        ).unwrap();
+        let v = Chunked3::from_array_vec(random_vectors(mesh.num_vertices())).into_storage();
+        let n = v.len();
+        let material = load_material("assets/medium_solid_material.ron").expect("Missing material config.");
+        let vc = VolumeChangePenalty::try_from_mesh(
+            &Mesh::from(mesh),
+        &[material],
+        &ZoneParams {
+            zone_pressurizations: vec![0.9],
+            compression_coefficients: vec![0.2],
+            hessian_approximation: vec![false],
+        }).expect("Failed to create a volume change penalty").into_iter().next().unwrap();
+
+        let mut jac = vec![vec![0.0; n]; n];
+        for (MatrixElementIndex{ row, col }, val) in
+            vc.penalty_hessian_indices_iter().zip(vc.penalty_hessian_values_iter(&v, &v, &[1.0])) {
+            jac[row][col] += val;
+        }
+
+        let mut v_ad: Vec<_> = v.into_iter().map(|x| FT::<f64>::cst(x)).collect();
+
+        let mut success = true;
+        for col in 0..n {
+            v_ad[col] = FT::var(v_ad[col]);
+            let mut grad = vec![FT::<f64>::zero(); n];
+            for (MatrixElementIndex { col, .. }, val) in vc.penalty_jacobian_indices_iter().zip(vc.penalty_jacobian_values_iter(&v_ad, &v_ad)) {
+                grad[col] += val;
+            }
+
+            for row in 0..n {
+                let res = relative_eq!(jac[row][col], grad[row].deriv(), max_relative = 1e-6, epsilon = 1e-7);
+
+                if !res {
+                    success = false;
+                    eprintln!(
+                        "({}, {}): {} vs. {}; ratio: {}",
+                        row,
+                        col,
+                        jac[row][col],
+                        grad[row].deriv(),
+                        jac[row][col]/grad[row].deriv()
+                    );
+                }
+            }
+            v_ad[col] = FT::cst(v_ad[col]);
+        }
+        assert!(success);
     }
 }

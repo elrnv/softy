@@ -22,7 +22,7 @@ use crate::objects::trishell::*;
 use crate::objects::*;
 use crate::{Error, Mesh, PointCloud};
 use crate::{Real, Real64};
-use crate::nl_fem::{SingleStepTimeIntegration, ZoneParams};
+use crate::nl_fem::{JacobianWorkspace, SingleStepTimeIntegration, ZoneParams};
 
 #[derive(Clone, Debug)]
 pub struct SolverBuilder {
@@ -768,8 +768,7 @@ impl SolverBuilder {
             original_mesh: orig_mesh,
             candidate_force: RefCell::new(vec![T::zero(); num_verts * 3]),
             prev_force: vec![T::zero(); num_verts * 3],
-            candidate_force_ad: RefCell::new(vec![autodiff::FT::<T>::zero(); num_verts * 3]),
-            prev_force_ad: vec![autodiff::FT::<T>::zero(); num_verts * 3],
+            jacobian_workspace: RefCell::new(JacobianWorkspace::default()),
             // Time integration is set during time stepping and can change between subsequent steps.
             time_integration: SingleStepTimeIntegration::BE,
             line_search_ws: RefCell::new(LineSearchWorkspace {
@@ -829,6 +828,7 @@ impl SolverBuilder {
                 max_iter: params.max_iterations,
                 linsolve: params.linsolve,
                 line_search: params.line_search,
+                derivative_check: self.sim_params.derivative_test > 2
             },
             Box::new(move |_args| {
                 //let mesh = _args.problem.mesh_with(_args.x);
@@ -1074,6 +1074,7 @@ where
         let mut result = SolveResult::default();
         for stage in 0..time_integration.num_stages() {
             let (step_integrator, factor) = time_integration.step_integrator(stage);
+            log::debug!("Single step integration scheme: {step_integrator:?}");
             self.solver.problem_mut().time_integration = step_integrator;
             self.solver.problem_mut().time_step = true_time_step * factor as f64;
 
@@ -1083,8 +1084,7 @@ where
             // No need to do this every time.
             self.solver
                 .problem()
-                .check_jacobian(self.sim_params.derivative_test, self.solution.as_slice(), false)
-                .unwrap(); //?;
+                .check_jacobian(self.sim_params.derivative_test, self.solution.as_slice(), false)?;
 
             // Loop to resolve all contacts.
             let mut first_contact_iteration = true;

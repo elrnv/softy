@@ -72,7 +72,7 @@ impl<T: Real> Energy<T> for TetSolidGravity<'_> {
 
 impl<X: Real, T: Real> EnergyGradient<X, T> for TetSolidGravity<'_> {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x: &[X], _dx: &[T], grad: &mut [T], _dt: f64) {
+    fn add_energy_gradient(&self, _x: &[X], _dx: &[T], grad: &mut [T], _dqdv: T) {
         debug_assert_eq!(grad.len(), _x.len());
 
         let tet_elems = &self.solid;
@@ -104,7 +104,7 @@ impl EnergyHessianTopology for TetSolidGravity<'_> {
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
 }
 impl<T: Real> EnergyHessian<T> for TetSolidGravity<'_> {
-    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T], _dt: f64) {}
+    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T], _dqdv: T) {}
 }
 
 /// A constant directional force.
@@ -250,7 +250,7 @@ impl<T: Real> Energy<T> for SoftTriShellGravity<'_> {
 
 impl<T: Real> EnergyGradient<T, T> for SoftTriShellGravity<'_> {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x: &[T], _v: &[T], grad: &mut [T], _dt: f64) {
+    fn add_energy_gradient(&self, _x: &[T], _v: &[T], grad: &mut [T], _dqdv: T) {
         debug_assert_eq!(grad.len(), _x.len());
 
         let tri_elems = &self.shell.triangle_elements;
@@ -285,7 +285,7 @@ impl EnergyHessianTopology for SoftTriShellGravity<'_> {
 }
 
 impl<T: Real> EnergyHessian<T> for SoftTriShellGravity<'_> {
-    fn energy_hessian_values(&self, _x: &[T], _dx: &[T], _scale: T, _vals: &mut [T], _dt: f64) {}
+    fn energy_hessian_values(&self, _x: &[T], _dx: &[T], _scale: T, _vals: &mut [T], _dqdv: T) {}
 }
 
 /*
@@ -417,7 +417,7 @@ impl<T: Real> Energy<T> for RigidShellGravity {
 
 impl<X: Real, T: Real> EnergyGradient<X, T> for RigidShellGravity {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x: &[X], _dx: &[T], grad: &mut [T], _dt: f64) {
+    fn add_energy_gradient(&self, _x: &[X], _dx: &[T], grad: &mut [T], _dqdv: T) {
         use tensr::AsMutTensor;
         debug_assert_eq!(grad.len(), _x.len());
 
@@ -436,7 +436,7 @@ impl EnergyHessianTopology for RigidShellGravity {
 }
 
 impl<T: Real> EnergyHessian<T> for RigidShellGravity {
-    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T], _dt: f64) {}
+    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T], _dqdv: T) {}
 }
 
 #[cfg(test)]

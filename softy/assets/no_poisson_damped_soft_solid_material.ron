@@ -1,0 +1,17 @@
+Solid((
+    id: 0,
+    properties: (
+        volume_preservation: false,
+        deformable: (
+            elasticity: Some((
+                model: NeoHookean,
+                parameters: YoungPoisson(
+                    young: 1.0e3,
+                    poisson: 0.0,
+                )
+            )),
+            density: Some(1000),
+            damping: 1,
+        ),
+    ),
+))

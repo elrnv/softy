@@ -88,16 +88,17 @@ fn stretch_volume_penalty() -> Result<(), Error> {
         VOLUME_ZONE_ID_ATTRIB,
         vec![1; mesh.num_cells()],
     )?;
+    // geo::io::save_tetmesh(&mesh, "./out/stretched_tetmesh.vtk");
     let mut solver = SolverBuilder::new(NLParams {
         gravity: [0.0f32, 0.0, 0.0],
         // Skip derivative test since volume penalty does not use full hessian for high compression coefficients.
-        derivative_test: 0,
+        // derivative_test: 0,
         ..static_nl_params()
     })
-    .set_mesh(Mesh::from(mesh))
-    .set_materials(vec![material])
-    .set_volume_penalty_params(vec![1.0], vec![0.1], vec![true])
-    .build()?;
+        .set_mesh(Mesh::from(mesh))
+        .set_materials(vec![material])
+        .set_volume_penalty_params(vec![1.0], vec![0.1], vec![false])
+        .build()?;
     solver.step()?;
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk"))?;
@@ -139,6 +140,7 @@ fn stretch_volume_penalty_triangles() -> Result<(), Error> {
         VOLUME_ZONE_ID_ATTRIB,
         vec![1; mesh.num_faces()],
     )?;
+    // geo::io::save_polymesh(&geo::PolyMesh::from(mesh.clone()), "./out/stretched_trimesh.vtk");
     let mut solver = SolverBuilder::new(NLParams {
         gravity: [0.0f32, 0.0, 0.0],
         ..static_nl_params()
@@ -170,6 +172,30 @@ fn twist_plain() -> Result<(), Error> {
         .set_materials(vec![material.into()])
         .build::<f64>()?;
     solver.step()?;
+    let expected: TetMesh = geo::io::load_tetmesh("assets/box_twisted.vtk")?;
+    let solution_verts = PointCloud::new(solver.vertex_positions());
+    compare_meshes(&solution_verts, &expected, 1e-3);
+    Ok(())
+}
+
+#[test]
+fn twist_damped_dynamic() -> Result<(), Error> {
+    init_logger();
+    let material: Material = load_material("assets/no_poisson_damped_soft_solid_material.ron")?;
+    let mesh = geo::io::load_tetmesh("assets/box_twist.vtk")?;
+    let params = NLParams {
+        gravity: [0.0f32, 0.0, 0.0],
+        time_step: Some(0.5),
+        time_integration: TimeIntegration::TRBDF2(0.5), // Exotic integrator to make sure damping derivative is right
+        ..static_nl_params()
+    };
+    let mut solver = SolverBuilder::new(params)
+        .set_mesh(Mesh::from(mesh))
+        .set_materials(vec![material.into()])
+        .build::<f64>()?;
+    for _ in 0..50 {
+        solver.step()?;
+    }
     let expected: TetMesh = geo::io::load_tetmesh("assets/box_twisted.vtk")?;
     let solution_verts = PointCloud::new(solver.vertex_positions());
     compare_meshes(&solution_verts, &expected, 1e-3);

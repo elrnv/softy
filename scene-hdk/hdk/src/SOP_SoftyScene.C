@@ -454,7 +454,7 @@ static const char *theDsFile = R"THEDSFILE(
             label "Derivative Test"
             type integer
             default { "0" }
-            range { 0! 2! }
+            range { 0! 3 }
         }
         parm {
             name "frictiontolerance"

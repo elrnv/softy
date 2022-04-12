@@ -256,7 +256,7 @@ impl<T: Real> Energy<T> for SoftTriShellInertia<'_> {
 
 impl<X: Real, T: Real> EnergyGradient<X, T> for SoftTriShellInertia<'_> {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T], _dt: f64) {
+    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T], _dqdv: T) {
         let tri_elems = &self.0.triangle_elements;
 
         let vel0: &[Vector3<X>] = bytemuck::cast_slice(v0);
@@ -367,7 +367,7 @@ impl EnergyHessianTopology for SoftTriShellInertia<'_> {
 
 impl<T: Real> EnergyHessian<T> for SoftTriShellInertia<'_> {
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T], _dt: f64) {
+    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T], _dqdv: T) {
         debug_assert_eq!(values.len(), self.energy_hessian_size());
 
         let tri_elems = &self.0.triangle_elements;

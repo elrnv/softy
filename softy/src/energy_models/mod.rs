@@ -17,9 +17,9 @@ impl<T: Real, E: Energy<T>> Energy<T> for Option<E> {
 }
 
 impl<X: Real, T: Real, E: EnergyGradient<X, T>> EnergyGradient<X, T> for Option<E> {
-    fn add_energy_gradient(&self, x: &[X], v: &[T], g: &mut [T], dt: f64) {
+    fn add_energy_gradient(&self, x: &[X], v: &[T], g: &mut [T], dqdv: T) {
         match self {
-            Some(e) => e.add_energy_gradient(x, v, g, dt),
+            Some(e) => e.add_energy_gradient(x, v, g, dqdv),
             None => {}
         }
     }
@@ -57,9 +57,9 @@ impl<E: EnergyHessianTopology> EnergyHessianTopology for Option<E> {
 }
 
 impl<T: Real + Send + Sync, E: EnergyHessian<T>> EnergyHessian<T> for Option<E> {
-    fn energy_hessian_values(&self, x0: &[T], x1: &[T], scale: T, vals: &mut [T], dt: f64) {
+    fn energy_hessian_values(&self, x0: &[T], x1: &[T], scale: T, vals: &mut [T], dqdv: T) {
         match self {
-            Some(e) => e.energy_hessian_values(x0, x1, scale, vals, dt),
+            Some(e) => e.energy_hessian_values(x0, x1, scale, vals, dqdv),
             None => {}
         }
     }
@@ -84,10 +84,10 @@ impl<T: Real, A: Energy<T>, B: Energy<T>> Energy<T> for Either<A, B> {
 impl<X: Real, T: Real, A: EnergyGradient<X, T>, B: EnergyGradient<X, T>> EnergyGradient<X, T>
     for Either<A, B>
 {
-    fn add_energy_gradient(&self, x: &[X], v: &[T], g: &mut [T], dt: f64) {
+    fn add_energy_gradient(&self, x: &[X], v: &[T], g: &mut [T], dqdv: T) {
         match self {
-            Either::Left(e) => e.add_energy_gradient(x, v, g, dt),
-            Either::Right(e) => e.add_energy_gradient(x, v, g, dt),
+            Either::Left(e) => e.add_energy_gradient(x, v, g, dqdv),
+            Either::Right(e) => e.add_energy_gradient(x, v, g, dqdv),
         }
     }
 }
@@ -132,10 +132,10 @@ impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology f
 impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHessian<T>
     for Either<A, B>
 {
-    fn energy_hessian_values(&self, x: &[T], v: &[T], scale: T, vals: &mut [T], dt: f64) {
+    fn energy_hessian_values(&self, x: &[T], v: &[T], scale: T, vals: &mut [T], dqdv: T) {
         match self {
-            Either::Left(e) => e.energy_hessian_values(x, v, scale, vals, dt),
-            Either::Right(e) => e.energy_hessian_values(x, v, scale, vals, dt),
+            Either::Left(e) => e.energy_hessian_values(x, v, scale, vals, dqdv),
+            Either::Right(e) => e.energy_hessian_values(x, v, scale, vals, dqdv),
         }
     }
 }
@@ -153,9 +153,9 @@ impl<T: Real, A: Energy<T>, B: Energy<T>> Energy<T> for (A, B) {
 impl<X: Real, T: Real, A: EnergyGradient<X, T>, B: EnergyGradient<X, T>> EnergyGradient<X, T>
     for (A, B)
 {
-    fn add_energy_gradient(&self, x: &[X], v: &[T], g: &mut [T], dt: f64) {
-        self.0.add_energy_gradient(x, v, g, dt);
-        self.1.add_energy_gradient(x, v, g, dt);
+    fn add_energy_gradient(&self, x: &[X], v: &[T], g: &mut [T], dqdv: T) {
+        self.0.add_energy_gradient(x, v, g, dqdv);
+        self.1.add_energy_gradient(x, v, g, dqdv);
     }
 }
 
@@ -197,9 +197,9 @@ impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology f
 }
 
 impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHessian<T> for (A, B) {
-    fn energy_hessian_values(&self, x: &[T], v: &[T], scale: T, vals: &mut [T], dt: f64) {
-        self.0.energy_hessian_values(x, v, scale, &mut vals[..self.0.energy_hessian_size()], dt);
-        self.1.energy_hessian_values(x, v, scale, &mut vals[self.0.energy_hessian_size()..], dt);
+    fn energy_hessian_values(&self, x: &[T], v: &[T], scale: T, vals: &mut [T], dqdv: T) {
+        self.0.energy_hessian_values(x, v, scale, &mut vals[..self.0.energy_hessian_size()], dqdv);
+        self.1.energy_hessian_values(x, v, scale, &mut vals[self.0.energy_hessian_size()..], dqdv);
     }
 }
 
@@ -276,16 +276,16 @@ pub(crate) mod test_utils {
     where
         E: Energy<F> + EnergyGradient<F, F>,
     {
-        let dt = 1.0;
+        let dqdv = 1.0;
         for (energy, pos) in configurations.iter() {
-            let (x0, mut x, mut dx) = autodiff_step(bytemuck::cast_slice(&pos), ty, dt);
+            let (x0, mut x, mut dx) = autodiff_step(bytemuck::cast_slice(&pos), ty, dqdv);
 
             let mut grad = vec![F::zero(); 3 * pos.len()];
-            energy.add_energy_gradient(&x, &dx, &mut grad, dt);
+            energy.add_energy_gradient(&x, &dx, &mut grad, F::cst(dqdv));
 
             for i in 0..x.len() {
                 dx[i] = F::var(dx[i]);
-                x[i] = x0[i] + dx[i] * dt;
+                x[i] = x0[i] + dx[i] * F::cst(dqdv);
                 let energy = energy.energy(&x, &dx);
                 assert_relative_eq!(
                     grad[i].value(),
@@ -315,7 +315,7 @@ pub(crate) mod test_utils {
 
             let mut hess_triplets =
                 vec![Triplet::new(0, 0, F::zero()); energy.energy_hessian_size()];
-            energy.energy_hessian(&x, &dx, F::cst(scale), &mut hess_triplets, dt);
+            energy.energy_hessian(&x, &dx, F::cst(scale), &mut hess_triplets, F::cst(dt));
 
             // Build a dense hessian
             let mut hess_ad = vec![vec![0.0; x.len()]; x.len()];
@@ -336,7 +336,7 @@ pub(crate) mod test_utils {
                 dx[i] = F::var(dx[i]);
                 x[i] = x0[i] + dx[i] * dt;
                 let mut grad = vec![F::zero(); x.len()];
-                energy.add_energy_gradient(&x, &dx, &mut grad, 1.0);
+                energy.add_energy_gradient(&x, &dx, &mut grad, F::cst(1.0));
                 grad.iter_mut().for_each(|g| *g *= scale);
                 for j in 0..x.len() {
                     let res = relative_eq!(

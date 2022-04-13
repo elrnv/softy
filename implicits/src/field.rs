@@ -313,11 +313,9 @@ impl<T: Real> ImplicitSurfaceBase<T> {
                     ..
                 } = samples;
 
-                for (vertex_pos, sample_pos) in
-                    surface_vertex_positions.iter().zip(positions.iter_mut())
-                {
+                surface_vertex_positions.iter().zip(positions.iter_mut()).for_each(|(vertex_pos, sample_pos)| {
                     *sample_pos = *vertex_pos;
-                }
+                });
 
                 // Compute unnormalized area weighted vertex normals given a triangle topology.
                 geo::algo::compute_vertex_area_weighted_normals(positions, surface_topo, normals);
@@ -328,7 +326,42 @@ impl<T: Real> ImplicitSurfaceBase<T> {
         }
     }
 
-    /// Update vertex positions and samples using an iterator over mesh vertices. This is a very
+    /// Update the stored samples. This assumes that vertex positions have been updated.
+    fn update_samples_par(&mut self) {
+        let ImplicitSurfaceBase {
+            ref mut samples,
+            ref surface_topo,
+            ref surface_vertex_positions,
+            sample_type,
+            ..
+        } = self;
+
+        match sample_type {
+            SampleType::Vertex => {
+                let Samples {
+                    ref mut positions,
+                    ref mut normals,
+                    // ref mut tangents
+                    ..
+                } = samples;
+
+                surface_vertex_positions.par_iter().zip(positions.par_iter_mut()).for_each(|(vertex_pos, sample_pos)| {
+                    *sample_pos = *vertex_pos;
+                });
+
+                // Compute unnormalized area weighted vertex normals given a triangle topology.
+                // (Not parallel)
+                geo::algo::compute_vertex_area_weighted_normals(positions, surface_topo, normals);
+            }
+            SampleType::Face => {
+                samples.update_triangle_samples_par(surface_topo, surface_vertex_positions);
+            }
+        }
+    }
+
+    /// Update vertex positions and samples using an iterator over mesh vertices.
+    ///
+    /// This is a very
     /// permissive `update` function, which will update as many positions as possible and recompute
     /// the implicit surface data (like samples and spatial tree if needed) whether or not enough
     /// positions were specified to cover all surface vertices. This function will return the
@@ -346,6 +379,27 @@ impl<T: Real> ImplicitSurfaceBase<T> {
 
         // Then update the samples that determine the shape of the implicit surface.
         self.update_samples();
+
+        // Finally update the rtree responsible for neighbor search.
+        self.spatial_tree = build_rtree_from_samples(&self.samples);
+
+        num_updated
+    }
+
+    /// Update vertex positions and samples using an iterator over mesh vertices.
+    ///
+    /// Parallel version of `update`.
+    pub fn update_par<I>(&mut self, vertex_iter: I) -> usize
+        where
+            I: IndexedParallelIterator<Item = [T; 3]>,
+    {
+        // First we update the surface vertex positions.
+        let num_updated = self.surface_vertex_positions.par_iter_mut().zip(vertex_iter).map(|(p, new_p)| {
+            *p = new_p;
+        }).count();
+
+        // Then update the samples that determine the shape of the implicit surface.
+        self.update_samples_par();
 
         // Finally update the rtree responsible for neighbor search.
         self.spatial_tree = build_rtree_from_samples(&self.samples);

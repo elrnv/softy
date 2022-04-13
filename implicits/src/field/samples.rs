@@ -200,6 +200,39 @@ impl<T: Real> Samples<T> {
         }
     }
 
+    /// Update samples centered at the centroids of the given triangles.
+    ///
+    /// Parallel version of `update_triangle_samples`.
+    pub fn update_triangle_samples_par<V3>(&mut self, triangles: &[[usize; 3]], vertices: &[V3])
+        where
+            V3: Into<[T; 3]> + Into<Vector3<T>> + Clone + Send + Sync,
+    {
+        let Samples {
+            ref mut positions,
+            ref mut normals,
+            ref mut velocities,
+            ..
+        } = self;
+
+        let new_iter = triangles.par_iter().map(|tri_indices| {
+            let tri = Triangle::from_indexed_slice(tri_indices, vertices);
+            let v = Vector3::new(tri[1].into()) - Vector3::new(tri[0].into()); // tangent direction
+            (tri.centroid(), tri.area_normal(), v / v.norm())
+        });
+
+
+        (positions
+            .par_iter_mut()
+            .zip(normals.par_iter_mut())
+            .zip(velocities.par_iter_mut()))
+            .zip(new_iter).for_each(|(((pos, nml), vel), (new_pos, new_nml, new_vel))|
+        {
+            *pos = new_pos;
+            *nml = new_nml;
+            *vel = new_vel;
+        });
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.positions.is_empty()

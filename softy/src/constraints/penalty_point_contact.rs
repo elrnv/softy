@@ -1300,7 +1300,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         self.lambda.clear();
         self.lambda.resize(dist.len(), T::zero());
         let kappa = T::from(kappa).unwrap();
-        self.lambda.iter_mut().zip(dist.iter()).for_each(|(l, &d)| {
+        self.lambda.par_iter_mut().zip(dist.par_iter()).for_each(|(l, &d)| {
             *l = -kappa * ContactPenalty::new(delta).db(d);
         });
     }

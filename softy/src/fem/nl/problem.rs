@@ -1484,7 +1484,7 @@ impl<T: Real64> NLProblem<T> {
             return;
         }
 
-        let (rows, cols) = self.jacobian_indices();
+        let (rows, cols) = self.jacobian_indices(true);
 
         let n = self.num_variables();
         let nrows = n;
@@ -1736,11 +1736,9 @@ impl<T: Real64> NLProblem<T> {
 
             let timings = &mut *self.timings.borrow_mut();
 
-            add_time!(timings.prepare_contact; {
-                fc_constraint.update_state(Chunked3::from_flat(pos));
-                fc_constraint.update_distance_potential();
-                fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
-            });
+            add_time!(timings.update_state; fc_constraint.update_state(Chunked3::from_flat(pos)) );
+            add_time!(timings.update_distance_potential; fc_constraint.update_distance_potential() );
+            add_time!(timings.update_multipliers; fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32));
             add_time!(timings.contact_force; fc_constraint.subtract_constraint_force(Chunked3::from_flat(r)));
         }
         self.subtract_friction_forces(pos, vel, r, frictional_contact_constraints);
@@ -2226,11 +2224,11 @@ impl<T: Real64> NLProblem<T> {
         }
     }
 
-    fn jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {
+    fn jacobian_indices(&self, with_constraints: bool) -> (Vec<usize>, Vec<usize>) {
         let jac_nnz = self.jacobian_nnz();
         let mut rows = vec![0; jac_nnz];
         let mut cols = vec![0; jac_nnz];
-        let count = self.compute_jacobian_indices(&mut rows, &mut cols);
+        let count = self.compute_jacobian_indices(&mut rows, &mut cols, with_constraints);
 
         //assert_eq!(count, rows.len());
         //assert_eq!(count, cols.len());
@@ -2241,7 +2239,7 @@ impl<T: Real64> NLProblem<T> {
     }
 
     /// Returns number of actual non-zeros in the Jacobian.
-    fn compute_jacobian_indices(&self, rows: &mut [usize], cols: &mut [usize]) -> usize {
+    fn compute_jacobian_indices(&self, rows: &mut [usize], cols: &mut [usize], with_constraints: bool) -> usize {
         let num_active_coords = self.num_variables();
         let mut count = 0; // Constraint counter
 
@@ -2310,43 +2308,6 @@ impl<T: Real64> NLProblem<T> {
 
         count += num_off_diagonals;
 
-        // Add volume constraint indices
-        for vc in self.volume_constraints.iter() {
-            let mut nh = 0;
-            for MatrixElementIndex { row, col } in vc.borrow().penalty_hessian_indices_iter() {
-                rows[count] = row;
-                cols[count] = col;
-                count += 1;
-                nh += 1;
-            }
-            assert_eq!(nh, vc.borrow().penalty_hessian_size());
-        }
-
-        // eprintln!("i pre contact = {count}");
-
-        // Compute friction derivatives.
-        // Note that friction Jacobian is non-symmetric and so must appear after the symmetrization above.
-
-        // Add contact constraint Jacobian
-        for fc in self.frictional_contact_constraints.iter() {
-            let constraint = fc.constraint.borrow();
-            // Indices for constraint Hessian first term (multipliers held constant)
-            count += constraint
-                .constraint_hessian_indices_iter(num_active_coords / 3)
-                //.filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
-                .zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
-                .map(|(MatrixElementIndex { row, col }, (out_row, out_col))| {
-                    *out_row = row;
-                    *out_col = col;
-                })
-                .count();
-        }
-
-        // let State { vtx, .. } = &*self.state.borrow();
-
-        // dbg!(count);
-        // dbg!(rows[count..].len());
-
         // Cache computed nonzeros without friction
         let mut jws = self.jacobian_workspace.borrow_mut();
         jws.rows.resize(count, 0);
@@ -2356,39 +2317,78 @@ impl<T: Real64> NLProblem<T> {
         jws.cols.clone_from_slice(&cols[..count]);
         jws.stale = true;
 
-        // Add Non-symmetric friction Jacobian entries.
-        for fc in self.frictional_contact_constraints.iter() {
-            let mut constraint = fc.constraint.borrow_mut();
-            let delta = self.delta as f32;
-            let kappa = self.kappa as f32;
-            let epsilon = self.epsilon as f32;
-            // constraint.update_state(vtx.cur.pos.view());
-            // constraint.update_distance_potential();
-            // constraint.update_constraint_gradient();
-            constraint.update_multipliers(delta, kappa);
-            // Compute friction hessian second term (multipliers held constant)
-            let dt = T::from(self.time_step()).unwrap();
-            let f_jac_count = constraint
-                .friction_jacobian_indexed_value_iter(
-                    self.state.borrow().vtx.next.vel.view(),
-                    delta,
-                    kappa,
-                    epsilon,
-                    dt,
-                    num_active_coords / 3,
-                    false,
-                )
-                .map(|iter| {
-                    iter.zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
-                        .map(|((row, col, _), (out_row, out_col))| {
-                            *out_col = col;
-                            *out_row = row;
-                        })
-                        .count()
-                })
-                .unwrap_or(0);
-            // dbg!(f_jac_count);
-            count += f_jac_count;
+        if with_constraints {
+            // Add volume constraint indices
+            for vc in self.volume_constraints.iter() {
+                let mut nh = 0;
+                for MatrixElementIndex { row, col } in vc.borrow().penalty_hessian_indices_iter() {
+                    rows[count] = row;
+                    cols[count] = col;
+                    count += 1;
+                    nh += 1;
+                }
+                assert_eq!(nh, vc.borrow().penalty_hessian_size());
+            }
+
+            // eprintln!("i pre contact = {count}");
+
+            // Compute friction derivatives.
+            // Note that friction Jacobian is non-symmetric and so must appear after the symmetrization above.
+
+            // Add contact constraint Jacobian
+            for fc in self.frictional_contact_constraints.iter() {
+                let constraint = fc.constraint.borrow();
+                // Indices for constraint Hessian first term (multipliers held constant)
+                count += constraint
+                    .constraint_hessian_indices_iter(num_active_coords / 3)
+                    //.filter(|idx| idx.row < num_active_coords && idx.col < num_active_coords)
+                    .zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
+                    .map(|(MatrixElementIndex { row, col }, (out_row, out_col))| {
+                        *out_row = row;
+                        *out_col = col;
+                    })
+                    .count();
+            }
+
+            // let State { vtx, .. } = &*self.state.borrow();
+
+            // dbg!(count);
+            // dbg!(rows[count..].len());
+
+            // Add Non-symmetric friction Jacobian entries.
+            for fc in self.frictional_contact_constraints.iter() {
+                let mut constraint = fc.constraint.borrow_mut();
+                let delta = self.delta as f32;
+                let kappa = self.kappa as f32;
+                let epsilon = self.epsilon as f32;
+                // constraint.update_state(vtx.cur.pos.view());
+                // constraint.update_distance_potential();
+                // constraint.update_constraint_gradient();
+                constraint.update_multipliers(delta, kappa);
+                // Compute friction hessian second term (multipliers held constant)
+                let dt = T::from(self.time_step()).unwrap();
+                let f_jac_count = constraint
+                    .friction_jacobian_indexed_value_iter(
+                        self.state.borrow().vtx.next.vel.view(),
+                        delta,
+                        kappa,
+                        epsilon,
+                        dt,
+                        num_active_coords / 3,
+                        false,
+                    )
+                    .map(|iter| {
+                        iter.zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
+                            .map(|((row, col, _), (out_row, out_col))| {
+                                *out_col = col;
+                                *out_row = row;
+                            })
+                            .count()
+                    })
+                    .unwrap_or(0);
+                // dbg!(f_jac_count);
+                count += f_jac_count;
+            }
         }
         count
     }
@@ -2826,9 +2826,12 @@ impl<T: Real64> NLProblem<T> {
             *jp = T::from(r_ad.deriv()).unwrap();
         }
 
+        let num_active_variables = v.len();
         // Add remaining Jacobian product
         for ((&row, &col), &val) in rows.iter().zip(cols.iter()).zip(vals.iter()) {
-            jp[row] += val * p[col];
+            if row < num_active_variables && col < num_active_variables {
+                jp[row] += val * p[col];
+            }
         }
 
         self.timings.borrow_mut().total += Instant::now() - t_begin;
@@ -2910,7 +2913,7 @@ pub trait NonLinearProblem<T: Real> {
     /// This function returns a pair of owned `Vec`s containing row and column
     /// indices corresponding to the (potentially) "non-zero" entries of the Jacobian.
     /// The returned vectors must have the same size.
-    fn jacobian_indices(&self) -> (Vec<usize>, Vec<usize>);
+    fn jacobian_indices(&self, with_constraints: bool) -> (Vec<usize>, Vec<usize>);
 
     /// Updates the given set of values corresponding to each non-zero of the
     /// Jacobian as defined by `j_indices`.
@@ -3209,8 +3212,8 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     }
 
     #[inline]
-    fn jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {
-        NLProblem::jacobian_indices(self)
+    fn jacobian_indices(&self, with_constraints: bool) -> (Vec<usize>, Vec<usize>) {
+        NLProblem::jacobian_indices(self, with_constraints)
     }
 
     #[inline]
@@ -3356,7 +3359,7 @@ impl<T: Real64> NLProblem<T> {
             let mut r = vec![T::zero(); n];
             problem_clone.residual(&x0, &mut r);
 
-            let (jac_rows, jac_cols) = problem_clone.jacobian_indices();
+            let (jac_rows, jac_cols) = problem_clone.jacobian_indices(true);
 
             let mut jac_values = vec![T::zero(); jac_rows.len()];
             NonLinearProblem::jacobian_values(

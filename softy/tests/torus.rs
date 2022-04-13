@@ -8,7 +8,6 @@ pub mod complex_tests {
     use geo;
     use softy::fem::nl;
     use softy::*;
-    use std::path::PathBuf;
 
     fn stiff_material() -> SolidMaterial {
         default_solid().with_elasticity(Elasticity::from_bulk_shear(1750e6, 10e6))
@@ -19,7 +18,7 @@ pub mod complex_tests {
     fn torus_medium_test() -> Result<(), Error> {
         use softy::fem::opt;
         init_logger();
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
+        let mesh = geo::io::load_tetmesh("assets/torus_tets.vtk").unwrap();
         let mut solver = opt::SolverBuilder::new(opt::SimParams {
             print_level: 0,
             ..DYNAMIC_OPT_PARAMS
@@ -36,7 +35,7 @@ pub mod complex_tests {
     fn torus_long_test() -> Result<(), Error> {
         use softy::fem::opt;
         init_logger();
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk"))?;
+        let mesh = geo::io::load_tetmesh("assets/torus_tets.vtk")?;
         let mut solver = opt::SolverBuilder::new(DYNAMIC_OPT_PARAMS)
             .add_solid(mesh, stiff_material())
             .build()?;
@@ -44,7 +43,7 @@ pub mod complex_tests {
         for _i in 0..10 {
             //geo::io::save_tetmesh_ascii(
             //    &solver.borrow_mesh(),
-            //    &PathBuf::from(format!("./out/mesh_{}.vtk", 1)),
+            //    &format!("./out/mesh_{}.vtk", 1),
             //    ).unwrap();
             solver.step()?;
         }
@@ -83,7 +82,7 @@ pub mod complex_tests {
         for _i in 0..10 {
             //geo::io::save_tetmesh_ascii(
             //    &solver.borrow_mesh(),
-            //    &PathBuf::from(format!("./out/mesh_{}.vtk", 1)),
+            //    &format!("./out/mesh_{}.vtk", 1),
             //    ).unwrap();
             solver.step()?;
         }

@@ -87,7 +87,7 @@ where
 
         // Construct the sparse Jacobian.
 
-        let (j_rows, j_cols) = problem.jacobian_indices();
+        let (j_rows, j_cols) = problem.jacobian_indices(true);
         assert_eq!(j_rows.len(), j_cols.len());
         let j_nnz = j_rows.len();
         let j_vals = vec![T::zero(); j_nnz];

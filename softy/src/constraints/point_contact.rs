@@ -1757,24 +1757,25 @@ impl<T: Real> PointContactConstraint<T> {
 
         let surf = &self.implicit_surface;
         let mut constraint_value_buf = self.constraint_value.borrow_mut();
-        for (val, q) in constraint_value_buf
-            .iter_mut()
-            .zip(self.collider_vertex_positions.iter())
+        constraint_value_buf
+            .par_iter_mut()
+            .zip(self.collider_vertex_positions.view().into_par_iter()).for_each(|(val, q)|
         {
+            let q = [q[0], q[1], q[2]];
             // Clear potential value.
-            let closest_sample = surf.nearest_neighbor_lookup(*q).unwrap();
+            let closest_sample = surf.nearest_neighbor_lookup(q).unwrap();
             if closest_sample
                 .nml
-                .dot(Vector3::new(*q) - closest_sample.pos)
+                .dot(Vector3::new(q) - closest_sample.pos)
                 > T::zero()
             {
                 *val = radius;
             } else {
                 *val = -radius;
             }
-        }
+        });
 
-        surf.potential(
+        surf.potential_par(
             self.collider_vertex_positions.view().into(),
             &mut *constraint_value_buf,
         );
@@ -1786,14 +1787,13 @@ impl<T: Real> PointContactConstraint<T> {
         let neighborhood_sizes = surf.neighborhood_sizes();
 
         // Because `value` tracks only the values for which the neighborhood is not empty.
-        for ((_, new_v), v) in neighborhood_sizes
+        neighborhood_sizes
             .iter()
             .zip(constraint_value_buf.iter())
             .filter(|&(&nbrhood_size, _)| nbrhood_size != 0)
-            .zip(value.iter_mut())
-        {
+            .zip(value.iter_mut()).for_each(|((_, new_v), v)| {
             *v = *new_v - T::from(self.contact_offset).unwrap();
-        }
+        });
     }
 
     #[cfg(feature = "optsolver")]

@@ -206,7 +206,7 @@ fn twist_damped_dynamic() -> Result<(), Error> {
 #[test]
 fn twist_dynamic_volume_penalty() -> Result<(), Error> {
     init_logger();
-    let material: Material = load_material("assets/no_poisson_soft_solid_material.ron")?;
+    let material: Material = load_material("assets/no_poisson_damped_soft_solid_material.ron")?;
 
     // We use a large time step to get the simulation to settle to the static sim with less
     // iterations.

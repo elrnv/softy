@@ -203,7 +203,9 @@ impl JacobianTimings {
 pub struct ResidualTimings {
     pub total: Duration,
     pub energy_gradient: Duration,
-    pub prepare_contact: Duration,
+    pub update_state: Duration,
+    pub update_distance_potential: Duration,
+    pub update_multipliers: Duration,
     pub contact_force: Duration,
     pub contact_jacobian: Duration,
     pub jacobian: JacobianTimings,
@@ -214,7 +216,9 @@ impl ResidualTimings {
     pub fn clear(&mut self) {
         self.total = Duration::new(0, 0);
         self.energy_gradient = Duration::new(0, 0);
-        self.prepare_contact = Duration::new(0, 0);
+        self.update_state = Duration::new(0, 0);
+        self.update_distance_potential = Duration::new(0, 0);
+        self.update_multipliers = Duration::new(0, 0);
         self.contact_force = Duration::new(0, 0);
         self.contact_jacobian = Duration::new(0, 0);
         self.friction_force.clear();
@@ -256,7 +260,22 @@ impl Display for Timings {
         writeln!(
             f,
             "    Contact prep time:        {}",
-            self.residual.prepare_contact.as_millis()
+            self.residual.update_state.as_millis() + self.residual.update_distance_potential.as_millis() + self.residual.update_multipliers.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Update state time:      {}",
+            self.residual.update_state.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Update distance:        {}",
+            self.residual.update_distance_potential.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Update multipliers:     {}",
+            self.residual.update_multipliers.as_millis()
         )?;
         writeln!(
             f,

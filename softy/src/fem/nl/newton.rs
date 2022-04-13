@@ -652,7 +652,8 @@ where
     ) {
         // Construct the sparse Jacobian.
         let n = problem.num_variables();
-        let (j_rows, j_cols) = problem.jacobian_indices();
+        let with_constraints = matches!(linsolve, LinearSolverWorkspace::Direct(_));
+        let (j_rows, j_cols) = problem.jacobian_indices(with_constraints);
         assert_eq!(j_rows.len(), j_cols.len());
         let j_nnz = j_rows.len();
         if j_nnz == 0 {
@@ -804,7 +805,7 @@ where
             sparse_jacobian,
             init_sparse_jacobian_vals,
             init_sparse_solver,
-            init_j_mapping,
+            // init_j_mapping,
             x_prev,
             r,
             p,
@@ -845,8 +846,8 @@ where
 
         let mut linsolve_result = super::linsolve::SolveResult::default();
 
-        //let sigma = linsolve.iterative_tolerance();
-        //let orig_sigma = sigma;
+        // Forcing term only used for inexact newton.
+        let orig_linsolve_tol = linsolve.iterative_tolerance();
 
         let header = IterationInfo::header();
         log::debug!("{}", header[0]);
@@ -865,22 +866,22 @@ where
         }
 
         // Prepare initial Jacobian used in the merit function.
-        problem.jacobian_values(
-            x,
-            r,
-            &sparse_jacobian.j_rows,
-            &sparse_jacobian.j_cols,
-            sparse_jacobian.j_vals.as_mut_slice(),
-        );
-
-        init_sparse_jacobian_vals
-            .iter_mut()
-            .for_each(|x| *x = T::zero());
-        for (&pos, &j_val) in init_j_mapping.iter().zip(sparse_jacobian.j_vals.iter()) {
-            if let Some(pos) = pos.into_option() {
-                init_sparse_jacobian_vals[pos] += j_val;
-            }
-        }
+        // problem.jacobian_values(
+        //     x,
+        //     r,
+        //     &sparse_jacobian.j_rows,
+        //     &sparse_jacobian.j_cols,
+        //     sparse_jacobian.j_vals.as_mut_slice(),
+        // );
+        //
+        // init_sparse_jacobian_vals
+        //     .iter_mut()
+        //     .for_each(|x| *x = T::zero());
+        // for (&pos, &j_val) in init_j_mapping.iter().zip(sparse_jacobian.j_vals.iter()) {
+        //     if let Some(pos) = pos.into_option() {
+        //         init_sparse_jacobian_vals[pos] += j_val;
+        //     }
+        // }
 
         let init_sparse_solver = init_sparse_solver
             .borrow_mut()
@@ -936,7 +937,7 @@ where
 
         // Keep track of merit function to avoid having to recompute it
         let mut merit_cur = merit(problem, x, r, init_sparse_solver);
-        //let mut merit_prev = merit_cur;
+        let mut merit_prev = merit_cur;
         let mut merit_next;
 
         let mut j_dense_ad = LazyCell::new();
@@ -948,8 +949,6 @@ where
         }
 
         let (iterations, status) = loop {
-            //log::trace!("Previous r norm: {}", r_prev_norm);
-            //log::trace!("Current  r norm: {}", r_cur_norm);
             if !(outer_callback.borrow_mut())(CallbackArgs {
                 iteration: iterations,
                 residual: r.as_slice(),
@@ -959,24 +958,29 @@ where
                 break (iterations, Status::Interrupted);
             }
 
-            //log::trace!("r = {:?}", &r);
-
             if !merit_cur.is_finite() {
                 break (iterations, Status::Diverged);
             }
 
             let t_begin_linsolve = Instant::now();
 
-            // Update tolerance (forcing term)
-            //sigma = orig_sigma.min(((merit_cur - linsolve_result.residual).abs() / merit_prev) as f32);
-
-            // Update Jacobian values.
-            //let before_j = Instant::now();
-
             r_cur.copy_from_slice(r);
 
             match linsolve {
                 LinearSolverWorkspace::Iterative(linsolve) => {
+                    // Update tolerance (forcing term) (Eisenstat and Walker paper)
+                    // CHOICE 1
+                    // sigma = orig_sigma.min(((merit_cur - linsolve_result.residual).abs() / merit_prev) as f32);
+                    // CHOICE 2
+                    let eta_prev2 = linsolve.tol * linsolve.tol;
+                    let power = 0.5*(1.0 + 0.5_f32.sqrt()); // Golden ratio
+                    let mut eta = f32::EPSILON.max((merit_cur / merit_prev).powf(0.5*power as f64) as f32);
+                    // Safeguard to prevent oversolving (see paper)
+                    if eta_prev2 > 0.1 {
+                        eta = eta.max(eta_prev2);
+                    }
+                    linsolve.tol = orig_linsolve_tol.min(eta as f32);
+
                     // let j_dense = j_dense.borrow_mut_with(|| {
                     //     ChunkedN::from_flat_with_stride(
                     //         x.len(),
@@ -1181,25 +1185,8 @@ where
                     // Line search.
                     let mut alpha = 1.0;
                     let mut ls_count = 1;
-                    //let mut sigma = linsolve.tol as f64;
 
-                    // let t_begin_jprod = Instant::now();
-                    //jp.iter_mut().for_each(|x| *x = T::zero());
-                    //j.view()
-                    //    .add_mul_in_place_par(p.as_tensor(), jp.as_mut_tensor());
-                    // problem.jacobian_product(x_prev, p, r_cur, jp.as_mut_slice());
-                    //sparse_jacobian.compute_product(p, jp.as_mut_slice());
-                    // jprod_ls_time += Instant::now() - t_begin_jprod;
-                    // eprintln!("jp = {:?}", &jp);
                     let merit_jac_p = merit_jac_prod(problem, r_cur, r_cur, init_sparse_solver);
-                    // let merit_jac_p = merit_jac_prod(problem, p, r_cur, init_sparse_solver);
-                    // dbg!(&x_prev);
-                    // dbg!(&x);
-                    // dbg!(&p);
-                    // dbg!(&r_cur);
-                    // dbg!(&r_next);
-                    // dbg!(merit_jac_p);
-                    // dbg!(merit_cur);
 
                     if params.line_search.is_assisted() {
                         add_time!(
@@ -1222,24 +1209,27 @@ where
                         // Compute the merit function
                         merit_next = merit(problem, x, r_next, init_sparse_solver);
 
-                        // TRADITIONAL BACKTRACKING:
-                        if merit_next
-                            <= merit_cur - params.line_search.armijo_coeff() * alpha * merit_jac_p
-                        {
-                            // eprintln!("success: {merit_next} <= {merit_cur} - {}; alpha <- {}", params.line_search.armijo_coeff() * alpha * merit_jac_p, alpha*rho);
-                            break;
+                        match linsolve {
+                            LinearSolverWorkspace::Iterative(linsolve) => {
+                                // INEXACT NEWTON:
+                                let t = params.line_search.armijo_coeff();
+                                let factor = 1.0 - t * alpha * (1.0 - linsolve.tol as f64);
+                                if merit_next <= merit_cur * factor * factor {
+                                    break;
+                                }
+                                // TODO: Use another factor during backtracking.
+                                alpha *= rho;
+                            }
+                            LinearSolverWorkspace::Direct(_) => {
+                                // TRADITIONAL BACKTRACKING:
+                                if merit_next
+                                    <= merit_cur - params.line_search.armijo_coeff() * alpha * merit_jac_p
+                                {
+                                    break;
+                                }
+                                alpha *= rho;
+                            }
                         }
-
-                        // eprintln!("backtracking: {merit_next} > {merit_cur} - {}; alpha <- {}", params.line_search.armijo_coeff() * alpha * merit_jac_p, alpha*rho);
-
-                        // INEXACT NEWTON:
-                        // if merit_next <= merit_cur * (1.0 - rho * (1.0 - sigma)) {
-                        //     break;
-                        // }
-                        //
-                        alpha *= rho;
-
-                        // sigma = 1.0 - alpha * (1.0 - sigma);
 
                         // Break if alpha becomes too small. This is usually a bad sign.
                         if alpha < 1e-5 {
@@ -1255,6 +1245,10 @@ where
                         problem.residual(x, r_next.as_mut_slice());
 
                         ls_count += 1;
+                    }
+
+                    if let LinearSolverWorkspace::Iterative(linsolve) = linsolve {
+                        linsolve.tol = 1.0 - alpha as f32 * (1.0 - linsolve.tol);
                     }
 
                     // dbg!(alpha);
@@ -1336,9 +1330,14 @@ where
             r.copy_from_slice(r_next);
 
             // Update merit function
-            //merit_prev = merit_cur;
+            merit_prev = merit_cur;
             merit_cur = merit_next;
         };
+
+        // Restore linsolve tolernace
+        if let LinearSolverWorkspace::Iterative(linsolve) = linsolve {
+            linsolve.tol = orig_linsolve_tol;
+        }
 
         timings.total = Instant::now() - t_begin_solve;
         timings.residual = *self.problem.residual_timings();

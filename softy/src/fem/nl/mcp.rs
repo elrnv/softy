@@ -85,8 +85,8 @@ where
             );
         });
     }
-    fn jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {
-        self.problem.jacobian_indices()
+    fn jacobian_indices(&self, with_constraints: bool) -> (Vec<usize>, Vec<usize>) {
+        self.problem.jacobian_indices(with_constraints)
     }
     fn jacobian_values(&self, x: &[T], r: &[T], rows: &[usize], cols: &[usize], values: &mut [T]) {
         self.problem.jacobian_values(x, r, rows, cols, values);

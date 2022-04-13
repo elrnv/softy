@@ -7,7 +7,7 @@ SimParams(
     max_iterations: 100,
     linsolve: Direct,
     //linsolve: Iterative(
-    //  tolerance: 0.00001,
+    //  tolerance: 0.9,
     //  max_iterations: 100,
     //),
     line_search: BackTracking(c: 1e-4, rho: 0.9),

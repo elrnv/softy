@@ -366,7 +366,7 @@ impl<T: Real> ImplicitSurfaceBase<T> {
     /// the implicit surface data (like samples and spatial tree if needed) whether or not enough
     /// positions were specified to cover all surface vertices. This function will return the
     /// number of vertices that were indeed updated.
-    pub fn update<I>(&mut self, vertex_iter: I) -> usize
+    pub fn update<I>(&mut self, vertex_iter: I, rebuild_rtree: bool) -> usize
     where
         I: Iterator<Item = [T; 3]>,
     {
@@ -381,7 +381,22 @@ impl<T: Real> ImplicitSurfaceBase<T> {
         self.update_samples();
 
         // Finally update the rtree responsible for neighbor search.
-        self.spatial_tree = build_rtree_from_samples(&self.samples);
+        if rebuild_rtree {
+            // If the sample positions have changed we should rebuild the whole tree.
+            self.spatial_tree = build_rtree_from_samples(&self.samples);
+        } else {
+            // In cases were the positions are the same but associated data has changed,
+            // as when Automatic differnetiation is used for instance, it's sufficient to
+            // update the positions directly.
+            let samples = &self.samples;
+            self.spatial_tree.iter_mut().for_each(|sample| {
+                let new_sample = samples.get(sample.index);
+                sample.pos = new_sample.pos;
+                sample.vel = new_sample.vel;
+                sample.nml = new_sample.nml;
+                sample.value = new_sample.value;
+            });
+        }
 
         num_updated
     }
@@ -389,7 +404,7 @@ impl<T: Real> ImplicitSurfaceBase<T> {
     /// Update vertex positions and samples using an iterator over mesh vertices.
     ///
     /// Parallel version of `update`.
-    pub fn update_par<I>(&mut self, vertex_iter: I) -> usize
+    pub fn update_par<I>(&mut self, vertex_iter: I, rebuild_rtree: bool) -> usize
         where
             I: IndexedParallelIterator<Item = [T; 3]>,
     {
@@ -402,7 +417,22 @@ impl<T: Real> ImplicitSurfaceBase<T> {
         self.update_samples_par();
 
         // Finally update the rtree responsible for neighbor search.
-        self.spatial_tree = build_rtree_from_samples(&self.samples);
+        if rebuild_rtree {
+            // If the sample positions have changed we should rebuild the whole tree.
+            self.spatial_tree = build_rtree_from_samples(&self.samples);
+        } else {
+            // In cases were the positions are the same but associated data has changed,
+            // as when Automatic differnetiation is used for instance, it's sufficient to
+            // update the positions directly.
+            let samples = &self.samples;
+            self.spatial_tree.iter_mut().for_each(|sample| {
+                let new_sample = samples.get(sample.index);
+                sample.pos = new_sample.pos;
+                sample.vel = new_sample.vel;
+                sample.nml = new_sample.nml;
+                sample.value = new_sample.value;
+            });
+        }
 
         num_updated
     }
@@ -486,11 +516,11 @@ impl<T: Real> MLS<T> {
     /// possible and recompute the implicit surface data (like samples and spatial tree if needed)
     /// whether or not enough positions were specified to cover all surface vertices. This function
     /// will return the number of vertices that were indeed updated.
-    pub fn update<I>(&mut self, vertex_iter: I) -> usize
+    pub fn update<I>(&mut self, vertex_iter: I, rebuild_rtree: bool) -> usize
     where
         I: Iterator<Item = [T; 3]>,
     {
-        self.base_mut().update(vertex_iter)
+        self.base_mut().update(vertex_iter, rebuild_rtree)
     }
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to
@@ -784,11 +814,11 @@ impl<T: Real> ImplicitSurface<T> {
     /// the implicit surface data (like samples and spatial tree if needed) whether or not enough
     /// positions were specified to cover all surface vertices. This function will return the
     /// number of vertices that were indeed updated.
-    pub fn update<I>(&mut self, vertex_iter: I) -> usize
+    pub fn update<I>(&mut self, vertex_iter: I, rebuild_rtree: bool) -> usize
     where
         I: Iterator<Item = [T; 3]>,
     {
-        self.base_mut().update(vertex_iter)
+        self.base_mut().update(vertex_iter, rebuild_rtree)
     }
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to

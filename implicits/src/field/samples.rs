@@ -131,9 +131,26 @@ impl<T: Real> Samples<T> {
             geo::algo::compute_vertex_area_weighted_normals(new_vertices, triangles, normals);
         }
     }
-}
 
-impl<T: Real> Samples<T> {
+    /// Gets a sample at a specified index within the global arrays.
+    #[inline]
+    pub fn get(&self, idx: usize) -> Sample<T> {
+        let Samples {
+            positions,
+            normals,
+            velocities,
+            values,
+            ..
+        } = self;
+        Sample {
+            index: idx,
+            pos: positions[idx].into(),
+            nml: normals[idx].into(),
+            vel: velocities[idx],
+            value: values[idx],
+        }
+    }
+
     /// Utility function only used in tests for creating a dummy set of samples just from a set of
     /// points.
     #[cfg(test)]

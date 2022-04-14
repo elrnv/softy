@@ -296,11 +296,21 @@ impl<T: Real> QueryTopo<T> {
     ///
     /// Note that this function does not update the query topology, however the topology may still
     /// be valid if the surface has not moved very far.
-    pub fn update_surface<I>(&mut self, vertex_iter: I) -> usize
+    pub fn update_surface<I>(&mut self, vertex_iter: I, rebuild_rtree: bool) -> usize
     where
         I: Iterator<Item = [T; 3]>,
     {
-        self.base_mut().update(vertex_iter)
+        self.base_mut().update(vertex_iter, rebuild_rtree)
+    }
+
+    /// Updates vertex positions and samples using the given iterator over mesh vertices.
+    ///
+    /// Parallel version of `update_surface`.
+    pub fn update_surface_par<I>(&mut self, vertex_iter: I, rebuild_rtree: bool) -> usize
+        where
+            I: IndexedParallelIterator<Item = [T; 3]>,
+    {
+        self.base_mut().update_par(vertex_iter, rebuild_rtree)
     }
 
     /*

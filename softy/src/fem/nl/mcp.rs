@@ -47,6 +47,10 @@ where
     fn mesh_with(&self, dq: &[T]) -> crate::Mesh {
         self.problem.mesh_with(dq)
     }
+    #[inline]
+    fn lumped_mass_inv(&self) -> Ref<'_, [T]> {
+        self.problem.lumped_mass_inv()
+    }
     fn num_variables(&self) -> usize {
         self.problem.num_variables()
     }

@@ -338,10 +338,7 @@ impl SceneConfig {
     }
 
     /// Set the set materials used by the elements in this solver.
-    pub fn set_volume_zones(
-        &mut self,
-        volume_zones: impl Into<ZoneParams>,
-    ) -> &mut Self {
+    pub fn set_volume_zones(&mut self, volume_zones: impl Into<ZoneParams>) -> &mut Self {
         self.volume_zones = volume_zones.into();
         self
     }

@@ -706,7 +706,11 @@ impl<T: Real> State<T, ad::FT<T>> {
     /// Copies entries from the vertex residual to the dof residual for vertex degrees of freedom
     /// using dual numbers.
     pub fn dof_residual_ad_from_vertices(&mut self) {
-        self.dof.view_mut().isolate(VERTEX_DOFS).r_ad.iter_mut()
+        self.dof
+            .view_mut()
+            .isolate(VERTEX_DOFS)
+            .r_ad
+            .iter_mut()
             .zip(self.vtx.residual_ad.storage().iter())
             .for_each(|(dof_r, vtx_r)| {
                 *dof_r = *vtx_r;
@@ -951,11 +955,7 @@ impl<T: Real> State<T, ad::FT<T>> {
             .isolate(VERTEX_DOFS)
             .into_iter()
             .for_each(|StepState { cur, next, .. }| {
-                *next.q = Float::mul_add(
-                    *next.dq,
-                    F::from(dt).unwrap(),
-                    F::from(*cur.q).unwrap(),
-                )
+                *next.q = Float::mul_add(*next.dq, F::from(dt).unwrap(), F::from(*cur.q).unwrap())
             });
 
         // Integrate rigid rotation.
@@ -1069,10 +1069,10 @@ impl<T: Real> State<T, ad::FT<T>> {
         let alpha = S::from(alpha).unwrap();
 
         // In static simulations, velocity is simply displacement.
-        state
-            .isolate(VERTEX_DOFS)
-            .into_iter()
-            .for_each(|StepState { prev_q, cur, next, .. }| {
+        state.isolate(VERTEX_DOFS).into_iter().for_each(
+            |StepState {
+                 prev_q, cur, next, ..
+             }| {
                 // `q_next = q_prev + h*((1-alpha)*v_cur + alpha*v_next)`
                 *next.q = Float::mul_add(
                     Float::mul_add(
@@ -1083,13 +1083,14 @@ impl<T: Real> State<T, ad::FT<T>> {
                     dt,
                     S::from(*prev_q).unwrap(),
                 );
-            });
+            },
+        );
     }
 
     /// Standalone BDF2 step.
     pub fn bdf2_step<S: Real>(state: ChunkedView<StepState<&[T], &[S], &mut [S]>>, dt: f64) {
         // Reuse the code from the mixed BDF2 step.
-        State::mixed_bdf2_step(state, 2.0*dt, 0.5);
+        State::mixed_bdf2_step(state, 2.0 * dt, 0.5);
     }
 
     /// Take a `gamma` parametrized mixed BDF2 step in `q` computed in the state workspace.

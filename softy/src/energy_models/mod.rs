@@ -198,8 +198,10 @@ impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology f
 
 impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHessian<T> for (A, B) {
     fn energy_hessian_values(&self, x: &[T], v: &[T], scale: T, vals: &mut [T], dqdv: T) {
-        self.0.energy_hessian_values(x, v, scale, &mut vals[..self.0.energy_hessian_size()], dqdv);
-        self.1.energy_hessian_values(x, v, scale, &mut vals[self.0.energy_hessian_size()..], dqdv);
+        self.0
+            .energy_hessian_values(x, v, scale, &mut vals[..self.0.energy_hessian_size()], dqdv);
+        self.1
+            .energy_hessian_values(x, v, scale, &mut vals[self.0.energy_hessian_size()..], dqdv);
     }
 }
 

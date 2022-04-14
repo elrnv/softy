@@ -95,10 +95,10 @@ fn stretch_volume_penalty() -> Result<(), Error> {
         // derivative_test: 0,
         ..static_nl_params()
     })
-        .set_mesh(Mesh::from(mesh))
-        .set_materials(vec![material])
-        .set_volume_penalty_params(vec![1.0], vec![0.1], vec![false])
-        .build()?;
+    .set_mesh(Mesh::from(mesh))
+    .set_materials(vec![material])
+    .set_volume_penalty_params(vec![1.0], vec![0.1], vec![false])
+    .build()?;
     solver.step()?;
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk"))?;

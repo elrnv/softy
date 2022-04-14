@@ -17,12 +17,12 @@ use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
 use crate::inf_norm;
+use crate::nl_fem::{JacobianWorkspace, SingleStepTimeIntegration, ZoneParams};
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
 use crate::objects::*;
 use crate::{Error, Mesh, PointCloud};
 use crate::{Real, Real64};
-use crate::nl_fem::{JacobianWorkspace, SingleStepTimeIntegration, ZoneParams};
 
 #[derive(Clone, Debug)]
 pub struct SolverBuilder {
@@ -129,10 +129,7 @@ impl SolverBuilder {
     }
 
     /// Sets parameters that control how each zone resists volume change.
-    pub fn set_volume_zones(
-        &mut self,
-        zone_params: impl Into<ZoneParams>,
-    ) -> &mut Self {
+    pub fn set_volume_zones(&mut self, zone_params: impl Into<ZoneParams>) -> &mut Self {
         self.volume_zones = zone_params.into();
         self
     }
@@ -143,14 +140,12 @@ impl SolverBuilder {
         materials: &[Material],
         volume_zones: &ZoneParams,
     ) -> Result<Vec<RefCell<VolumeChangePenalty>>, Error> {
-        Ok(VolumeChangePenalty::try_from_mesh(
-            mesh,
-            materials,
-            volume_zones,
-        )?
-        .into_iter()
-        .map(RefCell::new)
-        .collect())
+        Ok(
+            VolumeChangePenalty::try_from_mesh(mesh, materials, volume_zones)?
+                .into_iter()
+                .map(RefCell::new)
+                .collect(),
+        )
     }
 
     fn build_frictional_contact_constraints<T: Real>(
@@ -637,11 +632,7 @@ impl SolverBuilder {
 
         // Initialize constraints.
 
-        let volume_constraints = Self::build_volume_constraints(
-            &mesh,
-            &materials,
-            &volume_zones,
-        )?;
+        let volume_constraints = Self::build_volume_constraints(&mesh, &materials, &volume_zones)?;
 
         // Early exit if we detect any self contacts.
         if frictional_contacts.iter().any(|(_, (i, j))| i == j) {
@@ -828,7 +819,7 @@ impl SolverBuilder {
                 max_iter: params.max_iterations,
                 linsolve: params.linsolve,
                 line_search: params.line_search,
-                derivative_check: self.sim_params.derivative_test > 2
+                derivative_check: self.sim_params.derivative_test > 2,
             },
             Box::new(move |_args| {
                 //let mesh = _args.problem.mesh_with(_args.x);
@@ -1002,7 +993,6 @@ where
                 }
             }
         }
-
     }
 
     ///// Revert previously committed solution. We just advance in the opposite direction.
@@ -1082,15 +1072,19 @@ where
             self.solver.problem_mut().update_cur_vertices();
 
             // No need to do this every time.
-            self.solver
-                .problem()
-                .check_jacobian(self.sim_params.derivative_test, self.solution.as_slice(), false)?;
+            self.solver.problem().check_jacobian(
+                self.sim_params.derivative_test,
+                self.solution.as_slice(),
+                false,
+            )?;
 
             // Loop to resolve all contacts.
             let mut first_contact_iteration = true;
             loop {
                 /****    Main solve step    ****/
-                result = self.solver.solve_with(self.solution.as_mut_slice(), first_contact_iteration);
+                result = self
+                    .solver
+                    .solve_with(self.solution.as_mut_slice(), first_contact_iteration);
                 // if stage < time_integration.num_stages() - 1 {
                 //     match result.status {
                 //         Status::Success | Status::MaximumIterationsExceeded => {
@@ -1109,7 +1103,8 @@ where
                 match result.status {
                     Status::Success | Status::MaximumIterationsExceeded => {
                         // Compute contact violation.
-                        let constraint = self.solver
+                        let constraint = self
+                            .solver
                             .problem_mut()
                             .contact_constraint(self.solution.as_slice())
                             .into_storage();
@@ -1158,7 +1153,8 @@ where
                         } else {
                             // Relax kappa
                             if largest_penalty == 0.0
-                                && self.solver.problem().kappa > 1.0e2 / self.sim_params.contact_tolerance as f64
+                                && self.solver.problem().kappa
+                                    > 1.0e2 / self.sim_params.contact_tolerance as f64
                             {
                                 self.solver.problem_mut().kappa /= 2.0;
                             }

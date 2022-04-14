@@ -109,13 +109,13 @@ impl<T: Real, E: TetEnergy<T>> Energy<T> for TetSolidElasticity<'_, E> {
             tet_energy.energy()
                 // damping (viscosity)
                 + mu * vol * dF.norm_squared() * half * damping
-                //+ half * damping * {
-                //    let dH = tet_energy.energy_hessian_product_transpose(&tet_dx);
-                //    dH[0].dot(Vector3::new(tet_dx.0.into()))
-                //        + dH[1].dot(Vector3::new(tet_dx.1.into()))
-                //        + dH[2].dot(Vector3::new(tet_dx.2.into()))
-                //        - (dH * Vector3::new(tet_dx.3.into())).sum()
-                //}
+            //+ half * damping * {
+            //    let dH = tet_energy.energy_hessian_product_transpose(&tet_dx);
+            //    dH[0].dot(Vector3::new(tet_dx.0.into()))
+            //        + dH[1].dot(Vector3::new(tet_dx.1.into()))
+            //        + dH[2].dot(Vector3::new(tet_dx.2.into()))
+            //        - (dH * Vector3::new(tet_dx.3.into())).sum()
+            //}
         })
         .sum()
     }
@@ -221,7 +221,7 @@ impl<E> EnergyHessianTopology for TetSolidElasticity<'_, E> {
 
             hess_iter.for_each(|((tet_hess_rows, tet_hess_cols), cell)| {
                 Self::hessian_for_each(
-                    |_, _| { },
+                    |_, _| {},
                     |i, (n, k), (row, col), _| {
                         let mut global_row = 3 * cell[n] + row;
                         let mut global_col = 3 * cell[k] + col;
@@ -293,36 +293,36 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
             self.0.lambda.par_iter(),
             self.0.mu.par_iter(),
         )
-        .for_each(
-            |(tet_hess, damping, &vol, &DX_inv, cell, &lambda, &mu)| {
-                // Make deformed tet.
-                let tet_x = Tetrahedron::from_indexed_slice(cell, pos);
+        .for_each(|(tet_hess, damping, &vol, &DX_inv, cell, &lambda, &mu)| {
+            // Make deformed tet.
+            let tet_x = Tetrahedron::from_indexed_slice(cell, pos);
 
-                let Dx = Matrix3::new(tet_x.shape_matrix());
+            let Dx = Matrix3::new(tet_x.shape_matrix());
 
-                let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
-                // let size = T::from(vol.cbrt()).unwrap();
-                let vol = T::from(vol).unwrap();
-                let lambda = T::from(lambda).unwrap();
-                let mu = T::from(mu).unwrap();
+            let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
+            // let size = T::from(vol.cbrt()).unwrap();
+            let vol = T::from(vol).unwrap();
+            let lambda = T::from(lambda).unwrap();
+            let mu = T::from(mu).unwrap();
 
-                let tet_energy = E::new(Dx, DX_inv, vol, lambda, mu);
+            let tet_energy = E::new(Dx, DX_inv, vol, lambda, mu);
 
-                //let factor = T::from(1.0 + damping).unwrap() * scale;
-                let factor = scale;
+            //let factor = T::from(1.0 + damping).unwrap() * scale;
+            let factor = scale;
 
-                let local_hessians = tet_energy.energy_hessian();
+            let local_hessians = tet_energy.energy_hessian();
 
-                // Damping
-                let damping = T::from(damping).unwrap();
-                // let density = T::from(density).unwrap();
-                let ddF = DX_inv.transpose() * DX_inv * (vol * mu * damping);
+            // Damping
+            let damping = T::from(damping).unwrap();
+            // let density = T::from(density).unwrap();
+            let ddF = DX_inv.transpose() * DX_inv * (vol * mu * damping);
 
-                let id = Matrix3::identity();
+            let id = Matrix3::identity();
 
-                Self::hessian_for_each(
-                    |n, k| {
-                        let damping_hess = id * if n == 3 && k == 3 {
+            Self::hessian_for_each(
+                |n, k| {
+                    let damping_hess = id
+                        * if n == 3 && k == 3 {
                             ddF.sum_inner()
                         } else if k == 3 {
                             -ddF[n].sum()
@@ -331,23 +331,22 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
                         } else {
                             ddF[n][k]
                         };
-                        (local_hessians[n][k] + damping_hess) * factor
-                    },
-                    |i, _, (row, col), h| {
-                        // // DEBUG CODE
-                        // let mut global_row = 3 * cell[n] + row;
-                        // let mut global_col = 3 * cell[k] + col;
-                        // if cell[n] < cell[k] {
-                        //     // In the upper triangular part of the global matrix, transpose
-                        //     std::mem::swap(&mut global_row, &mut global_col);
-                        // }
-                        // eprintln!("({:?}, {:?}): {:?}", global_row, global_col, damp_hess[row][col]);
-                        // // END OF DEBUG CODE
-                        tet_hess[i] = h[row][col]
-                    },
-                );
-            },
-        );
+                    (local_hessians[n][k] + damping_hess) * factor
+                },
+                |i, _, (row, col), h| {
+                    // // DEBUG CODE
+                    // let mut global_row = 3 * cell[n] + row;
+                    // let mut global_col = 3 * cell[k] + col;
+                    // if cell[n] < cell[k] {
+                    //     // In the upper triangular part of the global matrix, transpose
+                    //     std::mem::swap(&mut global_row, &mut global_col);
+                    // }
+                    // eprintln!("({:?}, {:?}): {:?}", global_row, global_col, damp_hess[row][col]);
+                    // // END OF DEBUG CODE
+                    tet_hess[i] = h[row][col]
+                },
+            );
+        });
     }
 }
 

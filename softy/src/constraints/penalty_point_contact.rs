@@ -837,9 +837,14 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     }
 
     // Same as `update_collider_vertex_positions` but without knowledge about original vertex indices.
-    pub fn update_surface_vertex_positions(&mut self, x: Chunked3<&[T]>) -> usize {
+    pub fn update_surface_vertex_positions(
+        &mut self,
+        x: Chunked3<&[T]>,
+        rebuild_tree: bool,
+    ) -> usize {
         let x = SubsetView::from_unique_ordered_indices(&self.implicit_surface_vertex_indices, x);
-        self.point_constraint.update_surface_with_mesh_pos(x)
+        self.point_constraint
+            .update_surface_with_mesh_pos_with_rebuild(x, rebuild_tree)
     }
 
     // Same as `update_collider_vertex_positions` but without knowledge about original vertex indices.
@@ -1225,9 +1230,15 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         updated
     }
 
-    /// Update the current state using the given position vector.
     pub fn update_state(&mut self, x: Chunked3<&[T]>) {
-        let num_vertices_updated = self.update_surface_vertex_positions(x);
+        self.update_state_with_rebuild(x, true);
+    }
+
+    /// Update the current state using the given position vector.
+    ///
+    /// If unsure whether the tree should be rebuilt, rebuild it.
+    pub fn update_state_with_rebuild(&mut self, x: Chunked3<&[T]>, rebuild_tree: bool) {
+        let num_vertices_updated = self.update_surface_vertex_positions(x, rebuild_tree);
         assert_eq!(
             num_vertices_updated,
             self.point_constraint
@@ -1300,9 +1311,12 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         self.lambda.clear();
         self.lambda.resize(dist.len(), T::zero());
         let kappa = T::from(kappa).unwrap();
-        self.lambda.par_iter_mut().zip(dist.par_iter()).for_each(|(l, &d)| {
-            *l = -kappa * ContactPenalty::new(delta).db(d);
-        });
+        self.lambda
+            .par_iter_mut()
+            .zip(dist.par_iter())
+            .for_each(|(l, &d)| {
+                *l = -kappa * ContactPenalty::new(delta).db(d);
+            });
     }
 
     pub(crate) fn assist_line_search_for_contact(

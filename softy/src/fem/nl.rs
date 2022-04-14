@@ -61,7 +61,7 @@ impl TimeIntegration {
             }
             TimeIntegration::SDIRK2 => {
                 if stage % 2 == 0 {
-                    let factor = 1.0 - 0.5*2.0_f64.sqrt();
+                    let factor = 1.0 - 0.5 * 2.0_f64.sqrt();
                     (SingleStepTimeIntegration::BE, factor)
                 } else {
                     // The factor is builtin to the SDRIK2 single step because it is unique.
@@ -207,6 +207,7 @@ pub struct ResidualTimings {
     pub update_distance_potential: Duration,
     pub update_multipliers: Duration,
     pub contact_force: Duration,
+    pub volume_force: Duration,
     pub contact_jacobian: Duration,
     pub jacobian: JacobianTimings,
     pub friction_force: FrictionTimings,
@@ -221,6 +222,7 @@ impl ResidualTimings {
         self.update_multipliers = Duration::new(0, 0);
         self.contact_force = Duration::new(0, 0);
         self.contact_jacobian = Duration::new(0, 0);
+        self.volume_force = Duration::new(0, 0);
         self.friction_force.clear();
     }
 }
@@ -259,8 +261,15 @@ impl Display for Timings {
         )?;
         writeln!(
             f,
+            "    Volume force time:        {}",
+            self.residual.volume_force.as_millis()
+        )?;
+        writeln!(
+            f,
             "    Contact prep time:        {}",
-            self.residual.update_state.as_millis() + self.residual.update_distance_potential.as_millis() + self.residual.update_multipliers.as_millis()
+            self.residual.update_state.as_millis()
+                + self.residual.update_distance_potential.as_millis()
+                + self.residual.update_multipliers.as_millis()
         )?;
         writeln!(
             f,
@@ -281,36 +290,6 @@ impl Display for Timings {
             f,
             "    Contact force time:       {}",
             self.residual.contact_force.as_millis()
-        )?;
-        writeln!(
-            f,
-            "    Jacobian values time:     {}",
-            self.residual.jacobian.total.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Jacobian FEM:           {}",
-            self.residual.jacobian.fem.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Jacobian Diagonal:      {}",
-            self.residual.jacobian.diag.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Jacobian Volume:        {}",
-            self.residual.jacobian.volume.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Jacobian Contact:       {}",
-            self.residual.jacobian.contact.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Jacobian Friction:      {}",
-            self.residual.jacobian.friction.as_millis()
         )?;
         writeln!(
             f,
@@ -348,6 +327,36 @@ impl Display for Timings {
                 .contact_velocity
                 .velocity
                 .as_millis()
+        )?;
+        writeln!(
+            f,
+            "    Jacobian values time:     {}",
+            self.residual.jacobian.total.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Jacobian FEM:           {}",
+            self.residual.jacobian.fem.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Jacobian Diagonal:      {}",
+            self.residual.jacobian.diag.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Jacobian Volume:        {}",
+            self.residual.jacobian.volume.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Jacobian Contact:       {}",
+            self.residual.jacobian.contact.as_millis()
+        )?;
+        writeln!(
+            f,
+            "      Jacobian Friction:      {}",
+            self.residual.jacobian.friction.as_millis()
         )?;
         writeln!(
             f,
@@ -465,7 +474,7 @@ impl Default for SolveResult {
             iterations: 0,
             status: Status::NothingToSolve,
             timings: Timings::default(),
-            stats: Vec::new()
+            stats: Vec::new(),
         }
     }
 }

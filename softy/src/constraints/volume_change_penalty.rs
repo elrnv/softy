@@ -1,5 +1,6 @@
 use crate::attrib_defines::*;
 use crate::matrix::*;
+use crate::nl_fem::ZoneParams;
 use crate::Error;
 use crate::Material;
 use crate::Real;
@@ -9,7 +10,6 @@ use geo::VertexPositions;
 use geo::{attrib::*, mesh::topology::*, mesh::CellType, ops::Volume, Index};
 use rayon::iter::Either;
 use tensr::{Matrix3, Vector3};
-use crate::nl_fem::ZoneParams;
 
 /// One standard atmospheric pressure in `Pa`.
 const PRESSURE_ATM: f64 = 101325.0;
@@ -165,11 +165,16 @@ impl VolumeChangePenalty {
                 Some(VolumeChangePenalty {
                     surface_topo,
                     rest_volume: rest_volume.into(),
-                    pressurization: *zone_params.zone_pressurizations.get(zone as usize - 1).unwrap_or(&1.0),
-                    compression: *zone_params.compression_coefficients
+                    pressurization: *zone_params
+                        .zone_pressurizations
                         .get(zone as usize - 1)
                         .unwrap_or(&1.0),
-                    hessian_approximation: *zone_params.hessian_approximation
+                    compression: *zone_params
+                        .compression_coefficients
+                        .get(zone as usize - 1)
+                        .unwrap_or(&1.0),
+                    hessian_approximation: *zone_params
+                        .hessian_approximation
                         .get(zone as usize - 1)
                         .unwrap_or(&true),
                 })
@@ -463,47 +468,57 @@ impl VolumeChangePenalty {
 
 #[cfg(test)]
 mod tests {
-    use approx::relative_eq;
-    use flatk::{Chunked3, IntoStorage};
-    use utils::random_vectors;
-    use crate::load_material;
-    use crate::test_utils::{make_box};
     use super::*;
-    use autodiff::FT;
-    use num_traits::Zero;
+    use crate::load_material;
     use crate::nl_fem::state::VertexType;
+    use crate::test_utils::make_box;
+    use approx::relative_eq;
+    use autodiff::FT;
+    use flatk::{Chunked3, IntoStorage};
+    use num_traits::Zero;
+    use utils::random_vectors;
 
     #[test]
     fn volume_penalty_hessian() {
         let mut mesh = make_box(1);
-        mesh
-            .insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0; mesh.num_vertices()])
-            .unwrap();
-        mesh
-            .insert_attrib_data::<VertexType, VertexIndex>(
-                VERTEX_TYPE_ATTRIB,
-                vec![VertexType::Free; mesh.num_vertices()],
-            )
-            .unwrap();
+        mesh.insert_attrib_data::<FixedIntType, VertexIndex>(
+            FIXED_ATTRIB,
+            vec![0; mesh.num_vertices()],
+        )
+        .unwrap();
+        mesh.insert_attrib_data::<VertexType, VertexIndex>(
+            VERTEX_TYPE_ATTRIB,
+            vec![VertexType::Free; mesh.num_vertices()],
+        )
+        .unwrap();
         mesh.insert_attrib_data::<VolumeZoneIdType, CellIndex>(
             VOLUME_ZONE_ID_ATTRIB,
             vec![1; mesh.num_cells()],
-        ).unwrap();
+        )
+        .unwrap();
         let v = Chunked3::from_array_vec(random_vectors(mesh.num_vertices())).into_storage();
         let n = v.len();
-        let material = load_material("assets/medium_solid_material.ron").expect("Missing material config.");
+        let material =
+            load_material("assets/medium_solid_material.ron").expect("Missing material config.");
         let vc = VolumeChangePenalty::try_from_mesh(
             &Mesh::from(mesh),
-        &[material],
-        &ZoneParams {
-            zone_pressurizations: vec![0.9],
-            compression_coefficients: vec![0.2],
-            hessian_approximation: vec![false],
-        }).expect("Failed to create a volume change penalty").into_iter().next().unwrap();
+            &[material],
+            &ZoneParams {
+                zone_pressurizations: vec![0.9],
+                compression_coefficients: vec![0.2],
+                hessian_approximation: vec![false],
+            },
+        )
+        .expect("Failed to create a volume change penalty")
+        .into_iter()
+        .next()
+        .unwrap();
 
         let mut jac = vec![vec![0.0; n]; n];
-        for (MatrixElementIndex{ row, col }, val) in
-            vc.penalty_hessian_indices_iter().zip(vc.penalty_hessian_values_iter(&v, &v, &[1.0])) {
+        for (MatrixElementIndex { row, col }, val) in vc
+            .penalty_hessian_indices_iter()
+            .zip(vc.penalty_hessian_values_iter(&v, &v, &[1.0]))
+        {
             jac[row][col] += val;
         }
 
@@ -513,12 +528,20 @@ mod tests {
         for col in 0..n {
             v_ad[col] = FT::var(v_ad[col]);
             let mut grad = vec![FT::<f64>::zero(); n];
-            for (MatrixElementIndex { col, .. }, val) in vc.penalty_jacobian_indices_iter().zip(vc.penalty_jacobian_values_iter(&v_ad, &v_ad)) {
+            for (MatrixElementIndex { col, .. }, val) in vc
+                .penalty_jacobian_indices_iter()
+                .zip(vc.penalty_jacobian_values_iter(&v_ad, &v_ad))
+            {
                 grad[col] += val;
             }
 
             for row in 0..n {
-                let res = relative_eq!(jac[row][col], grad[row].deriv(), max_relative = 1e-6, epsilon = 1e-7);
+                let res = relative_eq!(
+                    jac[row][col],
+                    grad[row].deriv(),
+                    max_relative = 1e-6,
+                    epsilon = 1e-7
+                );
 
                 if !res {
                     success = false;
@@ -528,7 +551,7 @@ mod tests {
                         col,
                         jac[row][col],
                         grad[row].deriv(),
-                        jac[row][col]/grad[row].deriv()
+                        jac[row][col] / grad[row].deriv()
                     );
                 }
             }

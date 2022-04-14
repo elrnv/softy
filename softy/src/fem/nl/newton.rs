@@ -852,7 +852,17 @@ where
         let header = IterationInfo::header();
         log::debug!("{}", header[0]);
         log::debug!("{}", header[1]);
-        let info = IterationInfo::new(0, 0, linsolve_result, 1.0, f64::INFINITY, r, x_prev, x);
+        let info = IterationInfo::new(
+            0,
+            0,
+            linsolve_result,
+            1.0,
+            f64::INFINITY,
+            r,
+            x_prev,
+            x,
+            &*problem.lumped_mass_inv(),
+        );
         log::debug!("{}", info);
         stats.push(info);
 
@@ -973,8 +983,9 @@ where
                     // sigma = orig_sigma.min(((merit_cur - linsolve_result.residual).abs() / merit_prev) as f32);
                     // CHOICE 2
                     let eta_prev2 = linsolve.tol * linsolve.tol;
-                    let power = 0.5*(1.0 + 0.5_f32.sqrt()); // Golden ratio
-                    let mut eta = f32::EPSILON.max((merit_cur / merit_prev).powf(0.5*power as f64) as f32);
+                    let power = 0.5 * (1.0 + 0.5_f32.sqrt()); // Golden ratio
+                    let mut eta =
+                        f32::EPSILON.max((merit_cur / merit_prev).powf(0.5 * power as f64) as f32);
                     // Safeguard to prevent oversolving (see paper)
                     if eta_prev2 > 0.1 {
                         eta = eta.max(eta_prev2);
@@ -1108,9 +1119,11 @@ where
                             &sparse_jacobian.j_vals,
                             x.len(),
                         );
-                        //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
+                        // log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
                         //write_jacobian_img(j_dense.view(), iterations);
+                        // print_dense(j_dense.view());
                         condition_number(j_dense.view())
+                        // max_sigma(j_dense.view())
                     });
                     let t_linsolve_debug_info = Instant::now();
 
@@ -1140,7 +1153,9 @@ where
                         .for_each(|(p, &r64)| *p = T::from(r64).unwrap());
 
                     // Check
+                    // let mut jp = vec![T::zero(); r.len()];
                     // problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
+                    // eprintln!("p = {:?}", &p);
                     // eprintln!("r = {:?}", &r_cur);
                     // eprintln!("jp_check = {:?}", &jp);
 
@@ -1247,48 +1262,78 @@ where
                         ls_count += 1;
                     }
 
+                    // Increment linear solve tolerance.
                     if let LinearSolverWorkspace::Iterative(linsolve) = linsolve {
                         linsolve.tol = 1.0 - alpha as f32 * (1.0 - linsolve.tol);
                     }
 
-                    // dbg!(alpha);
-                    // if ls_count > 20 {
-                    //     let max_alpha = alpha;
-                    //     let mut merit_data = vec![];
-                    //     let mut r0 = vec![];
-                    //     let mut f = vec![];
-                    //
-                    //     let mut xs = vec![];
-                    //     let mut probe_r = vec![T::zero(); r_next.len()];
-                    //     let mut probe_x = vec![T::zero(); x.len()];
-                    //     for i in 0..=1000 {
-                    //         let alpha: f64 = (4.0*max_alpha).min(1.0)*0.001 * i as f64;
-                    //         zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
-                    //             |(x, &x0, &p)| {
-                    //                 *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
-                    //             },
-                    //         );
-                    //         problem.residual(&probe_x, probe_r.as_mut_slice());
-                    //         if i == 0 || i == 1000 {
-                    //             dbg!(&probe_r);
-                    //         }
-                    //         geo::io::save_mesh(&problem.mesh(), &format!("./out/dbg_mesh_{}.vtk", i)).unwrap();
-                    //         let probe_f = problem.debug_friction();
-                    //         let probe = merit(problem, &probe_x, &probe_r, init_sparse_solver);
-                    //         xs.push(alpha);
-                    //         f.push(probe_f.view().into_tensor().norm_squared());
-                    //         merit_data.push(probe);
-                    //         r0.push(merit_jac_prod(problem, &probe_x, &probe_r, init_sparse_solver));
-                    //     }
-                    //     use std::io::Write;
-                    //     let mut file = std::fs::File::create("./out/debug_data.jl").unwrap();
-                    //     writeln!(file, "xs = {:?}", xs).unwrap();
-                    //     writeln!(file, "merit_data = {:?}", merit_data).unwrap();
-                    //     writeln!(file, "r0 = {:?}", r0).unwrap();
-                    //     writeln!(file, "f = {:?}", f).unwrap();
-                    //     writeln!(file, "xs_length = {:?}", xs.len()).unwrap();
-                    //     panic!("STOP");
-                    // }
+                //     dbg!(alpha);
+                //     if ls_count > 2 {
+                //         let max_alpha = alpha;
+                //         let mut merit_data = vec![];
+                //         let mut r0 = vec![];
+                //         let mut f = vec![];
+                //         let mut xs = vec![];
+                //         let mut probe_r = vec![T::zero(); r_next.len()];
+                //         let mut probe_x = vec![T::zero(); x.len()];
+                //         use std::io::Write;
+                //         let mut file = std::fs::File::create(&format!("./out/debug_data_{iterations}.jl")).unwrap();
+                //         for i in 0..=1000 {
+                //             let alpha: f64 = (4.0*max_alpha).min(1.0)*0.001 * i as f64;
+                //             zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
+                //                 |(x, &x0, &p)| {
+                //                     *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
+                //                 },
+                //             );
+                //             problem.residual(&probe_x, probe_r.as_mut_slice());
+                //             if i == 0  {
+                //                 writeln!(file, "r_begin = {:?}", &probe_r);
+                //             } else if i == 1000  {
+                //                 writeln!(file, "r_end = {:?}", &probe_r);
+                //             }
+                //             geo::io::save_mesh(&problem.mesh(), &format!("./out/dbg_mesh_{}.vtk", i)).unwrap();
+                //             let probe_f = problem.debug_friction();
+                //             let probe = merit(problem, &probe_x, &probe_r, init_sparse_solver);
+                //             xs.push(alpha);
+                //             f.push(probe_f.view().into_tensor().norm_squared());
+                //             merit_data.push(probe);
+                //             r0.push(merit_jac_prod(problem, &probe_x, &probe_r, init_sparse_solver));
+                //         }
+                //         writeln!(file, "xs = {:?}", xs).unwrap();
+                //         writeln!(file, "merit_data = {:?}", merit_data).unwrap();
+                //         writeln!(file, "r0 = {:?}", r0).unwrap();
+                //         writeln!(file, "f = {:?}", f).unwrap();
+                //         writeln!(file, "xs_length = {:?}", xs.len()).unwrap();
+                //
+                //         let j_dense = j_dense.borrow_mut_with(|| {
+                //             ChunkedN::from_flat_with_stride(
+                //                 x.len(),
+                //                 vec![T::zero(); x.len() * r.len()],
+                //             )
+                //         });
+                //         build_dense(
+                //             j_dense.view_mut(),
+                //             &sparse_jacobian.j_rows,
+                //             &sparse_jacobian.j_cols,
+                //             &sparse_jacobian.j_vals,
+                //             x.len(),
+                //         );
+                //         writeln!(file, "J = [").unwrap();
+                //         for jp in j_dense.iter() {
+                //             for j in jp.iter() {
+                //                 write!(file, "{:?} ", j).unwrap();
+                //             }
+                //             writeln!(file, ";").unwrap();
+                //         }
+                //         writeln!(file, "]").unwrap();
+                //
+                //         let mut jp = vec![T::zero(); r.len()];
+                //         problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
+                //         writeln!(file, "p = {:?}", &p).unwrap();
+                //         writeln!(file, "r = {:?}", &r_cur).unwrap();
+                //         writeln!(file, "jp_check = {:?}", &jp).unwrap();
+                //         panic!("STOP");
+                //     }
                     (ls_count, alpha)
                 }
             };
@@ -1304,6 +1349,7 @@ where
                 r_next,
                 x_prev,
                 x,
+                &*problem.lumped_mass_inv(),
             );
             log::debug!("{}", &info);
             stats.push(info);
@@ -1376,6 +1422,8 @@ pub struct IterationInfo {
     merit: f64,
     /// Infinity norm of the residual.
     r_inf: f64,
+    /// Infinity norm of the nodal acceleration residual.
+    a_inf: f64,
     /// 2-norm of the current velocity.
     x_2: f64,
     /// 2-norm of the step vector
@@ -1393,7 +1441,19 @@ impl IterationInfo {
         r: &[T],
         x_prev: &[T],
         x: &[T],
+        mass_inv: &[T],
     ) -> Self {
+        // let a_abs = T::from(9.81 * a_tol).unwrap() * dt;
+        // let a_tol = T::from(a_tol).unwrap();
+        // Chunked3::from_flat(&*r)
+        //     .iter()
+        //     .zip(mass_inv.iter())
+        //     .zip(Chunked3::from_flat(&*x).iter())
+        //     .all(|((&r, &m_inv), &v)| {
+        //         let v = Vector3::from(v);
+        //         let r = Vector3::from(r);
+        //         (r * m_inv).norm() / dt
+        //     })
         IterationInfo {
             iteration,
             ls_steps,
@@ -1401,6 +1461,14 @@ impl IterationInfo {
             alpha,
             merit,
             r_inf: r.as_tensor().lp_norm(LpNorm::Inf).to_f64().unwrap(),
+            a_inf: r
+                .chunks_exact(3)
+                .zip(mass_inv.iter())
+                .map(|(r, &m_inv)| Vector3::new([r[0], r[1], r[2]]).norm() * m_inv)
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                .unwrap_or(T::zero())
+                .to_f64()
+                .unwrap(),
             x_2: x.as_tensor().norm().to_f64().unwrap(),
             d_2: x_prev
                 .iter()
@@ -1419,6 +1487,7 @@ impl IterationInfo {
     /// i       - iteration number
     /// merit   - Merit function
     /// res-inf - inf-norm of the residual
+    /// a-inf   - inf-norm of the nodal acceleration residual
     /// d-2     - 2-norm of the step vector
     /// x-2     - 2-norm of the variable vector
     /// lin #   - number of linear solver iterations
@@ -1428,8 +1497,8 @@ impl IterationInfo {
     /// ```
     pub fn header() -> [&'static str; 2] {
         [
-            "    i |  res-inf   |   merit    |    d-2     |    x-2     | lin # |  lin err   |   alpha    | ls # ",
-            "------+------------+------------+------------+------------+-------+------------+------------+------"
+            "    i |  res-inf   |   a-inf    |   merit    |    d-2     |    x-2     | lin # |  lin err   |   alpha    | ls # ",
+            "------+------------+------------+------------+------------+------------+-------+------------+------------+------"
         ]
     }
 }
@@ -1437,9 +1506,10 @@ impl IterationInfo {
 impl Display for IterationInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f,
-            "{i:>5} | {resinf:10.3e} | {merit:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {alpha:10.3e} | {ls:>4} ",
+            "{i:>5} | {resinf:10.3e} | {ainf:10.3e} | {merit:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {alpha:10.3e} | {ls:>4} ",
             i = self.iteration,
             resinf = self.r_inf,
+            ainf = self.a_inf,
             merit = self.merit,
             di = self.d_2,
             xi = self.x_2,
@@ -1547,6 +1617,17 @@ fn print_dense<T: Real>(j_dense: ChunkedN<&[T]>) {
         eprintln!(";");
     }
     eprintln!("]");
+}
+
+#[allow(dead_code)]
+fn max_sigma<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) -> T {
+    let svd = svd_values(mtx);
+    let max_sigma = svd
+        .iter()
+        .cloned()
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    max_sigma
 }
 
 #[allow(dead_code)]

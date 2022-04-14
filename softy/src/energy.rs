@@ -219,7 +219,7 @@ pub trait EnergyHessian<T: Real>: EnergyHessianTopology {
         dx: &[T],
         scale: T,
         triplets: &mut [MatrixElementTriplet<T>],
-        dqdv: T
+        dqdv: T,
     ) {
         self.energy_hessian_offset(x, dx, (0, 0).into(), scale, triplets, dqdv)
     }

@@ -282,29 +282,49 @@ impl<T: Real64> NLProblem<T> {
         let out_pos = mesh.vertex_positions_mut();
         let mut out_vel = vec![[0.0; 3]; out_pos.len()];
         let mut out_force = vec![[0.0; 3]; out_pos.len()];
+        let mut out_mass = vec![0.0; out_pos.len()];
 
         // Update positions, velocities and net force
         {
             let State {
-                vtx: VertexWorkspace {
-                    orig_index, next, ..
-                },
+                vtx:
+                    VertexWorkspace {
+                        orig_index,
+                        next,
+                        mass_inv,
+                        ..
+                    },
                 ..
             } = &*self.state.borrow();
 
-            let force: Vec<[f32; 3]> = self.prev_force
-                .chunks_exact(3).map(|f| [f[0].to_f32().unwrap(), f[1].to_f32().unwrap(), f[2].to_f32().unwrap()]).collect();
+            let force: Vec<[f32; 3]> = self
+                .prev_force
+                .chunks_exact(3)
+                .map(|f| {
+                    [
+                        f[0].to_f32().unwrap(),
+                        f[1].to_f32().unwrap(),
+                        f[2].to_f32().unwrap(),
+                    ]
+                })
+                .collect();
 
             let pos = next.pos.as_arrays();
             let vel = next.vel.as_arrays();
             // TODO: add original_order to state so we can iterate (in parallel) over out instead here.
             orig_index
                 .iter()
-                .zip(pos.iter().zip(vel.iter()).zip(force.iter()))
-                .for_each(|(&i, ((pos, vel), &force))| {
+                .zip(
+                    pos.iter()
+                        .zip(vel.iter())
+                        .zip(force.iter())
+                        .zip(mass_inv.iter()),
+                )
+                .for_each(|(&i, (((pos, vel), &force), &mass_inv))| {
                     out_pos[i] = pos.as_tensor().cast::<f64>().into_data();
                     out_vel[i] = vel.as_tensor().cast::<f64>().into_data();
                     out_force[i] = force;
+                    out_mass[i] = 1.0 / mass_inv.to_f64().unwrap();
                 });
         }
 
@@ -317,6 +337,7 @@ impl<T: Real64> NLProblem<T> {
             .unwrap(); // No panic: removed above.
 
         debug_assert_eq!(mesh.num_vertices(), self.state_vertex_indices.len());
+
         mesh.remove_attrib::<VertexIndex>(STATE_INDEX_ATTRIB).ok(); // Removing attrib
         mesh.insert_attrib_data::<StateIndexType, VertexIndex>(
             STATE_INDEX_ATTRIB,
@@ -327,10 +348,19 @@ impl<T: Real64> NLProblem<T> {
         )
         .unwrap(); // No panic: removed above.
 
+        mesh.remove_attrib::<VertexIndex>(MASS_ATTRIB).ok(); // Removing attrib
+        mesh.insert_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, out_mass)
+            .unwrap(); // No panic: removed above.
+
         self.compute_residual_on_mesh(&mut mesh);
         self.compute_distance_potential(&mut mesh);
         self.compute_frictional_contact_forces(&mut mesh);
         mesh
+    }
+
+    /// Returns a vector of lumped vertex masses.
+    fn lumped_mass_inv(&self) -> Ref<'_, [T]> {
+        Ref::map(self.state.borrow(), |state| state.vtx.mass_inv.as_slice())
     }
 
     fn compute_distance_potential(&self, mesh: &mut Mesh) {
@@ -714,12 +744,12 @@ impl<T: Real64> NLProblem<T> {
             SingleStepTimeIntegration::BDF2 => State::bdf2_step(step_state, dt),
             SingleStepTimeIntegration::MixedBDF2(t) => {
                 State::mixed_bdf2_step(step_state, dt, 1.0 - t as f64)
-            },
+            }
             SingleStepTimeIntegration::SDIRK2 => {
-                let alpha = 1.0 - 0.5*2.0_f64.sqrt();
+                let alpha = 1.0 - 0.5 * 2.0_f64.sqrt();
                 // let alpha = 1.0;
                 State::sdirk2_step(step_state, dt, alpha)
-            },
+            }
         }
     }
 
@@ -736,12 +766,12 @@ impl<T: Real64> NLProblem<T> {
             SingleStepTimeIntegration::BDF2 => State::bdf2_step(step_state, dt),
             SingleStepTimeIntegration::MixedBDF2(t) => {
                 State::mixed_bdf2_step(step_state, dt, 1.0 - t as f64)
-            },
+            }
             SingleStepTimeIntegration::SDIRK2 => {
-                let alpha = 1.0 - 0.5*2.0_f64.sqrt();
+                let alpha = 1.0 - 0.5 * 2.0_f64.sqrt();
                 // let alpha = 1.0;
                 State::sdirk2_step(step_state, dt, alpha)
-            },
+            }
         }
         // let step_state = state.step_state(v);
         // eprintln!("after q: {:?}", &step_state.data.next.q);
@@ -1642,8 +1672,12 @@ impl<T: Real64> NLProblem<T> {
     ) {
         let ResidualState { cur, next, r } = state;
         // eprintln!("cur vel : {:?}", &cur.vel);
-        solid.inertia().add_energy_gradient(cur.vel, next.vel, r, dqdv);
-        shell.inertia().add_energy_gradient(cur.vel, next.vel, r, dqdv);
+        solid
+            .inertia()
+            .add_energy_gradient(cur.vel, next.vel, r, dqdv);
+        shell
+            .inertia()
+            .add_energy_gradient(cur.vel, next.vel, r, dqdv);
     }
 
     pub fn contact_constraint(&self, _v: &[T]) -> Vec<T> {
@@ -1721,14 +1755,18 @@ impl<T: Real64> NLProblem<T> {
         vel: &[S],
         r: &mut [S],
         frictional_contact_constraints: &[FrictionalContactConstraint<S>],
+        rebuild_tree: bool,
     ) {
         assert_eq!(pos.len(), vel.len());
         assert_eq!(r.len(), pos.len());
 
         // Add volume constraint indices
         for vc in self.volume_constraints.iter() {
-            vc.borrow().subtract_pressure_force(prev_pos, pos, r);
+            let timings = &mut *self.timings.borrow_mut();
+            add_time!(timings.volume_force; vc.borrow().subtract_pressure_force(prev_pos, pos, r));
         }
+
+        // let mut dbgr = vec![S::zero(); vel.len()];
 
         // Compute contact lambda.
         for fc in frictional_contact_constraints.iter() {
@@ -1736,11 +1774,19 @@ impl<T: Real64> NLProblem<T> {
 
             let timings = &mut *self.timings.borrow_mut();
 
-            add_time!(timings.update_state; fc_constraint.update_state(Chunked3::from_flat(pos)) );
+            add_time!(timings.update_state; fc_constraint.update_state_with_rebuild(Chunked3::from_flat(pos), rebuild_tree));
             add_time!(timings.update_distance_potential; fc_constraint.update_distance_potential() );
             add_time!(timings.update_multipliers; fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32));
             add_time!(timings.contact_force; fc_constraint.subtract_constraint_force(Chunked3::from_flat(r)));
+            // fc_constraint.subtract_constraint_force(Chunked3::from_flat(dbgr.as_mut_slice()));
         }
+
+        // DBG CODE
+        // let dbgdata_out = &mut *self.debug_friction.borrow_mut();
+        // dbgdata_out.clear();
+        // dbgdata_out.extend(dbgr.iter().map(|&x| T::from(x).unwrap()));
+        // END OF DBG CODE
+
         self.subtract_friction_forces(pos, vel, r, frictional_contact_constraints);
     }
 
@@ -1831,7 +1877,7 @@ impl<T: Real64> NLProblem<T> {
         // dbgdata_out.clear();
         // dbgdata_out.extend(r.iter().map(|&x| T::from(x).unwrap()));
 
-        self.subtract_constraint_forces(cur.pos, next.pos, next.vel, r, frictional_contacts);
+        self.subtract_constraint_forces(cur.pos, next.pos, next.vel, r, frictional_contacts, true);
 
         debug_assert!(r.iter().all(|r| r.is_finite()));
     }
@@ -2009,7 +2055,7 @@ impl<T: Real64> NLProblem<T> {
             solid,
             shell,
             self.frictional_contact_constraints_ad.as_slice(),
-            dt * force_mul
+            dt * force_mul,
         );
 
         // Save the current force for when the step is advanced.
@@ -2064,11 +2110,11 @@ impl<T: Real64> NLProblem<T> {
             SingleStepTimeIntegration::TR => self.compute_vertex_residual_ad_impl(0.5, 0.5),
             SingleStepTimeIntegration::BDF2 => self.compute_vertex_residual_ad_impl(2.0 / 3.0, 0.0),
             SingleStepTimeIntegration::MixedBDF2(t) => {
-                let factor = t /(1.0 + t);
+                let factor = t / (1.0 + t);
                 self.compute_vertex_residual_ad_impl(factor as f64, 0.0)
-            },
+            }
             SingleStepTimeIntegration::SDIRK2 => {
-                let factor = 0.5*2.0_f64.sqrt();
+                let factor = 0.5 * 2.0_f64.sqrt();
                 self.compute_vertex_residual_ad_impl(1.0 - factor, factor)
                 // self.compute_vertex_residual_ad_impl(1.0, 0.0)
             }
@@ -2080,21 +2126,23 @@ impl<T: Real64> NLProblem<T> {
         let state = &mut *self.state.borrow_mut();
         // eprintln!("during update cur prev dq = {:?}", &state.dof.data.prev.dq);
         match self.time_integration {
-            SingleStepTimeIntegration::BDF2 => state.update_cur_vertices_with_lerp(-1.0 / 3.0, 4.0 / 3.0),
+            SingleStepTimeIntegration::BDF2 => {
+                state.update_cur_vertices_with_lerp(-1.0 / 3.0, 4.0 / 3.0)
+            }
             SingleStepTimeIntegration::MixedBDF2(t) => {
                 let t = t as f64;
                 // Comments correspond to quantities directly from the TRBDF2 formula.
                 // let gamma = 1.0 - t;
                 // let a = 1.0 / (gamma * (2.0 - gamma));
-                let a = 1.0 / (1.0 - t*t);
+                let a = 1.0 / (1.0 - t * t);
                 // let b = (1.0 - gamma)^2 / (gamma * (2 - gamma));
-                let b = t*t / (1.0 - t*t);
+                let b = t * t / (1.0 - t * t);
                 state.update_cur_vertices_with_lerp(-b, a)
-            },
+            }
             SingleStepTimeIntegration::SDIRK2 => {
                 // For SDIRK2 we use the previous state since it's a two step method.
                 state.update_cur_vertices_with_lerp(1.0, 0.0)
-            },
+            }
             _ => state.update_cur_vertices_direct(),
         }
         // eprintln!("cur vel : {:?}", &state.vtx.cur.vel);
@@ -2124,15 +2172,18 @@ impl<T: Real64> NLProblem<T> {
                 .iter()
                 .zip(vtx.next.vel.storage().iter())
                 .map(|(&r, &v)| r * v)
-                .sum::<T>() * T::from(prev_force_mul).unwrap() * self.time_step();
+                .sum::<T>()
+                * T::from(prev_force_mul).unwrap()
+                * self.time_step();
         }
 
-        objective += T::from(1.0 - prev_force_mul).unwrap() * self.energy(
-            vtx.residual_state().into_storage(),
-            solid,
-            shell,
-            self.frictional_contact_constraints.as_slice(),
-        );
+        objective += T::from(1.0 - prev_force_mul).unwrap()
+            * self.energy(
+                vtx.residual_state().into_storage(),
+                solid,
+                shell,
+                self.frictional_contact_constraints.as_slice(),
+            );
 
         if !self.is_static() {
             objective += self.inertia(vtx.residual_state().into_storage(), solid, shell);
@@ -2165,7 +2216,7 @@ impl<T: Real64> NLProblem<T> {
             solid,
             shell,
             self.frictional_contact_constraints.as_slice(),
-            dqdv
+            dqdv,
         );
 
         // eprintln!("after force = {:?}", vtx.residual.storage());
@@ -2213,11 +2264,11 @@ impl<T: Real64> NLProblem<T> {
             SingleStepTimeIntegration::BDF2 => self.compute_vertex_residual_impl(2.0 / 3.0, 0.0),
             // SingleStepTimeIntegration::BDF2 => self.compute_vertex_residual_impl(1.0, 0.0),
             SingleStepTimeIntegration::MixedBDF2(t) => {
-                let factor = t /(1.0 + t);
+                let factor = t / (1.0 + t);
                 self.compute_vertex_residual_impl(factor as f64, 0.0)
-            },
+            }
             SingleStepTimeIntegration::SDIRK2 => {
-                let factor = 0.5*2.0_f64.sqrt();
+                let factor = 0.5 * 2.0_f64.sqrt();
                 self.compute_vertex_residual_impl(1.0 - factor, factor)
                 // self.compute_vertex_residual_impl(1.0, 0.0)
             }
@@ -2239,7 +2290,12 @@ impl<T: Real64> NLProblem<T> {
     }
 
     /// Returns number of actual non-zeros in the Jacobian.
-    fn compute_jacobian_indices(&self, rows: &mut [usize], cols: &mut [usize], with_constraints: bool) -> usize {
+    fn compute_jacobian_indices(
+        &self,
+        rows: &mut [usize],
+        cols: &mut [usize],
+        with_constraints: bool,
+    ) -> usize {
         let num_active_coords = self.num_variables();
         let mut count = 0; // Constraint counter
 
@@ -2394,32 +2450,40 @@ impl<T: Real64> NLProblem<T> {
     }
 
     #[inline]
-    fn jacobian_values_with_constraints(&self, v: &[T], r: &[T], rows: &[usize], cols: &[usize], vals: &mut [T], with_constraints: bool) {
+    fn jacobian_values_with_constraints(
+        &self,
+        v: &[T],
+        r: &[T],
+        rows: &[usize],
+        cols: &[usize],
+        vals: &mut [T],
+        with_constraints: bool,
+    ) {
         self.integrate_step(v);
         self.state.borrow_mut().update_vertices(v);
         match self.time_integration {
             SingleStepTimeIntegration::BE => {
                 let dt = T::from(self.time_step()).unwrap();
                 self.jacobian_values(v, r, rows, cols, vals, dt, dt, with_constraints);
-            },
+            }
             SingleStepTimeIntegration::TR => {
                 let half_dt = T::from(0.5 * self.time_step()).unwrap();
                 self.jacobian_values(v, r, rows, cols, vals, half_dt, half_dt, with_constraints);
-            },
+            }
             SingleStepTimeIntegration::BDF2 => {
                 let factor = T::from(2.0 * self.time_step() / 3.0).unwrap();
                 self.jacobian_values(v, r, rows, cols, vals, factor, factor, with_constraints);
-            },
+            }
             SingleStepTimeIntegration::MixedBDF2(t) => {
                 let gamma = 1.0 - t as f64;
-                let factor = T::from(((1.0 - gamma)/(2.0 - gamma)) * self.time_step()).unwrap();
+                let factor = T::from(((1.0 - gamma) / (2.0 - gamma)) * self.time_step()).unwrap();
                 self.jacobian_values(v, r, rows, cols, vals, factor, factor, with_constraints);
-            },
+            }
             SingleStepTimeIntegration::SDIRK2 => {
-                let factor = T::from((1.0 - 0.5*2.0_f64.sqrt())  * self.time_step()).unwrap();
+                let factor = T::from((1.0 - 0.5 * 2.0_f64.sqrt()) * self.time_step()).unwrap();
                 // let factor = T::from(self.time_step()).unwrap();
                 self.jacobian_values(v, r, rows, cols, vals, factor, factor, with_constraints);
-            },
+            }
         }
     }
 
@@ -2435,8 +2499,7 @@ impl<T: Real64> NLProblem<T> {
         // Multiplier for force Jacobians
         force_multiplier: T,
         with_constraints: bool,
-    )
-    {
+    ) {
         let num_active_coords = self.num_variables();
         let state = &mut *self.state.borrow_mut();
 
@@ -2465,7 +2528,13 @@ impl<T: Real64> NLProblem<T> {
         if !self.is_static() {
             let inertia = solid.inertia();
             let n = inertia.energy_hessian_size();
-            inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n], dqdv);
+            inertia.energy_hessian_values(
+                cur.vel,
+                next.vel,
+                factor,
+                &mut vals[count..count + n],
+                dqdv,
+            );
             count += n;
         }
 
@@ -2483,7 +2552,13 @@ impl<T: Real64> NLProblem<T> {
         if !self.is_static() {
             let inertia = shell.inertia();
             let n = inertia.energy_hessian_size();
-            inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n], dqdv);
+            inertia.energy_hessian_values(
+                cur.vel,
+                next.vel,
+                factor,
+                &mut vals[count..count + n],
+                dqdv,
+            );
             count += n;
         }
 
@@ -2517,7 +2592,6 @@ impl<T: Real64> NLProblem<T> {
             .count();
 
         let t_end_of_diag = Instant::now();
-
 
         // // DEBUG CODE
         // let mut hess = vec![vec![0.0; num_active_coords]; num_active_coords];
@@ -2794,9 +2868,7 @@ impl<T: Real64> NLProblem<T> {
         self.state.borrow_mut().update_vertices_ad();
 
         {
-            let State {
-                vtx, ..
-            } = &mut *self.state.borrow_mut();
+            let State { vtx, .. } = &mut *self.state.borrow_mut();
 
             // Clear residual vector.
             vtx.residual_ad
@@ -2805,7 +2877,14 @@ impl<T: Real64> NLProblem<T> {
                 .for_each(|x| *x = ad::F::zero());
 
             let ResidualState { cur, next, r } = vtx.residual_state_ad().into_storage();
-            self.subtract_constraint_forces(cur.pos, next.pos, next.vel, r, self.frictional_contact_constraints_ad.as_slice());
+            self.subtract_constraint_forces(
+                cur.pos,
+                next.pos,
+                next.vel,
+                r,
+                self.frictional_contact_constraints_ad.as_slice(),
+                false,
+            );
             let multiplier: f32 = match self.time_integration {
                 SingleStepTimeIntegration::BE => 1.0,
                 SingleStepTimeIntegration::TR => 0.5,
@@ -2850,6 +2929,9 @@ pub trait NonLinearProblem<T: Real> {
 
     /// Returns a mesh updated with the given velocity information.
     fn mesh_with(&self, dq: &[T]) -> Mesh;
+
+    /// Returns a vector of lumped vertex masses.
+    fn lumped_mass_inv(&self) -> Ref<'_, [T]>;
 
     /// Returns the number of unknowns for the problem.
     fn num_variables(&self) -> usize;
@@ -2965,6 +3047,9 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     fn mesh_with(&self, dq: &[T]) -> Mesh {
         NLProblem::mesh_with(self, dq)
     }
+    fn lumped_mass_inv(&self) -> Ref<'_, [T]> {
+        NLProblem::lumped_mass_inv(self)
+    }
     #[inline]
     fn num_variables(&self) -> usize {
         self.state.borrow().dof.storage().len()
@@ -2978,7 +3063,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         match self.time_integration {
             SingleStepTimeIntegration::BE => self.compute_objective(0.0),
             SingleStepTimeIntegration::TR => self.compute_objective(0.5),
-            SingleStepTimeIntegration::SDIRK2 => self.compute_objective(0.5*2.0_f64.sqrt()),
+            SingleStepTimeIntegration::SDIRK2 => self.compute_objective(0.5 * 2.0_f64.sqrt()),
             // BDF2 objective is computed same as BE, but note that vtx.cur is different.
             // vtx.cur is set in update_cur_vertices at the beginning of the step.
             SingleStepTimeIntegration::BDF2 => self.compute_objective(0.0),

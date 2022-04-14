@@ -492,7 +492,22 @@ impl<T: Real> PointContactConstraint<T> {
     /// Update implicit surface using the given position data from mesh vertices.
     /// Return the number of positions that were actually updated.
     pub fn update_surface_with_mesh_pos(&mut self, pos: SubsetView<Chunked3<&[T]>>) -> usize {
-        self.implicit_surface.update_surface(pos.iter().cloned())
+        self.update_surface_with_mesh_pos_with_rebuild(pos, true)
+    }
+
+    pub fn update_surface_with_mesh_pos_with_rebuild(
+        &mut self,
+        pos: SubsetView<Chunked3<&[T]>>,
+        rebuild_tree: bool,
+    ) -> usize {
+        // let (indices, data) = pos.into_raw();
+        // let data = data.into_arrays();
+        // self.implicit_surface.update_surface_par(
+        //     indices.map(|indices| Either::Left(indices.par_iter().map(|&i| data[i]))).unwrap_or(
+        //         Either::Right(data.par_iter().cloned())
+        //     ),
+        self.implicit_surface
+            .update_surface(pos.iter().cloned(), rebuild_tree)
     }
 
     pub fn update_collider_vertex_positions(&mut self, x: SubsetView<Chunked3<&[T]>>) {
@@ -506,6 +521,7 @@ impl<T: Real> PointContactConstraint<T> {
         self.implicit_surface.update_surface(
             pos.iter()
                 .map(|&x| Vector3::from(x).cast::<T>().into_data()),
+            true,
         )
     }
 
@@ -1759,21 +1775,17 @@ impl<T: Real> PointContactConstraint<T> {
         let mut constraint_value_buf = self.constraint_value.borrow_mut();
         constraint_value_buf
             .par_iter_mut()
-            .zip(self.collider_vertex_positions.view().into_par_iter()).for_each(|(val, q)|
-        {
-            let q = [q[0], q[1], q[2]];
-            // Clear potential value.
-            let closest_sample = surf.nearest_neighbor_lookup(q).unwrap();
-            if closest_sample
-                .nml
-                .dot(Vector3::new(q) - closest_sample.pos)
-                > T::zero()
-            {
-                *val = radius;
-            } else {
-                *val = -radius;
-            }
-        });
+            .zip(self.collider_vertex_positions.view().into_par_iter())
+            .for_each(|(val, q)| {
+                let q = [q[0], q[1], q[2]];
+                // Clear potential value.
+                let closest_sample = surf.nearest_neighbor_lookup(q).unwrap();
+                if closest_sample.nml.dot(Vector3::new(q) - closest_sample.pos) > T::zero() {
+                    *val = radius;
+                } else {
+                    *val = -radius;
+                }
+            });
 
         surf.potential_par(
             self.collider_vertex_positions.view().into(),
@@ -1791,9 +1803,10 @@ impl<T: Real> PointContactConstraint<T> {
             .iter()
             .zip(constraint_value_buf.iter())
             .filter(|&(&nbrhood_size, _)| nbrhood_size != 0)
-            .zip(value.iter_mut()).for_each(|((_, new_v), v)| {
-            *v = *new_v - T::from(self.contact_offset).unwrap();
-        });
+            .zip(value.iter_mut())
+            .for_each(|((_, new_v), v)| {
+                *v = *new_v - T::from(self.contact_offset).unwrap();
+            });
     }
 
     #[cfg(feature = "optsolver")]

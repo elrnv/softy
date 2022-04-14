@@ -253,21 +253,21 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T, T> for TriShellElasticity<'_, E
 
             // Damping
             // if density != 0.0 {
-                let damping = T::from(damping).unwrap();
-                // let density = T::from(density).unwrap();
+            let damping = T::from(damping).unwrap();
+            // let density = T::from(density).unwrap();
 
-                let dF = tri_energy.deformation_gradient_differential(&tri_v) * dqdv;
-                let damp = DX_inv.transpose() * dF * (mu * area * damping);
-                for i in 0..2 {
-                    gradient[face[i]] += damp[i];
-                    gradient[face[2]] -= damp[i];
-                }
+            let dF = tri_energy.deformation_gradient_differential(&tri_v) * dqdv;
+            let damp = DX_inv.transpose() * dF * (mu * area * damping);
+            for i in 0..2 {
+                gradient[face[i]] += damp[i];
+                gradient[face[2]] -= damp[i];
+            }
 
-                //let dH = tri_energy.energy_hessian_product_transpose(&tri_dx);
-                //for i in 0..2 {
-                //    gradient[face[i]] += dH[i] * damping;
-                //    gradient[face[2]] -= dH[i] * damping;
-                //}
+            //let dH = tri_energy.energy_hessian_product_transpose(&tri_dx);
+            //for i in 0..2 {
+            //    gradient[face[i]] += dH[i] * damping;
+            //    gradient[face[2]] -= dH[i] * damping;
+            //}
             // }
         }
 
@@ -516,40 +516,38 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
                 tri_elems.mu.par_iter().map(|&x| T::from(x).unwrap()),
             ));
 
-            hess_iter.for_each(
-                |(tri_hess, (damping, area, &DX_inv, face, lambda, mu))| {
-                    // Make deformed triangle.
-                    let tri_x = Triangle::from_indexed_slice(face, pos);
-                    let Dx = Matrix2x3::new(tri_x.shape_matrix());
-                    let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
-                    let tri_energy = E::new(Dx, DX_inv, area, lambda, mu);
+            hess_iter.for_each(|(tri_hess, (damping, area, &DX_inv, face, lambda, mu))| {
+                // Make deformed triangle.
+                let tri_x = Triangle::from_indexed_slice(face, pos);
+                let Dx = Matrix2x3::new(tri_x.shape_matrix());
+                let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
+                let tri_energy = E::new(Dx, DX_inv, area, lambda, mu);
 
-                    //let factor = T::from(1.0 + damping).unwrap() * scale;
-                    let factor = scale;
-                    let local_hessians = tri_energy.energy_hessian();
+                //let factor = T::from(1.0 + damping).unwrap() * scale;
+                let factor = scale;
+                let local_hessians = tri_energy.energy_hessian();
 
-                    // Damping
-                    let ddF = DX_inv.transpose() * DX_inv * (area * mu * damping);
-                    let id = Matrix3::identity();
+                // Damping
+                let ddF = DX_inv.transpose() * DX_inv * (area * mu * damping);
+                let id = Matrix3::identity();
 
-                    Self::tri_hessian_for_each(
-                        |n, k| {
-                            (local_hessians[n][k]
-                                + id * if n == 2 && k == 2 {
-                                    ddF.sum_inner()
-                                } else if k == 2 {
-                                    -ddF[n].sum()
-                                } else if n == 2 {
-                                    -ddF[k].sum() // ddF should be symmetric
-                                } else {
-                                    ddF[n][k]
-                                })
-                                * factor
-                        },
-                        |i, _, (row, col), h| tri_hess[i] = h[row][col],
-                    );
-                },
-            );
+                Self::tri_hessian_for_each(
+                    |n, k| {
+                        (local_hessians[n][k]
+                            + id * if n == 2 && k == 2 {
+                                ddF.sum_inner()
+                            } else if k == 2 {
+                                -ddF[n].sum()
+                            } else if n == 2 {
+                                -ddF[k].sum() // ddF should be symmetric
+                            } else {
+                                ddF[n][k]
+                            })
+                            * factor
+                    },
+                    |i, _, (row, col), h| tri_hess[i] = h[row][col],
+                );
+            });
         }
 
         let di_elems = &self.shell.dihedral_elements;

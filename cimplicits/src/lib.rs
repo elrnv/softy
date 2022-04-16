@@ -660,7 +660,7 @@ pub unsafe extern "C" fn iso_update_surface(
     let coords = std::slice::from_raw_parts(position_coords, num_positions as usize * 3);
     let pos: &[[f64; 3]] = bytemuck::cast_slice(coords);
     let topo = &mut *(query_topo as *mut implicits::QueryTopo);
-    topo.update_surface(pos.iter().cloned()) as c_int
+    topo.update_surface(pos.iter().cloned(), true) as c_int
 }
 
 /// Update the implicit surface with an updated maximum allowed additional step size on top of what

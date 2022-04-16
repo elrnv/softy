@@ -782,6 +782,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         friction_params: Option<FrictionParams>,
         contact_offset: f64,
         num_vertices: usize,
+        precompute_hessian_matrices: bool,
     ) -> Result<Self, Error> {
         let implicit_surface_vertex_indices = object
             .mesh
@@ -824,7 +825,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             jac_timings: RefCell::new(FrictionJacobianTimings::default()),
         };
 
-        penalty_constraint.precompute_contact_jacobian(num_vertices);
+        penalty_constraint.precompute_contact_jacobian(num_vertices, precompute_hessian_matrices);
         penalty_constraint.update_distance_potential();
         penalty_constraint.reset_distance_gradient(num_vertices);
 
@@ -1027,7 +1028,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         }
     }
 
-    pub(crate) fn precompute_contact_jacobian(&mut self, num_vertices: usize) {
+    pub(crate) fn precompute_contact_jacobian(&mut self, num_vertices: usize, and_hessian: bool) {
         let pc = &mut self.point_constraint;
 
         if pc.friction_workspace.is_none() {
@@ -1037,24 +1038,25 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         self.constrained_collider_vertices = self.point_constraint.active_constraint_indices();
         let num_constraints = self.constrained_collider_vertices.len();
 
-        self.collider_vertex_constraints =
-            vec![Index::invalid(); self.point_constraint.collider_vertex_positions.len()];
-        for (constraint_idx, &query_idx) in self.constrained_collider_vertices.iter().enumerate() {
-            self.collider_vertex_constraints[query_idx] = constraint_idx.into();
-        }
-
         let constrained_collider_vertices = &self.constrained_collider_vertices;
         let constrained_collider_vertex_positions = Select::new(
             constrained_collider_vertices.as_slice(),
             self.point_constraint.collider_vertex_positions.view(),
         );
 
+        // Contact Jacobian
         let jac_triplets = TripletContactJacobian::from_selection(
             &self.point_constraint.implicit_surface,
             constrained_collider_vertex_positions.view(),
         );
-
         self.contact_jacobian = Some(MappedContactJacobian::from_triplets(jac_triplets));
+
+        self.collider_vertex_constraints =
+            vec![Index::invalid(); self.point_constraint.collider_vertex_positions.len()];
+        for (constraint_idx, &query_idx) in self.constrained_collider_vertices.iter().enumerate() {
+            self.collider_vertex_constraints[query_idx] = constraint_idx.into();
+        }
+
         // let jac1 = self.contact_jacobian.clone().unwrap();
         //
         // self.contact_jacobian.as_mut().unwrap().update_values(&jac_triplets);
@@ -1069,47 +1071,48 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         //     }
         // }
 
-        let jac_triplets = TripletContactJacobian::from_selection_reindexed_full(
-            &self.point_constraint.implicit_surface,
-            constrained_collider_vertex_positions.view(),
-            &self.collider_vertex_constraints,
-            &self.implicit_surface_vertex_indices,
-            &self.collider_vertex_indices,
-            num_vertices,
-        );
+        if and_hessian {
+            // Contact gradient (used only during contact hessian computation)
+            let jac_triplets = TripletContactJacobian::from_selection_reindexed_full(
+                &self.point_constraint.implicit_surface,
+                constrained_collider_vertex_positions.view(),
+                &self.collider_vertex_constraints,
+                &self.implicit_surface_vertex_indices,
+                &self.collider_vertex_indices,
+                num_vertices,
+            );
+            self.contact_gradient = Some(MappedContactGradient::from_triplets(&jac_triplets));
 
-        self.contact_gradient = Some(MappedContactGradient::from_triplets(&jac_triplets));
+            let multipliers = vec![[T::zero(); 3]; num_vertices];
+            let jac_triplets = Self::build_contact_jacobian_gradient_product(
+                &self.point_constraint.implicit_surface,
+                self.point_constraint
+                    .collider_vertex_positions
+                    .view()
+                    .into_arrays(),
+                &self.collider_vertex_constraints,
+                &self.implicit_surface_vertex_indices,
+                &multipliers,
+                num_vertices,
+                num_constraints,
+            )
+            .unwrap();
+            self.jac_contact_jacobian = Some(MappedSSBlockMatrix3::from_triplets(&jac_triplets));
 
-        let multipliers = vec![[T::zero(); 3]; num_vertices];
-        let jac_triplets = Self::build_contact_jacobian_gradient_product(
-            &self.point_constraint.implicit_surface,
-            self.point_constraint
-                .collider_vertex_positions
-                .view()
-                .into_arrays(),
-            &self.collider_vertex_constraints,
-            &self.implicit_surface_vertex_indices,
-            &multipliers,
-            num_vertices,
-            num_constraints,
-        )
-        .unwrap();
-
-        self.jac_contact_jacobian = Some(MappedSSBlockMatrix3::from_triplets(&jac_triplets));
-
-        let multipliers = vec![[T::zero(); 3]; num_constraints];
-        let jac_triplets = Self::build_contact_jacobian_jacobian_product(
-            &self.point_constraint.implicit_surface,
-            self.point_constraint
-                .collider_vertex_positions
-                .view()
-                .into_arrays(),
-            &self.implicit_surface_vertex_indices,
-            &multipliers,
-            num_vertices,
-        )
-        .unwrap();
-        self.jac_contact_gradient = Some(jac_triplets);
+            let multipliers = vec![[T::zero(); 3]; num_constraints];
+            let jac_triplets = Self::build_contact_jacobian_jacobian_product(
+                &self.point_constraint.implicit_surface,
+                self.point_constraint
+                    .collider_vertex_positions
+                    .view()
+                    .into_arrays(),
+                &self.implicit_surface_vertex_indices,
+                &multipliers,
+                num_vertices,
+            )
+            .unwrap();
+            self.jac_contact_gradient = Some(jac_triplets);
+        }
     }
 
     pub(crate) fn update_contact_jacobian<'a>(
@@ -1211,7 +1214,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             ));
     }
 
-    pub fn update_neighbors(&mut self, x: Chunked3<&[T]>) -> bool {
+    pub fn update_neighbors(&mut self, x: Chunked3<&[T]>, and_hessian: bool) -> bool {
         self.update_state(x);
 
         let updated = self
@@ -1223,7 +1226,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         // the sparsity pattern here.
 
         if updated {
-            self.precompute_contact_jacobian(x.len());
+            self.precompute_contact_jacobian(x.len(), and_hessian);
             self.update_distance_potential();
             self.reset_distance_gradient(x.len());
         }
@@ -3209,7 +3212,7 @@ mod tests {
 
         let problem = solver.problem_mut();
 
-        problem.update_constraint_set();
+        problem.update_constraint_set(true);
 
         // Preliminary Jacobian check.
         // This probably will not catch errors in the friction Jacobian.

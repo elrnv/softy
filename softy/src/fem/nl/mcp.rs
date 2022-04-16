@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use tensr::*;
 
 use super::newton::{Newton, NewtonParams};
-use super::problem::{MixedComplementarityProblem, NonLinearProblem};
+use super::problem::{ContactViolation, MixedComplementarityProblem, NonLinearProblem};
 use super::trust_region::{TrustRegion, TrustRegionParams};
 use super::NLSolver;
 use super::{Callback, SolveResult};
@@ -50,6 +50,18 @@ where
     #[inline]
     fn lumped_mass_inv(&self) -> Ref<'_, [T]> {
         self.problem.lumped_mass_inv()
+    }
+    #[inline]
+    fn kappa(&self) -> f64 {
+        self.problem.kappa()
+    }
+    #[inline]
+    fn kappa_mut(&mut self) -> &mut f64 {
+        self.problem.kappa_mut()
+    }
+    #[inline]
+    fn contact_violation(&self, x: &[T]) -> ContactViolation {
+        self.problem.contact_violation(x)
     }
     fn num_variables(&self) -> usize {
         self.problem.num_variables()

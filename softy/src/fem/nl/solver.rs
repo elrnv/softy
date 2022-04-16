@@ -17,7 +17,7 @@ use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
 use crate::inf_norm;
-use crate::nl_fem::{JacobianWorkspace, SingleStepTimeIntegration, ZoneParams};
+use crate::nl_fem::{ContactViolation, JacobianWorkspace, SingleStepTimeIntegration, ZoneParams};
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
 use crate::objects::*;
@@ -152,6 +152,7 @@ impl SolverBuilder {
         mesh: &Mesh,
         vertex_type: &[VertexType],
         frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
+        precompute_hessian_matrices: bool,
     ) -> Result<Vec<FrictionalContactConstraint<T>>, crate::Error> {
         use super::problem::ObjectId;
         use crate::TriMesh;
@@ -254,6 +255,7 @@ impl SolverBuilder {
                         collider,
                         params,
                         num_vertices,
+                        precompute_hessian_matrices,
                     )?,
                 })
             })
@@ -648,6 +650,7 @@ impl SolverBuilder {
             &mesh,
             &vertex_type,
             frictional_contacts,
+            matches!(params.linsolve, LinearSolver::Direct),
         )?;
         let frictional_contact_constraints_ad = frictional_contact_constraints
             .iter()
@@ -1040,7 +1043,9 @@ where
         self.iteration_count += 1;
 
         log::debug!("Updating constraint set...");
-        self.solver.problem_mut().update_constraint_set();
+        self.solver
+            .problem_mut()
+            .update_constraint_set(matches!(self.sim_params.linsolve, LinearSolver::Direct));
 
         let mut contact_iterations = self.sim_params.contact_iterations as i64;
 
@@ -1102,30 +1107,40 @@ where
 
                 match result.status {
                     Status::Success | Status::MaximumIterationsExceeded => {
-                        // Compute contact violation.
-                        let constraint = self
-                            .solver
-                            .problem_mut()
-                            .contact_constraint(self.solution.as_slice())
-                            .into_storage();
-                        //let mut orig_lambda = constraint.clone();
-                        //let mut shifted_lambda = constraint.clone();
-                        let deepest = constraint
-                            .iter()
-                            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
-                            .copied()
-                            .unwrap_or_else(T::zero)
-                            .to_f64()
-                            .unwrap();
+                        // // Compute contact violation.
+                        // let constraint = self
+                        //     .solver
+                        //     .problem()
+                        //     .contact_constraint(self.solution.as_slice())
+                        //     .into_storage();
+                        // //let mut orig_lambda = constraint.clone();
+                        // //let mut shifted_lambda = constraint.clone();
+                        // let deepest = constraint
+                        //     .iter()
+                        //     .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                        //     .copied()
+                        //     .unwrap_or_else(T::zero)
+                        //     .to_f64()
+                        //     .unwrap();
+                        //
+                        // let delta = self.sim_params.contact_tolerance as f64;
+                        // let largest_penalty = ContactPenalty::new(delta).b(deepest);
+                        // let bump_ratio: f64 = ContactPenalty::new(delta).db(deepest)
+                        //     / ContactPenalty::new(delta).db(0.5 * delta);
+                        // let contact_violation = 0.0_f64.max(-deepest);
 
-                        let delta = self.sim_params.contact_tolerance as f64;
-                        let largest_penalty = ContactPenalty::new(delta).b(deepest);
-                        let bump_ratio: f64 = ContactPenalty::new(delta).db(deepest)
-                            / ContactPenalty::new(delta).db(0.5 * delta);
+                        let ContactViolation {
+                            bump_ratio,
+                            violation: contact_violation,
+                            largest_penalty,
+                            ..
+                        } = self
+                            .solver
+                            .problem()
+                            .contact_violation(self.solution.as_slice());
 
                         log::debug!("Bump ratio: {}", bump_ratio);
                         log::debug!("Kappa: {}", self.solver.problem().kappa);
-                        let contact_violation = 0.0_f64.max(-deepest);
                         log::debug!("Contact violation: {}", contact_violation);
 
                         contact_iterations -= 1;
@@ -1145,7 +1160,10 @@ where
 
                         let max_step_violation = self.solver.problem().max_step_violation();
                         if max_step_violation {
-                            self.solver.problem_mut().update_constraint_set();
+                            self.solver.problem_mut().update_constraint_set(matches!(
+                                self.sim_params.linsolve,
+                                LinearSolver::Direct
+                            ));
                         }
 
                         if contact_violation > 0.0 || max_step_violation {

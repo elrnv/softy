@@ -645,9 +645,9 @@ where
     fn update_jacobian_indices(
         problem: &P,
         sparse_jacobian: &mut SparseJacobian<T>,
-        init_sparse_jacobian_vals: &mut Vec<T>,
-        init_sparse_solver: &mut LazyCell<SparseDirectSolver>,
-        init_j_mapping: &mut Vec<Index>,
+        _init_sparse_jacobian_vals: &mut Vec<T>,
+        _init_sparse_solver: &mut LazyCell<SparseDirectSolver>,
+        _init_j_mapping: &mut Vec<Index>,
         linsolve: &mut LinearSolverWorkspace<T>,
     ) {
         // Construct the sparse Jacobian.
@@ -663,19 +663,19 @@ where
         sparse_jacobian.j_rows = j_rows;
         sparse_jacobian.j_cols = j_cols;
         sparse_jacobian.j_vals.resize(j_nnz, T::zero());
-        let (j, j_mapping) = sparse_matrix_and_mapping(
-            &sparse_jacobian.j_cols,
-            &sparse_jacobian.j_rows,
-            &sparse_jacobian.j_vals,
-            n,
-            #[cfg(target_os = "macos")]
-            true,
-            #[cfg(not(target_os = "macos"))]
-            false,
-        );
-        init_sparse_solver.replace(SparseDirectSolver::new(j.view()).unwrap());
-        *init_j_mapping = j_mapping;
-        init_sparse_jacobian_vals.clone_from(j.storage());
+        // let (j, j_mapping) = sparse_matrix_and_mapping(
+        //     &sparse_jacobian.j_cols,
+        //     &sparse_jacobian.j_rows,
+        //     &sparse_jacobian.j_vals,
+        //     n,
+        //     #[cfg(target_os = "macos")]
+        //     true,
+        //     #[cfg(not(target_os = "macos"))]
+        //     false,
+        // );
+        // init_sparse_solver.replace(SparseDirectSolver::new(j.view()).unwrap());
+        // *init_j_mapping = j_mapping;
+        // init_sparse_jacobian_vals.clone_from(j.storage());
         if let LinearSolverWorkspace::Direct(ds) = linsolve {
             let (j, j_mapping) = sparse_matrix_and_mapping(
                 &sparse_jacobian.j_rows,
@@ -803,8 +803,8 @@ where
         let NewtonWorkspace {
             linsolve,
             sparse_jacobian,
-            init_sparse_jacobian_vals,
-            init_sparse_solver,
+            //init_sparse_jacobian_vals,
+            //init_sparse_solver,
             // init_j_mapping,
             x_prev,
             r,
@@ -893,22 +893,22 @@ where
         //     }
         // }
 
-        let init_sparse_solver = init_sparse_solver
-            .borrow_mut()
-            .expect("Uninitialized iterative sparse solver.");
-
-        #[cfg(target_os = "macos")]
-        if false {
-            init_sparse_solver.update_values(init_sparse_jacobian_vals);
-            if let Err(err) = init_sparse_solver.refactor() {
-                return SolveResult {
-                    iterations,
-                    status: Status::LinearSolveError(err.into()),
-                    timings,
-                    stats,
-                };
-            }
-        }
+        // let init_sparse_solver = init_sparse_solver
+        //     .borrow_mut()
+        //     .expect("Uninitialized iterative sparse solver.");
+        //
+        // #[cfg(target_os = "macos")]
+        // if false {
+        //     init_sparse_solver.update_values(init_sparse_jacobian_vals);
+        //     if let Err(err) = init_sparse_solver.refactor() {
+        //         return SolveResult {
+        //             iterations,
+        //             status: Status::LinearSolveError(err.into()),
+        //             timings,
+        //             stats,
+        //         };
+        //     }
+        // }
 
         // let mut merit = |problem: &P, _: &[T], residual: &[T], init_sparse_solver: &mut SparseDirectSolver| {
         //     init_sparse_solver.update_rhs(residual);
@@ -916,9 +916,7 @@ where
         //     let r64 = result.expect("Initial Jacobian is singular.");
         //     0.5 * r64.as_tensor().norm_squared()
         // };
-        let merit = |_: &P, _: &[T], r: &[T], _: &SparseDirectSolver| {
-            0.5 * r.as_tensor().norm_squared().to_f64().unwrap()
-        };
+        let merit = |_: &P, _: &[T], r: &[T]| 0.5 * r.as_tensor().norm_squared().to_f64().unwrap();
         // let merit = |problem: &P, x: &[T], _: &[T], _: &SparseDirectSolver| {
         //     problem.objective(x).to_f64().unwrap()
         // };
@@ -938,7 +936,7 @@ where
         //         .zip(jinv_r.iter())
         //         .fold(0.0, |acc, (&jinv_jp, &jinv_r)| acc + jinv_jp * jinv_r)
         // };
-        let merit_jac_prod = |_: &P, _: &[T], r: &[T], _: &SparseDirectSolver| {
+        let merit_jac_prod = |_: &P, _: &[T], r: &[T]| {
             r.as_tensor().norm_squared().to_f64().unwrap()
             // jp.iter()
             //     .zip(r.iter())
@@ -946,7 +944,7 @@ where
         };
 
         // Keep track of merit function to avoid having to recompute it
-        let mut merit_cur = merit(problem, x, r, init_sparse_solver);
+        let mut merit_cur = merit(problem, x, r);
         let mut merit_prev = merit_cur;
         let mut merit_next;
 
@@ -1194,14 +1192,14 @@ where
             let (ls_count, alpha) = add_time! {
                 timings.line_search;
                 if rho >= 1.0 {
-                    merit_next = merit(problem, x, r_next, init_sparse_solver);
+                    merit_next = merit(problem, x, r_next);//, init_sparse_solver);
                     (1, 1.0)
                 } else {
                     // Line search.
                     let mut alpha = 1.0;
                     let mut ls_count = 1;
 
-                    let merit_jac_p = merit_jac_prod(problem, r_cur, r_cur, init_sparse_solver);
+                    let merit_jac_p = merit_jac_prod(problem, r_cur, r_cur);//, init_sparse_solver);
 
                     if params.line_search.is_assisted() {
                         add_time!(
@@ -1222,7 +1220,7 @@ where
                         // Test f(x + αp) < f(x) - cα r(x)'J(x)p(x)
 
                         // Compute the merit function
-                        merit_next = merit(problem, x, r_next, init_sparse_solver);
+                        merit_next = merit(problem, x, r_next);//, init_sparse_solver);
 
                         match linsolve {
                             LinearSolverWorkspace::Iterative(linsolve) => {
@@ -1390,6 +1388,10 @@ where
         timings.friction_jacobian = *self.problem.jacobian_timings();
 
         log::debug!("Status:           {:?}", status);
+        log::debug!(
+            "Total ls steps:   {:?}",
+            stats.iter().map(|s| s.ls_steps).sum::<u32>()
+        );
         log::debug!("Total Iterations: {:?}", iterations);
 
         for line in format!("{}", timings).split('\n') {
@@ -1409,25 +1411,25 @@ where
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct IterationInfo {
     /// Iteration counter.
-    iteration: u32,
+    pub iteration: u32,
     /// Number of line search steps taken.
-    ls_steps: u32,
+    pub ls_steps: u32,
     /// Linear solve result for this iteration.
-    linsolve_result: super::linsolve::SolveResult,
+    pub linsolve_result: super::linsolve::SolveResult,
     /// Fraction of the Newton step taken.
     ///
     /// Damping parameter of damped Newton.
-    alpha: f32,
+    pub alpha: f32,
     /// Merit function value.
-    merit: f64,
+    pub merit: f64,
     /// Infinity norm of the residual.
-    r_inf: f64,
+    pub r_inf: f64,
     /// Infinity norm of the nodal acceleration residual.
-    a_inf: f64,
+    pub a_inf: f64,
     /// 2-norm of the current velocity.
-    x_2: f64,
+    pub x_2: f64,
     /// 2-norm of the step vector
-    d_2: f64,
+    pub d_2: f64,
 }
 
 impl IterationInfo {

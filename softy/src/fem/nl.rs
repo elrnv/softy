@@ -487,8 +487,13 @@ impl std::fmt::Display for SolveResult {
         for info in self.stats.iter() {
             writeln!(f, "{}", info)?;
         }
-        writeln!(f, "Status:           {:?}", self.status)?;
-        writeln!(f, "Total iterations: {}", self.iterations)?;
+        writeln!(f, "Status:            {:?}", self.status)?;
+        writeln!(
+            f,
+            "Total ls steps:    {:?}",
+            self.stats.iter().map(|s| s.ls_steps).sum::<u32>()
+        )?;
+        writeln!(f, "Total iterations:  {}", self.iterations)?;
         writeln!(f, "Timings:\n{}", self.timings)
     }
 }

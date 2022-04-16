@@ -1767,7 +1767,7 @@ impl<T: Real> PointContactConstraint<T> {
 
     /// Compute the full nonlinear constraint.
     ///
-    /// This function uses the current state. So to get an uoto date value, call update_state first.
+    /// This function uses the current state. So to get an up-to-date value, call update_state first.
     pub(crate) fn compute_nonlinear_constraint(&self, value: &mut [T]) {
         let radius = T::from(self.contact_radius()).unwrap();
 

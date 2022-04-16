@@ -14,7 +14,7 @@ use super::state::*;
 use crate::attrib_defines::*;
 use crate::constraints::{
     penalty_point_contact::PenaltyPointContactConstraint,
-    volume_change_penalty::VolumeChangePenalty, FrictionJacobianTimings,
+    volume_change_penalty::VolumeChangePenalty, ContactPenalty, FrictionJacobianTimings,
 };
 use crate::contact::ContactJacobianView;
 use crate::energy::{Energy, EnergyGradient, EnergyHessian, EnergyHessianTopology};
@@ -363,6 +363,35 @@ impl<T: Real64> NLProblem<T> {
         Ref::map(self.state.borrow(), |state| state.vtx.mass_inv.as_slice())
     }
 
+    fn kappa(&self) -> f64 {
+        self.kappa
+    }
+    fn kappa_mut(&mut self) -> &mut f64 {
+        &mut self.kappa
+    }
+    fn contact_violation(&self, x: &[T]) -> ContactViolation {
+        let constraint = self.contact_constraint(x).into_storage();
+        let deepest = constraint
+            .iter()
+            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+            .copied()
+            .unwrap_or_else(T::zero)
+            .to_f64()
+            .unwrap();
+
+        let delta = self.delta;
+        let largest_penalty = ContactPenalty::new(delta).b(deepest);
+        let bump_ratio: f64 =
+            ContactPenalty::new(delta).db(deepest) / ContactPenalty::new(delta).db(0.5 * delta);
+
+        ContactViolation {
+            bump_ratio,
+            violation: 0.0_f64.max(-deepest),
+            penetration: deepest,
+            largest_penalty,
+        }
+    }
+
     fn compute_distance_potential(&self, mesh: &mut Mesh) {
         let state = &*self.state.borrow();
         let mut orig_order_distance_potential = vec![0.0; mesh.num_vertices()];
@@ -581,7 +610,7 @@ impl<T: Real64> NLProblem<T> {
     ///
     /// Return an estimate if any constraints have changed, though this estimate may have false
     /// negatives.
-    pub fn update_constraint_set(&mut self) -> bool {
+    pub fn update_constraint_set(&mut self, and_contact_hessian: bool) -> bool {
         let mut changed = false; // Report if anything has changed to the caller.
 
         let dt = self.time_step();
@@ -608,11 +637,14 @@ impl<T: Real64> NLProblem<T> {
             let new_max_step = fc.constraint.borrow_mut().compute_max_step(vel, dt);
             fc.constraint.borrow_mut().set_max_step(new_max_step);
             fc_ad.constraint.borrow_mut().set_max_step(new_max_step);
-            changed |= fc.constraint.borrow_mut().update_neighbors(pos);
+            changed |= fc
+                .constraint
+                .borrow_mut()
+                .update_neighbors(pos, and_contact_hessian);
             changed |= fc_ad
                 .constraint
                 .borrow_mut()
-                .update_neighbors(pos_ad.view());
+                .update_neighbors(pos_ad.view(), and_contact_hessian);
         }
 
         // TODO: REMOVE THE BELOW DEBUG CODE
@@ -1579,7 +1611,7 @@ impl<T: Real64> NLProblem<T> {
      */
 
     /// Conservatively estimates the number of non-zeros in the Jacobian.
-    fn jacobian_nnz(&self) -> usize {
+    fn jacobian_nnz(&self, with_constraints: bool) -> usize {
         let mut num = 0;
         {
             let solid = &self.state.borrow().solid;
@@ -1604,55 +1636,57 @@ impl<T: Real64> NLProblem<T> {
                 };
         }
 
-        for vc in self.volume_constraints.iter() {
-            num += vc.borrow().penalty_hessian_size();
-        }
+        if with_constraints {
+            for vc in self.volume_constraints.iter() {
+                num += vc.borrow().penalty_hessian_size();
+            }
 
-        // let State {
-        //     vtx,..
-        // } = &*self.state.borrow();
+            // let State {
+            //     vtx,..
+            // } = &*self.state.borrow();
 
-        let num_active_coords = self.num_variables();
-        for fc in self.frictional_contact_constraints.iter() {
-            let nh = fc
-                .constraint
-                .borrow()
-                .constraint_hessian_size(num_active_coords / 3);
-            let ndh = fc
-                .constraint
-                .borrow()
-                .num_hessian_diagonal_nnz(num_active_coords / 3);
-            num += 2 * nh - ndh;
-        }
+            let num_active_coords = self.num_variables();
+            for fc in self.frictional_contact_constraints.iter() {
+                let nh = fc
+                    .constraint
+                    .borrow()
+                    .constraint_hessian_size(num_active_coords / 3);
+                let ndh = fc
+                    .constraint
+                    .borrow()
+                    .num_hessian_diagonal_nnz(num_active_coords / 3);
+                num += 2 * nh - ndh;
+            }
 
-        // dbg!(num);
+            // dbg!(num);
 
-        for fc in self.frictional_contact_constraints.iter() {
-            // Add friction jacobian counts
-            let mut constraint = fc.constraint.borrow_mut();
-            let delta = self.delta as f32;
-            let kappa = self.kappa as f32;
-            let epsilon = self.epsilon as f32;
-            // constraint.update_state(vtx.cur.pos.view());
-            // constraint.update_distance_potential();
-            // constraint.update_constraint_gradient();
-            constraint.update_multipliers(delta, kappa);
-            // TODO: Refactor this to just compute the count.
-            let dt = T::from(self.time_step()).unwrap();
-            let f_jac_count = constraint
-                .friction_jacobian_indexed_value_iter(
-                    self.state.borrow().vtx.next.vel.view(),
-                    delta,
-                    kappa,
-                    epsilon,
-                    dt,
-                    num_active_coords / 3,
-                    true,
-                )
-                .map(|iter| iter.count())
-                .unwrap_or(0);
-            // dbg!(f_jac_count);
-            num += f_jac_count;
+            for fc in self.frictional_contact_constraints.iter() {
+                // Add friction jacobian counts
+                let mut constraint = fc.constraint.borrow_mut();
+                let delta = self.delta as f32;
+                let kappa = self.kappa as f32;
+                let epsilon = self.epsilon as f32;
+                // constraint.update_state(vtx.cur.pos.view());
+                // constraint.update_distance_potential();
+                // constraint.update_constraint_gradient();
+                constraint.update_multipliers(delta, kappa);
+                // TODO: Refactor this to just compute the count.
+                let dt = T::from(self.time_step()).unwrap();
+                let f_jac_count = constraint
+                    .friction_jacobian_indexed_value_iter(
+                        self.state.borrow().vtx.next.vel.view(),
+                        delta,
+                        kappa,
+                        epsilon,
+                        dt,
+                        num_active_coords / 3,
+                        true,
+                    )
+                    .map(|iter| iter.count())
+                    .unwrap_or(0);
+                // dbg!(f_jac_count);
+                num += f_jac_count;
+            }
         }
 
         num
@@ -2276,7 +2310,7 @@ impl<T: Real64> NLProblem<T> {
     }
 
     fn jacobian_indices(&self, with_constraints: bool) -> (Vec<usize>, Vec<usize>) {
-        let jac_nnz = self.jacobian_nnz();
+        let jac_nnz = self.jacobian_nnz(with_constraints);
         let mut rows = vec![0; jac_nnz];
         let mut cols = vec![0; jac_nnz];
         let count = self.compute_jacobian_indices(&mut rows, &mut cols, with_constraints);
@@ -2917,6 +2951,13 @@ impl<T: Real64> NLProblem<T> {
     }
 }
 
+pub struct ContactViolation {
+    pub bump_ratio: f64,
+    pub violation: f64,
+    pub penetration: f64,
+    pub largest_penalty: f64,
+}
+
 /// An api for a non-linear problem.
 pub trait NonLinearProblem<T: Real> {
     fn residual_timings(&self) -> RefMut<'_, ResidualTimings>;
@@ -2932,6 +2973,15 @@ pub trait NonLinearProblem<T: Real> {
 
     /// Returns a vector of lumped vertex masses.
     fn lumped_mass_inv(&self) -> Ref<'_, [T]>;
+
+    /// Returns the contact multiplier.
+    fn kappa(&self) -> f64;
+
+    /// Returns the mutable reference to the contact multiplier.
+    fn kappa_mut(&mut self) -> &mut f64;
+
+    /// Computes the global maximum contact violation
+    fn contact_violation(&self, x: &[T]) -> ContactViolation;
 
     /// Returns the number of unknowns for the problem.
     fn num_variables(&self) -> usize;
@@ -3049,6 +3099,15 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     }
     fn lumped_mass_inv(&self) -> Ref<'_, [T]> {
         NLProblem::lumped_mass_inv(self)
+    }
+    fn kappa(&self) -> f64 {
+        NLProblem::kappa(self)
+    }
+    fn kappa_mut(&mut self) -> &mut f64 {
+        NLProblem::kappa_mut(self)
+    }
+    fn contact_violation(&self, x: &[T]) -> ContactViolation {
+        NLProblem::contact_violation(self, x)
     }
     #[inline]
     fn num_variables(&self) -> usize {

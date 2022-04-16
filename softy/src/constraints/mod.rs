@@ -71,6 +71,7 @@ pub fn build_penalty_contact_constraint<T: Real, VP: geo::mesh::VertexMesh<f64>>
     collider: ContactSurface<&VP, f64>,
     params: FrictionalContactParams,
     num_vertices: usize,
+    precompute_hessian_matrices: bool,
 ) -> Result<std::cell::RefCell<PenaltyPointContactConstraint<T>>, crate::Error> {
     Ok(std::cell::RefCell::new(PenaltyPointContactConstraint::new(
         object,
@@ -79,6 +80,7 @@ pub fn build_penalty_contact_constraint<T: Real, VP: geo::mesh::VertexMesh<f64>>
         params.friction_params,
         params.contact_offset,
         num_vertices,
+        precompute_hessian_matrices,
     )?))
 }
 

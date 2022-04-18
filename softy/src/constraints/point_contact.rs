@@ -1769,23 +1769,26 @@ impl<T: Real> PointContactConstraint<T> {
     ///
     /// This function uses the current state. So to get an up-to-date value, call update_state first.
     pub(crate) fn compute_nonlinear_constraint(&self, value: &mut [T]) {
-        let radius = T::from(self.contact_radius()).unwrap();
+        // let radius = T::from(self.contact_radius()).unwrap();
 
         let surf = &self.implicit_surface;
         let mut constraint_value_buf = self.constraint_value.borrow_mut();
-        constraint_value_buf
-            .par_iter_mut()
-            .zip(self.collider_vertex_positions.view().into_par_iter())
-            .for_each(|(val, q)| {
-                let q = [q[0], q[1], q[2]];
-                // Clear potential value.
-                let closest_sample = surf.nearest_neighbor_lookup(q).unwrap();
-                if closest_sample.nml.dot(Vector3::new(q) - closest_sample.pos) > T::zero() {
-                    *val = radius;
-                } else {
-                    *val = -radius;
-                }
-            });
+        // constraint_value_buf
+        //     .par_iter_mut()
+        //     .zip(self.collider_vertex_positions.view().into_par_iter())
+        //     .for_each(|(val, q)| {
+        //         let q = [q[0], q[1], q[2]];
+        //         // Clear potential value.
+        //         let closest_sample = surf.nearest_neighbor_lookup(q).unwrap();
+        //         if closest_sample.nml.dot(Vector3::new(q) - closest_sample.pos) > T::zero() {
+        //             *val = radius;
+        //         } else {
+        //             *val = -radius;
+        //         }
+        //     });
+
+        // Clear potential value.
+        constraint_value_buf.par_iter_mut().for_each(|val| *val = T::zero());
 
         surf.potential_par(
             self.collider_vertex_positions.view().into(),

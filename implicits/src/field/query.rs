@@ -307,8 +307,8 @@ impl<T: Real> QueryTopo<T> {
     ///
     /// Parallel version of `update_surface`.
     pub fn update_surface_par<I>(&mut self, vertex_iter: I, rebuild_rtree: bool) -> usize
-        where
-            I: IndexedParallelIterator<Item = [T; 3]>,
+    where
+        I: IndexedParallelIterator<Item = [T; 3]>,
     {
         self.base_mut().update_par(vertex_iter, rebuild_rtree)
     }

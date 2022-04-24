@@ -313,9 +313,12 @@ impl<T: Real> ImplicitSurfaceBase<T> {
                     ..
                 } = samples;
 
-                surface_vertex_positions.iter().zip(positions.iter_mut()).for_each(|(vertex_pos, sample_pos)| {
-                    *sample_pos = *vertex_pos;
-                });
+                surface_vertex_positions
+                    .iter()
+                    .zip(positions.iter_mut())
+                    .for_each(|(vertex_pos, sample_pos)| {
+                        *sample_pos = *vertex_pos;
+                    });
 
                 // Compute unnormalized area weighted vertex normals given a triangle topology.
                 geo::algo::compute_vertex_area_weighted_normals(positions, surface_topo, normals);
@@ -345,9 +348,12 @@ impl<T: Real> ImplicitSurfaceBase<T> {
                     ..
                 } = samples;
 
-                surface_vertex_positions.par_iter().zip(positions.par_iter_mut()).for_each(|(vertex_pos, sample_pos)| {
-                    *sample_pos = *vertex_pos;
-                });
+                surface_vertex_positions
+                    .par_iter()
+                    .zip(positions.par_iter_mut())
+                    .for_each(|(vertex_pos, sample_pos)| {
+                        *sample_pos = *vertex_pos;
+                    });
 
                 // Compute unnormalized area weighted vertex normals given a triangle topology.
                 // (Not parallel)
@@ -405,13 +411,18 @@ impl<T: Real> ImplicitSurfaceBase<T> {
     ///
     /// Parallel version of `update`.
     pub fn update_par<I>(&mut self, vertex_iter: I, rebuild_rtree: bool) -> usize
-        where
-            I: IndexedParallelIterator<Item = [T; 3]>,
+    where
+        I: IndexedParallelIterator<Item = [T; 3]>,
     {
         // First we update the surface vertex positions.
-        let num_updated = self.surface_vertex_positions.par_iter_mut().zip(vertex_iter).map(|(p, new_p)| {
-            *p = new_p;
-        }).count();
+        let num_updated = self
+            .surface_vertex_positions
+            .par_iter_mut()
+            .zip(vertex_iter)
+            .map(|(p, new_p)| {
+                *p = new_p;
+            })
+            .count();
 
         // Then update the samples that determine the shape of the implicit surface.
         self.update_samples_par();

@@ -1,6 +1,6 @@
 set( Scene_LIB_DIR "${CARGO_TARGET_DIR}" )
 
-find_path( Scene_INCLUDE_DIR softy/src/lib.rs.h PATHS "${CARGO_TARGET_DIR}/../cxxbridge" DOC "Scene include directory")
+find_path( Scene_INCLUDE_DIR scene/src/lib.rs.h PATHS "${CARGO_TARGET_DIR}/../cxxbridge" DOC "Scene include directory")
 find_library( Scene_LIBRARY scenehdk PATHS ${Scene_LIB_DIR} DOC "Scene library directory")
 
 include(FindPackageHandleStandardArgs)

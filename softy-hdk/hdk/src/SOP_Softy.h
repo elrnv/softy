@@ -17,6 +17,7 @@ public:
     virtual const SOP_NodeVerb *cookVerb() const override;
 
     static int clearSolverCache(void *data, int index, float t, const PRM_Template *);
+    static int clearSolverLogs(void *data, int index, float t, const PRM_Template *);
 
 protected:
     SOP_Softy(OP_Network *net, const char *name, OP_Operator *op)

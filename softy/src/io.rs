@@ -11,7 +11,7 @@ pub enum LoadConfigError {
     #[error("IO")]
     IO(#[from] std::io::Error),
     #[error("Parse")]
-    Parse(#[from] ron::Error),
+    Parse(#[from] ron::error::SpannedError),
 }
 
 pub fn load_nl_params(path: impl AsRef<Path>) -> std::result::Result<NLParams, LoadConfigError> {

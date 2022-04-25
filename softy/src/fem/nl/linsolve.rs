@@ -4,12 +4,22 @@ mod cr;
 pub use bicgstab::*;
 pub use cr::*;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+use thiserror::Error;
+
+#[derive(Copy, Clone, Debug, PartialEq, Error)]
 pub enum Status {
+    #[error("Success")]
     Success,
+    #[error("Maximum number of linear solver iterations exceeded")]
     MaximumIterationsExceeded,
+    #[error("Linear solve interrupted")]
     Interrupted,
+    #[error("Linear solve interrupted during preconditioner solve")]
     InterruptedPreconditionerSolve,
+    #[error("NaN detected")]
+    NanDetected,
+    #[error("Singular matrix detected")]
+    SingularMatrix,
 }
 
 impl Default for Status {

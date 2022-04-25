@@ -1,5 +1,6 @@
 use num_traits::{One, ToPrimitive, Zero};
 use std::cell::RefCell;
+use std::io::Write;
 
 use geo::attrib::Attrib;
 use geo::mesh::{topology::*, VertexPositions};
@@ -17,7 +18,10 @@ use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
 use crate::inf_norm;
-use crate::nl_fem::{ContactViolation, JacobianWorkspace, SingleStepTimeIntegration, ZoneParams};
+use crate::nl_fem::{
+    ContactViolation, JacobianWorkspace, ProblemInfo, SingleStepTimeIntegration, StageResult,
+    StepResult, ZoneParams,
+};
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
 use crate::objects::*;
@@ -797,7 +801,7 @@ impl SolverBuilder {
         let num_variables = problem.num_variables();
 
         // Setup Ipopt parameters using the input simulation params.
-        let params = self.sim_params;
+        let params = self.sim_params.clone();
 
         let r_scale = problem.min_element_force_scale;
         let r_tol = params.residual_tolerance.unwrap_or(0.0) * r_scale as f32;
@@ -870,6 +874,14 @@ impl SolverBuilder {
     //}
 }
 
+#[derive(Debug, Error)]
+pub enum LogError {
+    #[error("Log format: {}", .0)]
+    Format(#[from] std::fmt::Error),
+    #[error("Log IO: {}", .0)]
+    IO(#[from] std::io::Error),
+}
+
 /// Finite element engine.
 pub struct Solver<S, T> {
     /// Non-linear solver.
@@ -936,8 +948,8 @@ where
     }
 
     /// Get simulation parameters.
-    pub fn params(&self) -> SimParams {
-        self.sim_params
+    pub fn params(&self) -> &SimParams {
+        &self.sim_params
     }
 
     /// Update the maximal displacement allowed. If zero, no limit is applied.
@@ -1037,8 +1049,17 @@ where
     //    self.problem().all_contacts_linear()
     //}
 
+    /// Writes result to log if file is specified, otherwise does nothing.
+    pub fn log_result(&self, step_result: &StepResult) -> Result<(), LogError> {
+        if let Some(log_file) = self.sim_params.log_file.as_ref() {
+            let mut file = std::fs::File::options().append(true).open(log_file)?;
+            writeln!(file, "\nFrame: {}:\n{}", self.iteration_count, step_result)?;
+        }
+        Ok(())
+    }
+
     /// Run the non-linear solver on one time step.
-    pub fn step(&mut self) -> Result<SolveResult, Error> {
+    pub fn step(&mut self) -> Result<StepResult, Error> {
         let dt = self.time_step();
         self.iteration_count += 1;
 
@@ -1066,7 +1087,7 @@ where
         let time_integration = self.sim_params.time_integration;
 
         log::debug!("Begin main nonlinear solve.");
-        let mut result = SolveResult::default();
+        let mut step_result = StepResult::default();
         for stage in 0..time_integration.num_stages() {
             let (step_integrator, factor) = time_integration.step_integrator(stage);
             log::debug!("Single step integration scheme: {step_integrator:?}");
@@ -1083,11 +1104,12 @@ where
                 false,
             )?;
 
+            let mut stage_result = StageResult::new(step_integrator);
             // Loop to resolve all contacts.
             let mut first_contact_iteration = true;
             loop {
                 /****    Main solve step    ****/
-                result = self
+                let solve_result = self
                     .solver
                     .solve_with(self.solution.as_mut_slice(), first_contact_iteration);
                 // if stage < time_integration.num_stages() - 1 {
@@ -1105,7 +1127,7 @@ where
                 first_contact_iteration = false;
                 /*******************************/
 
-                match result.status {
+                match solve_result.status {
                     Status::Success | Status::MaximumIterationsExceeded => {
                         // // Compute contact violation.
                         // let constraint = self
@@ -1149,22 +1171,33 @@ where
                             return Err(Error::NLSolveError {
                                 result: SolveResult {
                                     status: Status::MaximumContactIterationsExceeded,
-                                    ..result
+                                    ..solve_result
                                 },
                             });
                         }
 
                         if contact_violation > 0.0 {
+                            stage_result.contact_violations += 1;
                             self.solver.problem_mut().kappa *= bump_ratio.max(2.0);
                         }
 
                         let max_step_violation = self.solver.problem().max_step_violation();
                         if max_step_violation {
+                            stage_result.max_step_violations += 1;
                             self.solver.problem_mut().update_constraint_set(matches!(
                                 self.sim_params.linsolve,
                                 LinearSolver::Direct
                             ));
                         }
+
+                        // Save results for future reporting and analysis.
+                        let problem_info = ProblemInfo {
+                            total_contacts: self.solver.problem().num_contacts() as u64,
+                            total_in_proximity: self.solver.problem().num_in_proximity() as u64,
+                        };
+                        stage_result
+                            .solve_results
+                            .push((problem_info, solve_result));
 
                         if contact_violation > 0.0 || max_step_violation {
                             continue;
@@ -1185,11 +1218,14 @@ where
                         }
                     }
                     _ => {
-                        return Err(Error::NLSolveError { result });
+                        return Err(Error::NLSolveError {
+                            result: solve_result,
+                        });
                     }
                 }
             }
+            step_result.stage_solves.push(stage_result);
         }
-        Ok(result)
+        Ok(step_result)
     }
 }

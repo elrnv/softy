@@ -1633,7 +1633,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
         // eprintln!("pos: {:?}", pc.collider_vertex_positions.view());
 
-        // Contact Jacobian is defined for object vertices only. Contact Jacobian for collider vertices is trivial.
+        // Contact Jacobian is defined for object vertices only. Contact Jacobian for collider vertices is the negative identity.
         if recompute_jacobian {
             Self::update_contact_jacobian(
                 self.contact_jacobian.as_mut().unwrap(),

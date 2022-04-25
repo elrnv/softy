@@ -48,6 +48,14 @@ static const char *theDsFile = R"THEDSFILE(
     name softy
 
     parm {
+        name "clearlogs"
+        label "Clear Logs"
+        type button
+        default { "0" }
+        range { 0 1 }
+    }
+
+    parm {
         name "clearcache"
         label "Clear Cache"
         type button
@@ -631,11 +639,29 @@ int SOP_Softy::clearSolverCache(void *data, int index, float t, const PRM_Templa
     return 0;
 }
 
+int SOP_Softy::clearSolverLogs(void *data, int index, float t, const PRM_Template *)
+{
+    SOP_Softy *node = static_cast<SOP_Softy*>(data);
+    if (!node)
+        return 0;
+
+    UT_String s;
+    node->evalString(s, "logfile", 0, fpreal(t));
+
+    // Clear file if it exists.
+    std::ofstream ofs;
+    ofs.open(s.c_str(), std::ofstream::out | std::ofstream::trunc);
+    ofs.close();
+
+    return 0;
+}
+
 PRM_Template *
 SOP_Softy::buildTemplates()
 {
     static PRM_TemplateBuilder templ("SOP_Softy.C"_sh, theDsFile);
     templ.setCallback("clearcache", SOP_Softy::clearSolverCache);
+    templ.setCallback("clearlogs", SOP_Softy::clearSolverLogs);
     return templ.templates();
 }
 

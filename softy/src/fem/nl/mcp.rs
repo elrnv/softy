@@ -40,6 +40,14 @@ where
         self.problem.debug_friction()
     }
     #[inline]
+    fn num_contacts(&self) -> usize {
+        self.problem.num_contacts()
+    }
+    #[inline]
+    fn num_in_proximity(&self) -> usize {
+        self.problem.num_in_proximity()
+    }
+    #[inline]
     fn mesh(&self) -> crate::Mesh {
         self.problem.mesh()
     }
@@ -63,12 +71,15 @@ where
     fn contact_violation(&self, x: &[T]) -> ContactViolation {
         self.problem.contact_violation(x)
     }
+    #[inline]
     fn num_variables(&self) -> usize {
         self.problem.num_variables()
     }
+    #[inline]
     fn initial_point(&self) -> Vec<T> {
         self.problem.initial_point()
     }
+    #[inline]
     fn objective(&self, x: &[T]) -> T {
         self.problem.objective(x)
     }

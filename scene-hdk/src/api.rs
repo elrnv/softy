@@ -31,7 +31,9 @@ impl From<TimeIntegration> for softy::nl_fem::TimeIntegration {
             TimeIntegration::TR => softy::nl_fem::TimeIntegration::TR,
             TimeIntegration::BDF2 => softy::nl_fem::TimeIntegration::BDF2,
             TimeIntegration::TRBDF2 => softy::nl_fem::TimeIntegration::TRBDF2(0.5),
-            TimeIntegration::TRBDF2U => softy::nl_fem::TimeIntegration::TRBDF2(2.0 - 2.0_f32.sqrt()),
+            TimeIntegration::TRBDF2U => {
+                softy::nl_fem::TimeIntegration::TRBDF2(2.0 - 2.0_f32.sqrt())
+            }
             TimeIntegration::SDIRK2 => softy::nl_fem::TimeIntegration::SDIRK2,
             _ => softy::nl_fem::TimeIntegration::BE,
         }
@@ -107,6 +109,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             contact_tolerance,
             contact_iterations,
             time_integration: time_integration.into(),
+            log_file: None,
         }
     }
 }
@@ -243,11 +246,11 @@ fn get_frictional_contacts<'a>(
 }
 
 #[inline]
-pub(crate) fn new_scene(mesh: Option<Mesh>, params: SimParams) -> Result<SceneConfig, Error> {
+pub(crate) fn new_scene(mesh: Option<Mesh>, params: SimParams) -> Result<Scene, Error> {
     // Build a basic solver with a solid material.
     let mut scene = if let Some(mut mesh) = mesh {
         mesh.reverse_if(|_, cell_type| matches!(cell_type, geo::mesh::CellType::Triangle));
-        SceneConfig::new((&params).into(), mesh)
+        Scene::new((&params).into(), mesh)
     } else {
         return Err(Error::MissingMesh);
     };
@@ -260,27 +263,31 @@ pub(crate) fn new_scene(mesh: Option<Mesh>, params: SimParams) -> Result<SceneCo
         }
     }
 
-    scene.set_volume_zones_from_params(params.zone_pressurizations, params.compression_coefficients, params.hessian_approximation.into_iter().map(|x| x != 0).collect::<Vec<_>>());
+    scene.set_volume_zones_from_params(
+        params.zone_pressurizations,
+        params.compression_coefficients,
+        params
+            .hessian_approximation
+            .into_iter()
+            .map(|x| x != 0)
+            .collect::<Vec<_>>(),
+    );
 
     Ok(scene)
 }
 
 /// Add a keyframe to the scene configuration.
 #[inline]
-pub(crate) fn add_keyframe(
-    scene: &mut SceneConfig,
-    frame: u64,
-    mesh_points: PointCloud,
-) -> CookResult {
+pub(crate) fn add_keyframe(scene: &mut Scene, frame: u64, mesh_points: PointCloud) -> CookResult {
     scene.add_keyframe(frame, mesh_points.vertex_positions.into_vec());
     CookResult::Success(String::new())
 }
 
 #[inline]
-pub(crate) fn save(scene: &SceneConfig, path: impl AsRef<std::path::Path>) -> CookResult {
+pub(crate) fn save(scene: &Scene, path: impl AsRef<std::path::Path>) -> CookResult {
     let path = path.as_ref();
     match path.extension().and_then(|x| x.to_str()) {
-        Some("bin") => match scene.save_as_bin(path) {
+        Some("sfrb") | Some("bin") => match scene.save_as_sfrb(path) {
             Ok(()) => CookResult::Success(String::new()),
             Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
         },
@@ -288,13 +295,9 @@ pub(crate) fn save(scene: &SceneConfig, path: impl AsRef<std::path::Path>) -> Co
             Ok(()) => CookResult::Success(String::new()),
             Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
         },
-        Some("json") => match scene.save_as_json(path) {
-            Ok(()) => CookResult::Success(String::new()),
-            Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
-        },
         Some(ext) => CookResult::Error(format!("Unsupported scene file extension: '.{}'", ext)),
         None => CookResult::Error(format!(
-            "Scene file is missing an extension: one of '.bin', '.ron' or '.json'."
+            "Scene file is missing an extension: one of '.sfrb', '.sfjb', '.ron' or '.json'."
         )),
     }
 }

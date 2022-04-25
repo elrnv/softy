@@ -241,6 +241,25 @@ impl<T: Real> NLProblem<T> {
             .for_each(|(&i, pos)| out[i] = *pos);
         out
     }
+
+    fn num_contacts(&self) -> usize {
+        self.frictional_contact_constraints
+            .iter()
+            .map(|fc| {
+                let constraint = fc.constraint.borrow();
+                constraint.constraint_size()
+            })
+            .sum()
+    }
+    fn num_in_proximity(&self) -> usize {
+        self.frictional_contact_constraints
+            .iter()
+            .map(|fc| {
+                let constraint = fc.constraint.borrow();
+                constraint.lambda.iter().filter(|&&l| l > T::zero()).count()
+            })
+            .sum()
+    }
 }
 
 impl<T: Real64> NLProblem<T> {
@@ -2965,6 +2984,12 @@ pub trait NonLinearProblem<T: Real> {
 
     fn debug_friction(&self) -> Ref<'_, Vec<T>>;
 
+    /// Number of vertices in contact, or within `delta` of the surface.
+    fn num_contacts(&self) -> usize;
+
+    /// Number of vertices in close proximity to be detected by the spatial tree.
+    fn num_in_proximity(&self) -> usize;
+
     /// Returns a mesh using current state data.
     fn mesh(&self) -> Mesh;
 
@@ -3080,14 +3105,25 @@ pub trait MixedComplementarityProblem<T: Real>: NonLinearProblem<T> {
 
 /// Prepare the problem for Newton iterations.
 impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
+    #[inline]
     fn residual_timings(&self) -> RefMut<'_, ResidualTimings> {
         self.timings.borrow_mut()
     }
+    #[inline]
     fn jacobian_timings(&self) -> RefMut<'_, FrictionJacobianTimings> {
         self.jac_timings.borrow_mut()
     }
+    #[inline]
     fn debug_friction(&self) -> Ref<'_, Vec<T>> {
         self.debug_friction.borrow()
+    }
+    #[inline]
+    fn num_contacts(&self) -> usize {
+        NLProblem::num_contacts(self)
+    }
+    #[inline]
+    fn num_in_proximity(&self) -> usize {
+        NLProblem::num_in_proximity(self)
     }
     #[inline]
     fn mesh(&self) -> Mesh {
@@ -3097,15 +3133,19 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     fn mesh_with(&self, dq: &[T]) -> Mesh {
         NLProblem::mesh_with(self, dq)
     }
+    #[inline]
     fn lumped_mass_inv(&self) -> Ref<'_, [T]> {
         NLProblem::lumped_mass_inv(self)
     }
+    #[inline]
     fn kappa(&self) -> f64 {
         NLProblem::kappa(self)
     }
+    #[inline]
     fn kappa_mut(&mut self) -> &mut f64 {
         NLProblem::kappa_mut(self)
     }
+    #[inline]
     fn contact_violation(&self, x: &[T]) -> ContactViolation {
         NLProblem::contact_violation(self, x)
     }

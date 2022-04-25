@@ -18,8 +18,8 @@ debug = true # Change this to true to enable debug symbols in release mode
 rpath = false
 
 [patch.crates-io]
-meshx = { version = "0.4", git = "https://github.com/elrnv/meshx.git" }
+meshx = { version = "0.5", git = "https://github.com/elrnv/meshx.git" }
 vtkio = { git = "https://github.com/elrnv/vtkio.git", branch = "no-lzma" }
 
-[patch.'https://github.com/Andlon/mkl-sys']
-mkl-sys = { git = "https://github.com/elrnv/mkl-sys.git" }
+#[patch.'https://github.com/Andlon/mkl-sys']
+#mkl-sys = { git = "https://github.com/elrnv/mkl-sys.git" }

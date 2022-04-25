@@ -11,6 +11,7 @@ pub mod trust_region;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
+use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -113,7 +114,7 @@ pub struct ZoneParams {
 }
 
 /// Simulation parameters.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SimParams {
     pub gravity: [f32; 3],
     pub time_step: Option<f32>,
@@ -138,6 +139,8 @@ pub struct SimParams {
     /// Number of contact iterations.
     pub contact_iterations: u32,
     pub time_integration: TimeIntegration,
+    /// Path to a file where to store logs.
+    pub log_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Error)]
@@ -456,6 +459,88 @@ impl Display for Timings {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct StepResult {
+    /// Collection of all integration stages in a step.
+    pub stage_solves: Vec<StageResult>,
+}
+
+impl std::fmt::Display for StepResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Begin step solve")?;
+        for res in self.stage_solves.iter() {
+            writeln!(f, "{}", res)?;
+        }
+        writeln!(f, "End of step solve")?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct StageResult {
+    /// Time integration type for this single step.
+    pub time_integration: SingleStepTimeIntegration,
+    /// Collection of all solves involved in resolving this stage.
+    ///
+    /// Each additional solve corresponds to some constraint violation.
+    /// Additional information associated with each solve is stored in `ProblemInfo`.
+    pub solve_results: Vec<(ProblemInfo, SolveResult)>,
+    /// Number of contact violations.
+    ///
+    /// This indicates the number of times contact was violated at the end of the step.
+    pub contact_violations: u32,
+    /// Number of violations for the maximum step allowed.
+    ///
+    /// This indicates the number of times contact point velocity has exceeded the implicit
+    /// surface radius, where the potential is computed.
+    pub max_step_violations: u32,
+}
+
+impl StageResult {
+    pub fn new(time_integration: SingleStepTimeIntegration) -> Self {
+        StageResult {
+            time_integration,
+            ..Default::default()
+        }
+    }
+}
+
+impl std::fmt::Display for StageResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Begin integration stage: {:?}", self.time_integration)?;
+        for (pi, res) in self.solve_results.iter() {
+            writeln!(f, "{}", res)?;
+            writeln!(f, "{}", pi)?;
+        }
+        writeln!(f, "Total contact violations:  {}", self.contact_violations)?;
+        writeln!(f, "Total max step violations: {}", self.max_step_violations)?;
+        writeln!(f, "End of stage: {:?}", self.time_integration)?;
+        Ok(())
+    }
+}
+
+/// Additional information associated with each `SolveResult`.
+///
+/// This information is not part of `SolveResult` since it is specific to the problem, and not
+/// the overall non-linear solve.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ProblemInfo {
+    /// Total number of contacts.
+    ///
+    /// These are vertices within `delta` of the surface.
+    pub total_contacts: u64,
+    /// Total vertices in close proximity.
+    pub total_in_proximity: u64,
+}
+
+impl std::fmt::Display for ProblemInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Total in proximity: {}", self.total_in_proximity)?;
+        writeln!(f, "Total contacts:     {}", self.total_contacts)
+    }
+}
+
+/// Result of a single non-linear solve.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SolveResult {
     /// Number of successful iterations.
@@ -487,13 +572,16 @@ impl std::fmt::Display for SolveResult {
         for info in self.stats.iter() {
             writeln!(f, "{}", info)?;
         }
-        writeln!(f, "Status:            {:?}", self.status)?;
-        writeln!(
-            f,
-            "Total ls steps:    {:?}",
-            self.stats.iter().map(|s| s.ls_steps).sum::<u32>()
-        )?;
-        writeln!(f, "Total iterations:  {}", self.iterations)?;
+        writeln!(f, "Status:             {:?}", self.status)?;
+        let lin_steps = self
+            .stats
+            .iter()
+            .map(|s| s.linsolve_result.iterations)
+            .sum::<u32>();
+        writeln!(f, "Total linear steps: {}", lin_steps)?;
+        let ls_steps = self.stats.iter().map(|s| s.ls_steps).sum::<u32>();
+        writeln!(f, "Total ls steps:     {}", ls_steps)?;
+        writeln!(f, "Total iterations:   {}", self.iterations)?;
         writeln!(f, "Timings:\n{}", self.timings)
     }
 }

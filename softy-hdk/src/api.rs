@@ -130,6 +130,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             contact_tolerance,
             contact_iterations,
             time_integration,
+            ref log_file,
             ..
         } = *self;
         let line_search = match solver_type {
@@ -179,6 +180,11 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             contact_tolerance,
             contact_iterations,
             time_integration: time_integration.into(),
+            log_file: if log_file.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(log_file))
+            },
         }
     }
 }

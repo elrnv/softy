@@ -1788,7 +1788,9 @@ impl<T: Real> PointContactConstraint<T> {
         //     });
 
         // Clear potential value.
-        constraint_value_buf.par_iter_mut().for_each(|val| *val = T::zero());
+        constraint_value_buf
+            .par_iter_mut()
+            .for_each(|val| *val = T::zero());
 
         surf.potential_par(
             self.collider_vertex_positions.view().into(),

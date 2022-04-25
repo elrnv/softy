@@ -6,7 +6,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Read, Write};
 
 use geo::attrib::Attrib;
 use geo::topology::{CellIndex, VertexIndex};
@@ -15,15 +15,29 @@ use thiserror::Error;
 
 use flatk::IntoStorage;
 
-use crate::nl_fem::{SimParams, SolveResult, SolverBuilder, ZoneParams};
+use crate::nl_fem::{SimParams, SolverBuilder, StepResult, ZoneParams};
 use crate::{FrictionalContactParams, Material, Mesh};
+
+#[derive(Debug, Error)]
+pub enum SerializeError {
+    #[error("RON deserialize: {}", .0)]
+    RonDeserialize(#[from] ron::error::SpannedError),
+    #[error("RON serialize: {}", .0)]
+    RonSerialize(#[from] ron::Error),
+    #[error("Bincode: {}", .0)]
+    Bincode(#[from] bincode::Error),
+    #[error("IO: {}", .0)]
+    Io(#[from] std::io::Error),
+    #[error("Missing a newline between RON file and binary scene data")]
+    MissingNewlineBeforeBinaryData,
+}
 
 #[derive(Debug, Error)]
 pub enum SceneError {
     #[error("IO Error")]
     IO(#[from] std::io::Error),
-    #[error("Serialization error")]
-    Serialize,
+    #[error("(De)Serialization error: {}", .0)]
+    Serialize(#[from] SerializeError),
     #[error("Attribute transfer error")]
     Attribute(#[from] geo::attrib::Error),
     #[error("Solver error")]
@@ -124,14 +138,14 @@ pub struct KeyframedVertexPositions {
 
 /// Scene description.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub struct Scene {
+pub struct SceneData {
     // Mesh topology.
     mesh_topo: MeshTopo,
     /// A set of time stamped vertex positions.
     animation: Vec<KeyframedVertexPositions>,
 }
 
-impl Scene {
+impl SceneData {
     /// Set the simulation mesh representing all objects in the scene.
     ///
     /// This function sets the initial keyframe to be the mesh vertex positions.
@@ -165,7 +179,7 @@ impl Scene {
             frame: 0,
             positions: mesh.vertex_positions.into_vec(),
         }];
-        Scene {
+        SceneData {
             mesh_topo,
             animation,
         }
@@ -269,53 +283,24 @@ impl Scene {
     }
 }
 
-/// Scene configuration.
+/// Configuration of the scene excluding mesh data.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SceneConfig {
     pub sim_params: SimParams,
     pub materials: Vec<Material>,
     pub frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
     pub volume_zones: ZoneParams,
-    pub scene: Scene,
 }
 
 impl SceneConfig {
     /// Construct a new scene configuration.
-    pub fn new(sim_params: SimParams, mesh: Mesh) -> Self {
+    pub fn new(sim_params: SimParams) -> Self {
         SceneConfig {
             sim_params,
             materials: Vec::new(),
             frictional_contacts: Vec::new(),
             volume_zones: ZoneParams::default(),
-            scene: Scene::new(mesh),
         }
-    }
-
-    /// Set the animation of the mesh representing all objects in the scene.
-    ///
-    /// This function will overwrite all other keyframes if the first element in
-    /// `frames` is zero. If the first element of `frames` is not zero, then the first keyframe
-    /// will remain unchanged.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if
-    ///   - `frames` and `positions` have different sizes,
-    ///   - they are empty, or
-    ///   - `frames` is not monotonically increasing.
-    pub fn set_animation(
-        &mut self,
-        frames: impl AsRef<[u64]>,
-        positions: impl Into<Vec<Vec<[f64; 3]>>>,
-    ) -> &mut Self {
-        self.scene.set_keyframes(frames, positions);
-        self
-    }
-
-    /// Add a single keyframe to the animation.
-    pub fn add_keyframe(&mut self, frame: u64, positions: impl Into<Vec<[f64; 3]>>) -> &mut Self {
-        self.scene.add_keyframe(frame, positions.into());
-        self
     }
 
     /// Set the set materials used by the elements in this solver.
@@ -367,59 +352,161 @@ impl SceneConfig {
         self
     }
 
-    /// Saves this scene configuration to the given path interpreted as a RON file.
+    /// Writes this scene configuration to the given writer interpreted as a RON file.
+    pub fn write_as_ron<W: std::io::Write>(&self, w: W) -> Result<(), SceneError> {
+        Ok(
+            ron::ser::to_writer_pretty(w, self, ron::ser::PrettyConfig::new())
+                .map_err(SerializeError::from)?,
+        )
+    }
+
+    /// Reads `SceneConfig` as a `RON` file.
+    pub fn read_as_ron<R: Read>(mut reader: R) -> Result<(Self, Vec<u8>), SerializeError> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        let mut deserializer = ron::de::Deserializer::from_bytes(&bytes)?;
+        let config = Self::deserialize(&mut deserializer)?;
+        Ok((config, deserializer.remainder_bytes().to_vec()))
+        // Don't check for trailing characters (which ron::de::from_reader does) since
+        // we concatenate two file types together in `sfrb`.
+    }
+}
+
+/// Complete scene description.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Scene {
+    pub config: SceneConfig,
+    pub scene: SceneData,
+}
+
+impl Scene {
+    /// Construct a new scene.
+    pub fn new(sim_params: SimParams, mesh: Mesh) -> Self {
+        Scene {
+            config: SceneConfig::new(sim_params),
+            scene: SceneData::new(mesh),
+        }
+    }
+
+    /// Set the animation of the mesh representing all objects in the scene.
+    ///
+    /// This function will overwrite all other keyframes if the first element in
+    /// `frames` is zero. If the first element of `frames` is not zero, then the first keyframe
+    /// will remain unchanged.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if
+    ///   - `frames` and `positions` have different sizes,
+    ///   - they are empty, or
+    ///   - `frames` is not monotonically increasing.
+    pub fn set_animation(
+        &mut self,
+        frames: impl AsRef<[u64]>,
+        positions: impl Into<Vec<Vec<[f64; 3]>>>,
+    ) -> &mut Self {
+        self.scene.set_keyframes(frames, positions);
+        self
+    }
+
+    /// Add a single keyframe to the animation.
+    pub fn add_keyframe(&mut self, frame: u64, positions: impl Into<Vec<[f64; 3]>>) -> &mut Self {
+        self.scene.add_keyframe(frame, positions.into());
+        self
+    }
+
+    /// Set the set materials used by the elements in this solver.
+    pub fn set_materials(&mut self, materials: impl Into<Vec<Material>>) -> &mut Self {
+        self.config.set_materials(materials.into());
+        self
+    }
+
+    /// Set the set materials used by the elements in this solver.
+    pub fn set_volume_zones_from_params(
+        &mut self,
+        zone_pressurizations: impl Into<Vec<f32>>,
+        compression_coefficients: impl Into<Vec<f32>>,
+        hessian_approximation: impl Into<Vec<bool>>,
+    ) -> &mut Self {
+        self.config.set_volume_zones_from_params(
+            zone_pressurizations.into(),
+            compression_coefficients.into(),
+            hessian_approximation.into(),
+        );
+        self
+    }
+
+    /// Set the set materials used by the elements in this solver.
+    pub fn set_volume_zones(&mut self, volume_zones: impl Into<ZoneParams>) -> &mut Self {
+        self.config.set_volume_zones(volume_zones.into());
+        self
+    }
+
+    /// Set parameters for frictional contact problems.
+    ///
+    /// The given two object IDs determine which objects should experience
+    /// frictional contact described by the given parameters. To add
+    /// self-contact, simply set the two ids to be equal. For one-directional
+    /// models, the first index corresponds to the object (affected) while the
+    /// second index corresponds to the collider (unaffected). Some
+    /// bi-directional constraints treat the two objects differently, and
+    /// changing the order of the indices may change the behaviour. In these
+    /// cases, the first index corresponds to the `object` (primary) and the
+    /// second to the `collider` (secondary).
+    pub fn add_frictional_contact(
+        &mut self,
+        params: FrictionalContactParams,
+        obj_ids: (usize, usize),
+    ) -> &mut Self {
+        self.config.add_frictional_contact(params, obj_ids);
+        self
+    }
+
+    /// Saves this scene as in `sfrb` format.
+    ///
+    /// The `sfrb` format is `ron` for `SceneConfig` followed by `bincode` for `SceneData`.
+    pub fn save_as_sfrb(&self, path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
+        let path = path.as_ref();
+        File::create(path).map_err(SceneError::from).and_then(|f| {
+            let mut writer = BufWriter::new(f);
+            self.config.write_as_ron(&mut writer)?;
+
+            writeln!(&mut writer).map_err(SerializeError::from)?;
+
+            // Bincode for the data
+            Ok(bincode::serialize_into(&mut writer, &self.scene).map_err(SerializeError::from)?)
+        })
+    }
+
+    /// Loads the scene from an `sfrb` file.
+    ///
+    /// The `sfrb` format is `ron` for `SceneConfig` followed by `bincode` for `SceneData`.
+    pub fn load_from_sfrb(path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
+        let path = path.as_ref();
+        File::open(path).map_err(SceneError::from).and_then(|f| {
+            let reader = BufReader::new(f);
+            let (config, bytes) = SceneConfig::read_as_ron(reader)?;
+            if bytes[0] != b'\n' {
+                return Err(SceneError::Serialize(
+                    SerializeError::MissingNewlineBeforeBinaryData,
+                ));
+            }
+            let scene = bincode::deserialize(&bytes[1..]).map_err(SerializeError::from)?;
+            Ok(Scene { config, scene })
+        })
+    }
+
+    /// Saves this scene entirely as `ron`.
+    ///
+    /// This can be very space inefficient since `SceneData` can be very large.
     pub fn save_as_ron(&self, path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
         let path = path.as_ref();
         File::create(path).map_err(SceneError::from).and_then(|f| {
             let mut writer = BufWriter::new(f);
-            ron::ser::to_writer_pretty(&mut writer, self, ron::ser::PrettyConfig::new())
-                .map_err(|_| SceneError::Serialize)
-        })
-    }
-
-    /// Saves this scene configuration to the given path interpreted as a JSON file.
-    ///
-    /// This function works only if one of `simd-json` or `serde_json` features are enabled.
-    /// If both are enabled, `simd-json` will be used.
-    /// If none are enabled, this function will return an error.
-    pub fn save_as_json(&self, _path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
-        #[cfg(feature = "simd-json")]
-        {
-            let path = _path.as_ref();
-            File::create(path).map_err(SceneError::from).and_then(|f| {
-                let mut writer = BufWriter::new(f);
-                simd_json::serde::to_writer_pretty(&mut writer, self)
-                    .map_err(|_| SceneError::Serialize)
-            })
-        }
-        #[cfg(not(feature = "simd-json"))]
-        {
-            #[cfg(feature = "serde_json")]
-            {
-                let path = _path.as_ref();
-                File::create(path)
-                    .map_err(SceneError::from)
-                    .and_then(|f| {
-                        let mut writer = BufWriter::new(f);
-                        serde_json::to_writer_pretty(&mut writer, self)
-                            .map_err(|_| SceneError::Serialize)
-                    })
-                    .into()
-            }
-            #[cfg(not(feature = "serde_json"))]
-            {
-                Err(SceneError::JSONUnsupported)
-            }
-        }
-    }
-
-    /// Saves this scene configuration to the given path interpreted as a binary file using `bincode`.
-    #[cfg(feature = "bincode")]
-    pub fn save_as_bin(&self, path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
-        let path = path.as_ref();
-        File::create(path).map_err(SceneError::from).and_then(|f| {
-            let mut writer = BufWriter::new(f);
-            bincode::serialize_into(&mut writer, self).map_err(|_| SceneError::Serialize)
+            Ok(
+                ron::ser::to_writer_pretty(&mut writer, self, ron::ser::PrettyConfig::new())
+                    .map_err(SerializeError::from)?,
+            )
         })
     }
 
@@ -428,51 +515,7 @@ impl SceneConfig {
         let path = path.as_ref();
         File::open(path).map_err(SceneError::from).and_then(|f| {
             let reader = BufReader::new(f);
-            ron::de::from_reader(reader).map_err(|_| SceneError::Serialize)
-        })
-    }
-
-    /// Loads the scene from a `JSON` file.
-    ///
-    /// This function works only if one of `simd-json` or `serde_json` features are enabled.
-    /// If both are enabled, `simd-json` will be used.
-    /// If none are enabled, this function will return an error.
-    pub fn load_from_json(_path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
-        #[cfg(feature = "simd-json")]
-        {
-            let path = _path.as_ref();
-            File::open(path).map_err(SceneError::from).and_then(|f| {
-                let reader = BufReader::new(f);
-                simd_json::serde::from_reader(reader).map_err(|_| SceneError::Serialize)
-            })
-        }
-        #[cfg(not(feature = "simd-json"))]
-        {
-            #[cfg(feature = "serde_json")]
-            {
-                let path = _path.as_ref();
-                File::open(path)
-                    .map_err(SceneError::from)
-                    .and_then(|f| {
-                        let reader = BufReader::new(f);
-                        serde_json::from_reader(reader).map_err(|_| SceneError::Serialize)
-                    })
-                    .into()
-            }
-            #[cfg(not(feature = "serde_json"))]
-            {
-                Err(SceneError::JSONUnsupported)
-            }
-        }
-    }
-
-    /// Loads the scene from a `bincode` binary file.
-    #[cfg(feature = "bincode")]
-    pub fn load_from_bin(path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
-        let path = path.as_ref();
-        File::open(path).map_err(SceneError::from).and_then(|f| {
-            let reader = BufReader::new(f);
-            bincode::deserialize_from(reader).map_err(|_| SceneError::Serialize)
+            Ok(ron::de::from_reader(reader).map_err(SerializeError::from)?)
         })
     }
 
@@ -487,15 +530,15 @@ impl SceneConfig {
     pub fn run_with(
         &self,
         steps: u64,
-        callback: impl Fn(u64, SolveResult, Mesh) -> bool,
+        callback: impl Fn(u64, StepResult, Mesh) -> bool,
     ) -> Result<(), SceneError> {
         let mesh = self.scene.build_mesh()?;
-        let mut solver_builder = SolverBuilder::new(self.sim_params);
+        let mut solver_builder = SolverBuilder::new(self.config.sim_params.clone());
         solver_builder
             .set_mesh(mesh)
-            .set_materials(self.materials.clone())
-            .set_volume_zones(self.volume_zones.clone());
-        for (fc_params, (obj, col)) in self.frictional_contacts.iter() {
+            .set_materials(self.config.materials.clone())
+            .set_volume_zones(self.config.volume_zones.clone());
+        for (fc_params, (obj, col)) in self.config.frictional_contacts.iter() {
             solver_builder.add_frictional_contact(*fc_params, (*obj, *col));
         }
         let mut solver = solver_builder.build::<f64>()?;

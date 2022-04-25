@@ -491,7 +491,7 @@ impl<T: Real> SparseJacobian<T> {
 }
 
 pub enum LinearSolverWorkspace<T: Real> {
-    Iterative(BiCGSTAB<T>),
+    Iterative(BiCGSTAB<na::DVector<T>>),
     Direct(DirectSolver<T>),
 }
 
@@ -517,6 +517,7 @@ pub struct NewtonWorkspace<T: Real> {
     // jp: Vec<T>,
     r_cur: Vec<T>,
     r_next: Vec<T>,
+    precond: Vec<T>,
 }
 
 unsafe impl<T: Real> Send for NewtonWorkspace<T> {}
@@ -597,6 +598,8 @@ where
         let r_cur = r.clone();
         let p = r.clone();
 
+        let precond = vec![T::zero(); n];
+
         // Allocate space for the linear solver.
         let linsolve = match params.linsolve {
             LinearSolver::Iterative {
@@ -639,6 +642,7 @@ where
                 // jp,
                 r_cur,
                 r_next,
+                precond,
             }),
         }
     }
@@ -812,6 +816,7 @@ where
             //jp,
             r_cur,
             r_next,
+            precond,
             ..
         } = &mut *workspace.borrow_mut();
 
@@ -848,6 +853,17 @@ where
 
         // Forcing term only used for inexact newton.
         let orig_linsolve_tol = linsolve.iterative_tolerance();
+
+        // Clone lumped mass inverses.
+        precond
+            .chunks_exact_mut(3)
+            .zip(problem.lumped_mass_inv().iter())
+            .for_each(|(out_m, &in_m)| {
+                let m_inv = num_traits::Float::sqrt(in_m);
+                out_m[0] = m_inv;
+                out_m[1] = m_inv;
+                out_m[2] = m_inv;
+            });
 
         let header = IterationInfo::header();
         log::debug!("{}", header[0]);
@@ -950,11 +966,6 @@ where
 
         let mut j_dense_ad = LazyCell::new();
         let mut j_dense = LazyCell::new();
-        let mut identity =
-            ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
-        for (i, id) in identity.iter_mut().enumerate() {
-            id[i] = T::one();
-        }
 
         let (iterations, status) = loop {
             if !(outer_callback.borrow_mut())(CallbackArgs {
@@ -1009,10 +1020,19 @@ where
                     //     sparse_jacobian.j_vals.as_mut_slice(),
                     // );
 
+                    // Explicit preconditioning:
+                    r.iter_mut().zip(precond.iter()).for_each(|(r, &m)| {
+                        *r *= m;
+                    });
+
                     linsolve_result = linsolve.solve_precond(
                         |p, out| {
                             let t_begin_jprod = Instant::now();
                             problem.jacobian_product(x, p, r_cur, out);
+                            // Explicit preconditioning
+                            out.iter_mut().zip(precond.iter()).for_each(|(r, &m)| {
+                                *r *= m;
+                            });
                             // sparse_jacobian.compute_product(p, out);
                             timings.jacobian_product += Instant::now() - t_begin_jprod;
                             inner_callback.borrow_mut()(CallbackArgs {
@@ -1024,7 +1044,14 @@ where
                         },
                         p.as_mut_slice(),
                         r.as_mut_slice(),
-                        |_| true,
+                        |s, buf| -> &[T] {
+                            s.iter().zip(precond.iter()).zip(buf.iter_mut()).for_each(
+                                |((&s, &m), buf)| {
+                                    *buf = s * m;
+                                },
+                            );
+                            buf
+                        },
                     );
                 }
                 LinearSolverWorkspace::Direct(DirectSolver {
@@ -1056,10 +1083,14 @@ where
                                 vec![T::zero(); x.len() * r.len()],
                             )
                         });
+                        // A utility vector used to simulate multiplication by identity
+                        let mut zero_col = vec![T::zero(); x.len()];
                         build_dense_from_product(
                             j_dense_ad.view_mut(),
                             |i, col| {
-                                problem.jacobian_product(x, &identity[i], r, col);
+                                zero_col[i] = T::one();
+                                problem.jacobian_product(x, &zero_col, r, col);
+                                zero_col[i] = T::zero();
                             },
                             x.len(),
                         );
@@ -1079,7 +1110,7 @@ where
                             x.len(),
                         );
                         // dbg!(x.len());
-                        // print_dense(j_dense.view());
+                        //print_dense(j_dense.view());
                         //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
                         //write_jacobian_img(j_dense.view(), iterations);
 
@@ -1388,11 +1419,14 @@ where
         timings.friction_jacobian = *self.problem.jacobian_timings();
 
         log::debug!("Status:           {:?}", status);
-        log::debug!(
-            "Total ls steps:   {:?}",
-            stats.iter().map(|s| s.ls_steps).sum::<u32>()
-        );
-        log::debug!("Total Iterations: {:?}", iterations);
+        let lin_steps = stats
+            .iter()
+            .map(|s| s.linsolve_result.iterations)
+            .sum::<u32>();
+        log::debug!("Total linear steps: {}", lin_steps);
+        let ls_steps = stats.iter().map(|s| s.ls_steps).sum::<u32>();
+        log::debug!("Total ls steps:     {}", ls_steps);
+        log::debug!("Total Iterations:   {}", iterations);
 
         for line in format!("{}", timings).split('\n') {
             log::debug!("{}", line);
@@ -1574,7 +1608,7 @@ fn build_sparse_from_product<T: Real>(
 #[allow(dead_code)]
 fn build_dense_from_product<T: Real>(
     mut j_dense: ChunkedN<&mut [T]>,
-    jprod: impl Fn(usize, &mut [T]),
+    mut jprod: impl FnMut(usize, &mut [T]),
     num_variables: usize,
 ) {
     // Clear j_dense

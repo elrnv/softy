@@ -82,7 +82,13 @@ where
 {
     #[inline]
     fn solve(&mut self) -> SimResult {
-        self.step().into()
+        let result = self.step();
+        if let Ok(result) = result.as_ref() {
+            if let Err(err) = self.log_result(result) {
+                log::warn!("Failed to log result: {}", err);
+            }
+        }
+        result.into()
     }
     #[inline]
     fn mesh(&self) -> Mesh {

@@ -1,7 +1,7 @@
 mod api;
 
 use hdkrs::{PointCloud, UnstructuredMesh};
-use softy::scene::SceneConfig;
+use softy::scene::Scene;
 use std::pin::Pin;
 
 #[cxx::bridge(namespace = "softy")]
@@ -230,11 +230,11 @@ pub fn new_scene(mesh: Box<Mesh>, sim_params: SimParams) -> SceneResult {
 /// Opaque struct to represent a scene on the C side.
 #[derive(Debug)]
 pub struct SoftyScene {
-    scene: Option<SceneConfig>,
+    scene: Option<Scene>,
 }
 
-impl Into<Option<SceneConfig>> for SoftyScene {
-    fn into(self) -> Option<SceneConfig> {
+impl Into<Option<Scene>> for SoftyScene {
+    fn into(self) -> Option<Scene> {
         self.scene
     }
 }

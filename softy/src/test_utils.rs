@@ -395,7 +395,10 @@ pub fn make_three_tet_mesh() -> TetMesh {
 
 /// Create a box of unit size centered at the origin with `i` cells in each dimension.
 pub fn make_box(i: usize) -> TetMesh {
-    let mut box_mesh = SolidBoxBuilder { res: [i, i, i] }.build();
+    let mut box_mesh: TetMesh = BoxBuilder {
+        divisions: [i as u32 - 1; 3],
+    }
+    .build();
     box_mesh.uniform_scale(0.5);
     let ref_verts = box_mesh
         .vertex_position_iter()

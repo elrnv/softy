@@ -250,8 +250,8 @@ impl From<Error> for SimResult {
     }
 }
 
-impl From<Result<nl_fem::SolveResult, Error>> for SimResult {
-    fn from(res: Result<nl_fem::SolveResult, Error>) -> SimResult {
+impl From<Result<nl_fem::StepResult, Error>> for SimResult {
+    fn from(res: Result<nl_fem::StepResult, Error>) -> SimResult {
         match res {
             Ok(solve_result) => SimResult::Success(format!("{}", solve_result)),
             Err(err) => err.into(),

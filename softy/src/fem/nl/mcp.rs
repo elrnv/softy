@@ -159,6 +159,10 @@ where
             }
         });
     }
+    #[inline]
+    fn invalidate_cached_jacobian_product_values(&self) {
+        self.problem.invalidate_cached_jacobian_product_values();
+    }
 }
 
 impl<S, T, P> NLSolver<P, T> for MCPSolver<S>

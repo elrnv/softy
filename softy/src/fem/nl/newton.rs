@@ -1088,6 +1088,7 @@ where
                         build_dense_from_product(
                             j_dense_ad.view_mut(),
                             |i, col| {
+                                //eprintln!("PRODUCT WRT {}", i);
                                 zero_col[i] = T::one();
                                 problem.jacobian_product(x, &zero_col, r, col);
                                 zero_col[i] = T::zero();
@@ -1110,7 +1111,8 @@ where
                             x.len(),
                         );
                         // dbg!(x.len());
-                        //print_dense(j_dense.view());
+                        // eprintln!("{:?}", &r);
+                        // print_dense(j_dense.view());
                         //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
                         //write_jacobian_img(j_dense.view(), iterations);
 
@@ -1215,6 +1217,10 @@ where
 
             // Take the full step
             *x.as_mut_tensor() += p.as_tensor();
+
+            // This ensures that next time jacobian_product is requested, the full jacobian values
+            // are recomputed for a fresh x.
+            problem.invalidate_cached_jacobian_product_values();
 
             // Compute the residual for the full step.
             problem.residual(x, r_next.as_mut_slice());

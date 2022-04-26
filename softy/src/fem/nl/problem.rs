@@ -3081,6 +3081,11 @@ pub trait NonLinearProblem<T: Real> {
 
     /// Compute the residual and simultaneously its Jacobian product with the given vector `p`.
     fn jacobian_product(&self, x: &[T], p: &[T], r: &[T], jp: &mut [T]);
+
+    /// Invalidates any values that were cached.
+    ///
+    /// This function must be called whenever the unknown `x` is changed between subsequent calls to `jacobian_product`.
+    fn invalidate_cached_jacobian_product_values(&self);
 }
 
 /// A Mixed complementarity problem is a non-linear problem subject to box constraints.
@@ -3409,6 +3414,11 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     fn jacobian_product(&self, v: &[T], p: &[T], _r: &[T], jp: &mut [T]) {
         self.jacobian_product_constraint_ad(v, p, jp);
     }
+
+    #[inline]
+    fn invalidate_cached_jacobian_product_values(&self) {
+        self.jacobian_workspace.borrow_mut().stale = true;
+    }
 }
 
 impl<T: Real64> MixedComplementarityProblem<T> for NLProblem<T> {
@@ -3581,7 +3591,7 @@ impl<T: Real64> NLProblem<T> {
 
         let mut success = true;
         for col in 0..n {
-            // eprintln!("CHECK JAC AUTODIFF WRT {}", col);
+            eprintln!("CHECK JAC AUTODIFF WRT {}", col);
             x0[col] = F::var(x0[col]);
             problem.residual(&x0, &mut r);
             let d: Vec<f64> = r.iter().map(|r| r.deriv()).collect();

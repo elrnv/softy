@@ -3591,7 +3591,7 @@ impl<T: Real64> NLProblem<T> {
 
         let mut success = true;
         for col in 0..n {
-            eprintln!("CHECK JAC AUTODIFF WRT {}", col);
+            // eprintln!("CHECK JAC AUTODIFF WRT {}", col);
             x0[col] = F::var(x0[col]);
             problem.residual(&x0, &mut r);
             let d: Vec<f64> = r.iter().map(|r| r.deriv()).collect();

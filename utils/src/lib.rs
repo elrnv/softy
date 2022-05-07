@@ -117,6 +117,11 @@ pub fn mode_u32<I: IntoIterator<Item = u32>>(data: I) -> (u32, usize) {
         .unwrap_or((0u32, 0))
 }
 
+/// Returns the diagonal of a 3x3 matrix.
+pub fn get_diag3<T: Copy>(m: &[[T; 3]; 3]) -> [T; 3] where {
+    [m[0][0], m[1][1], m[2][2]]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

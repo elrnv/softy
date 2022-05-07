@@ -544,6 +544,89 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
+    /// Computes `d/dq J b` with respect to query position.
+    ///
+    /// Here `J` is the contact Jacobian and `b` is a vector of constant multipliers.
+    /// Returned blocks are column-major.
+    pub fn contact_query_jacobian_jacobian_product_indexed_blocks_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [[T; 3]],
+    ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error> {
+        Ok(apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.contact_query_jacobian_jacobian_product_indexed_blocks_iter_impl(query_points, multipliers, kernel)
+        }, ?))
+    }
+
+    // Returns column major blocks.
+    pub(crate) fn contact_query_jacobian_jacobian_product_indexed_blocks_iter_impl<'a, K: 'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [[T; 3]],
+        kernel: K,
+    ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error>
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        let neigh_points = self.trivial_neighborhood_seq();
+
+        let ImplicitSurfaceBase {
+            ref samples,
+            ref surface_topo,
+            bg_field_params,
+            sample_type,
+            ..
+        } = *self.base();
+
+        let third = T::one() / T::from(3.0_f64).unwrap();
+
+        match sample_type {
+            SampleType::Vertex => Err(Error::UnsupportedSampleType),
+            SampleType::Face => {
+                let hess = zip!(query_points.iter(), neigh_points)
+                    .enumerate()
+                    .filter(|(_, (_, nbrs))| !nbrs.is_empty())
+                    .flat_map(move |(vtx_idx, (q, nbr_points))| {
+                        let q = Vector3::from(*q);
+                        let view = SamplesView::new(nbr_points, samples);
+                        let bg: BackgroundField<T, T, K> =
+                            BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
+
+                        let weight_sum_inv = bg.weight_sum_inv();
+                        let closest_d = bg.closest_sample_dist();
+                        let grad_phi = query_jacobian_at(q, view, None, kernel, bg_field_params);
+                        let dw_neigh =
+                            normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
+
+                        let ddpsi = query_hessian_at(q, view, kernel, bg_field_params);
+
+                        view.into_iter().map(move |sample| {
+                            let mut lambda = Vector3::zero();
+                            surface_topo[sample.index].iter().for_each(|&vtx_idx| {
+                                lambda += multipliers[vtx_idx].into_tensor();
+                            });
+                            lambda *= third;
+                            let mtx = query_contact_jacobian_gradient_product_at(
+                                q,
+                                sample,
+                                kernel,
+                                grad_phi,
+                                dw_neigh,
+                                ddpsi,
+                                weight_sum_inv,
+                                closest_d,
+                                lambda,
+                                false,
+                            );
+                            (vtx_idx, vtx_idx, mtx.into_data())
+                        })
+                    });
+                Ok(hess)
+            }
+        }
+    }
+
     /// Computes `d/dq J^T b` where q are sample indices and returns column-major indexed blocks.
     ///
     /// Here `J` is the contact Jacobian and `b` is a vector of constant multipliers.
@@ -672,37 +755,31 @@ impl<T: Real> QueryTopo<T> {
                     .flat_map(move |((query_index, (q, nbr_points)), lambda)| {
                         let q = Vector3::from(*q);
                         let view = SamplesView::new(nbr_points, samples);
+                        let bg: BackgroundField<T, T, K> =
+                            BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
+
+                        let weight_sum_inv = bg.weight_sum_inv();
+                        let closest_d = bg.closest_sample_dist();
+                        let grad_phi = query_jacobian_at(q, view, None, kernel, bg_field_params);
+                        let dw_neigh =
+                            normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
+
+                        let ddpsi = query_hessian_at(q, view, kernel, bg_field_params);
                         view.into_iter().flat_map(move |sample| {
-                            let bg: BackgroundField<T, T, K> =
-                                BackgroundField::local(q, view, kernel, bg_field_params, None)
-                                    .unwrap();
-
-                            let weight_sum_inv = bg.weight_sum_inv();
-                            let closest_d = bg.closest_sample_dist();
-                            let grad_phi =
-                                query_jacobian_at(q, view, None, kernel, bg_field_params);
-                            let dw_neigh =
-                                normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
-
-                            let ddpsi = query_hessian_at(q, view, kernel, bg_field_params);
-
+                            let mtx = query_contact_jacobian_gradient_product_at(
+                                q,
+                                sample,
+                                kernel,
+                                grad_phi,
+                                dw_neigh,
+                                ddpsi,
+                                weight_sum_inv,
+                                closest_d,
+                                Vector3::from(*lambda),
+                                true,
+                            );
                             IntoIterator::into_iter(surface_topo[sample.index]).map(
-                                move |vtx_idx| {
-                                    // d/dx(ns x grad psi x b) = -[b]_X [n_s]_X ddpsi
-                                    let mtx = query_contact_jacobian_gradient_product_at(
-                                        q,
-                                        sample,
-                                        kernel,
-                                        grad_phi,
-                                        dw_neigh,
-                                        ddpsi,
-                                        weight_sum_inv,
-                                        closest_d,
-                                        Vector3::from(*lambda),
-                                        true,
-                                    );
-                                    (vtx_idx, query_index, (mtx * third).into_data())
-                                },
+                                move |vtx_idx| (vtx_idx, query_index, (mtx * third).into_data()),
                             )
                         })
                     }))

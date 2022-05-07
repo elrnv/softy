@@ -347,6 +347,18 @@ static const char *theDsFile = R"THEDSFILE(
         label "Solver"
 
         parm {
+            name "preconditioner"
+            label "Preconditioner"
+            type ordinal
+            default { "2" }
+            menu {
+                "none" "None"
+                "incompletejacobi" "Incomplete Jacobi"
+                "approximatejacobi" "Approximate Jacobi"
+            }
+        }
+
+        parm {
             name "timeintegration"
             cppname "TimeIntegration"
             label "Time Integration"
@@ -633,6 +645,18 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftySceneParms &so
         case SOP_SoftySceneEnums::TimeIntegration::SDIRK2:
             sim_params.time_integration = softy::TimeIntegration::SDIRK2;
         break;
+    }
+    switch (static_cast<SOP_SoftySceneEnums::Preconditioner>(sopparms.getPreconditioner()))
+    {
+        case SOP_SoftySceneEnums::Preconditioner::None:
+            sim_params.preconditioner = softy::Preconditioner::None;
+            break;
+        case SOP_SoftySceneEnums::Preconditioner::IncompleteJacobi:
+            sim_params.Preconditioner = softy::Preconditioner::IncompleteJacobi;
+            break;
+        case SOP_SoftySceneEnums::Preconditioner::ApproximateJacobi:
+            sim_params.Preconditioner = softy::Preconditioner::ApproximateJacobi;
+            break;
     }
     sim_params.velocity_clear_frequency = sopparms.getVelocityClearFrequency();
     sim_params.tolerance = sopparms.getInnerTolerance();

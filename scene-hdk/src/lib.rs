@@ -59,6 +59,13 @@ mod ffi {
     }
 
     #[derive(Debug)]
+    pub enum Preconditioner {
+        None,
+        IncompleteJacobi,
+        ApproximateJacobi,
+    }
+
+    #[derive(Debug)]
     pub enum FrictionProfile {
         Stabilized,
         Quadratic,
@@ -126,6 +133,7 @@ mod ffi {
         pub acceleration_tolerance: f32,
         pub max_outer_iterations: u32,
         pub time_integration: TimeIntegration,
+        pub preconditioner: Preconditioner,
 
         pub derivative_test: u32,
     }

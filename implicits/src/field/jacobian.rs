@@ -2219,7 +2219,7 @@ mod tests {
         for pidx in 0..ad_tet_verts.len() {
             for i in 0..3 {
                 ad_tet_verts[pidx][i] = F1::var(ad_tet_verts[pidx][i]);
-                ad_query_surf.update_surface(ad_tet_verts.iter().cloned());
+                ad_query_surf.update_surface(ad_tet_verts.iter().cloned(), true);
 
                 let mut potential = vec![F1::cst(0.0); ad_tri_verts.len()];
                 ad_query_surf.potential(&ad_tri_verts, &mut potential);
@@ -2536,7 +2536,7 @@ mod tests {
 
         let tri_verts = make_test_triangle(1.18032, perturb);
 
-        let mut tet = PlatonicSolidBuilder::build_tetrahedron();
+        let mut tet = PlatonicSolidBuilder::new().build_tetrahedron();
 
         let multiplier_vecs = utils::random_vectors(tet.num_vertices());
         let multipliers_f32: Vec<_> = multiplier_vecs

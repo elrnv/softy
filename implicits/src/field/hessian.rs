@@ -544,7 +544,7 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
-    /// Computes `d/dq J^T b` and returns column-major indexed blocks.
+    /// Computes `d/dq J^T b` where q are sample indices and returns column-major indexed blocks.
     ///
     /// Here `J` is the contact Jacobian and `b` is a vector of constant multipliers.
     /// Returned blocks are column-major.
@@ -608,8 +608,104 @@ impl<T: Real> QueryTopo<T> {
                         )
                         .map(|(i, j, m)| (i, j, m.into_data()))
                     });
-
                 Ok(hess)
+            }
+        }
+    }
+
+    /// Computes `d/dq J^T b` where q are query positions and returns column-major indexed blocks.
+    ///
+    /// Here `J` is the contact Jacobian and `b` is a vector of constant multipliers.
+    /// Returned blocks are column-major.
+    pub fn contact_query_hessian_product_indexed_blocks_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [[T; 3]],
+    ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error> {
+        Ok(apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.contact_query_hessian_product_indexed_blocks_iter_impl(query_points, multipliers, kernel)
+        }, ?))
+    }
+
+    /// Computes `d/dq J^T b` where `q` are query points and returns column-major indexed blocks.
+    ///
+    /// Here `J` is the contact Jacobian and `b` is a vector of constant multipliers.
+    /// Returned blocks are column-major.
+    pub(crate) fn contact_query_hessian_product_indexed_blocks_iter_impl<'a, K: 'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [[T; 3]],
+        kernel: K,
+    ) -> Result<impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a, Error>
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        debug_assert_eq!(
+            self.trivial_neighborhood_seq()
+                .filter(|nbrs| !nbrs.is_empty())
+                .count(),
+            multipliers.len()
+        );
+
+        let neigh_points = self.trivial_neighborhood_seq();
+
+        let ImplicitSurfaceBase {
+            ref samples,
+            ref surface_topo,
+            bg_field_params,
+            sample_type,
+            ..
+        } = *self.base();
+
+        let third = T::one() / T::from(3.0_f64).unwrap();
+
+        match sample_type {
+            SampleType::Vertex => Err(Error::UnsupportedSampleType),
+            SampleType::Face => {
+                // Contraction between multipliers and contact points.
+                // Each of these is a "Hessian" at a particular contact point.
+                Ok(zip!(query_points.iter(), neigh_points)
+                    .enumerate()
+                    .filter(|(_, (_, nbrs))| !nbrs.is_empty())
+                    .zip(multipliers.iter())
+                    .flat_map(move |((query_index, (q, nbr_points)), lambda)| {
+                        let q = Vector3::from(*q);
+                        let view = SamplesView::new(nbr_points, samples);
+                        view.into_iter().flat_map(move |sample| {
+                            let bg: BackgroundField<T, T, K> =
+                                BackgroundField::local(q, view, kernel, bg_field_params, None)
+                                    .unwrap();
+
+                            let weight_sum_inv = bg.weight_sum_inv();
+                            let closest_d = bg.closest_sample_dist();
+                            let grad_phi =
+                                query_jacobian_at(q, view, None, kernel, bg_field_params);
+                            let dw_neigh =
+                                normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
+
+                            let ddpsi = query_hessian_at(q, view, kernel, bg_field_params);
+
+                            IntoIterator::into_iter(surface_topo[sample.index]).map(
+                                move |vtx_idx| {
+                                    // d/dx(ns x grad psi x b) = -[b]_X [n_s]_X ddpsi
+                                    let mtx = query_contact_jacobian_gradient_product_at(
+                                        q,
+                                        sample,
+                                        kernel,
+                                        grad_phi,
+                                        dw_neigh,
+                                        ddpsi,
+                                        weight_sum_inv,
+                                        closest_d,
+                                        Vector3::from(*lambda),
+                                        true,
+                                    );
+                                    (vtx_idx, query_index, (mtx * third).into_data())
+                                },
+                            )
+                        })
+                    }))
             }
         }
     }
@@ -794,6 +890,7 @@ impl<T: Real> QueryTopo<T> {
         let ImplicitSurfaceBase {
             ref samples,
             ref surface_topo,
+            ref surface_vertex_positions,
             sample_type,
             ..
         } = *self.base();
@@ -806,9 +903,22 @@ impl<T: Real> QueryTopo<T> {
                     .filter(|(_, nbrs)| !nbrs.is_empty())
                     .flat_map(move |(query_idx, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
-                        view.into_iter().flat_map(move |sample| {
-                            (0..3).map(move |i| (query_idx, surface_topo[sample.index][i]))
-                        })
+                        let seen =
+                            std::cell::RefCell::new(vec![false; surface_vertex_positions.len()]);
+                        let indices = view
+                            .into_iter()
+                            .flat_map(|sample| {
+                                surface_topo[sample.index].iter().filter_map(|&tri_vtx| {
+                                    if seen.borrow()[tri_vtx] {
+                                        return None;
+                                    } else {
+                                        seen.borrow_mut()[tri_vtx] = true;
+                                    }
+                                    Some((query_idx, tri_vtx))
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        indices.into_iter()
                     });
                 Ok(hess)
             }
@@ -1486,6 +1596,58 @@ where
         })
 }
 
+/// Contact Jacobian derivative with respect to query position.
+///
+/// Returns coulumn major blocks.
+pub(crate) fn query_contact_jacobian_gradient_product_at<'a, T, K: 'a>(
+    q: Vector3<T>,
+    sample: Sample<T>,
+    kernel: K,
+    grad_phi: Vector3<T>,
+    dw_neigh_normalized: Vector3<T>,
+    ddpsi: Matrix3<T>,
+    weight_sum_inv: T,
+    closest_d: T,
+    multiplier: Vector3<T>,
+    transpose: bool,
+) -> Matrix3<T>
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+{
+    let sample_unit_nml = sample.nml.normalized();
+    let nml_dot_grad = sample_unit_nml.dot(grad_phi);
+    let mut u = sample_unit_nml.cross(grad_phi);
+
+    if transpose {
+        // The negative makes rodrigues rotation transpose.
+        u *= -T::one();
+    }
+    let ux = u.skew();
+
+    // Qs (or Qs^T) matrix in the paper.
+    let rot = rodrigues_rotation(ux, nml_dot_grad);
+
+    let kernel = kernel.with_closest_dist(closest_d);
+    let w_normalized = kernel.eval(q, sample.pos) * weight_sum_inv;
+    let dw = kernel.grad(q, sample.pos);
+    let dw_normalized = dw * weight_sum_inv;
+    let dw_normalized_term =
+        (dw_normalized - dw_neigh_normalized * w_normalized) * (rot * multiplier).transpose();
+
+    let rot_jac = rodrigues_rotation_jacobian_product_at(
+        sample_unit_nml,
+        grad_phi,
+        ddpsi.transpose(),
+        Matrix3::zero(),
+        nml_dot_grad,
+        multiplier,
+        transpose,
+    );
+
+    dw_normalized_term + rot_jac * w_normalized
+}
+
 /// Contact Jacobian derivative with respect to the three adjacent vertex positions.
 ///
 /// Returns coulumn major blocks.
@@ -1614,7 +1776,7 @@ where
     dw_normalized_entries.chain(second_term_entries.into_iter())
 }
 
-/// Jacobian of `Qs^T b` for some multiplier `b`.
+/// Jacobian of `Qs^T b` for some multiplier `b` with respect to sample position.
 ///
 /// Returns a column-major matrix.
 pub(crate) fn rodrigues_rotation_jacobian_product_at<T>(
@@ -1840,7 +2002,7 @@ mod tests {
                     //eprintln!("DERIVATIVE WRT vtx {}, component {}", vtx, i);
                     // Set a variable to take the derivative with respect to, using autodiff.
                     ad_query_points[vtx][i] = F1::var(ad_query_points[vtx][i]);
-                    query_surf.update_surface(ad_tri_verts.iter().cloned());
+                    query_surf.update_surface(ad_tri_verts.iter().cloned(), true);
 
                     query_surf.query_jacobian_values(&ad_query_points, &mut jac_values);
                     query_surf
@@ -1912,7 +2074,7 @@ mod tests {
     fn one_tet_query_hessian_test() -> Result<(), Error> {
         let qs: Vec<_> = (0..4).map(|i| [0.0, -0.5 + 0.25 * i as f64, 0.0]).collect();
 
-        let trimesh = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
+        let trimesh = TriMesh::from(PlatonicSolidBuilder::new().build_tetrahedron());
 
         for i in 9..10 {
             let radius_multiplier = 1.0 + 0.5 * (i as f64);
@@ -2021,7 +2183,7 @@ mod tests {
                 for i in 0..3 {
                     // Set a variable to take the derivative with respect to, using autodiff.
                     ad_tri_verts[vtx][i] = F1::var(ad_tri_verts[vtx][i]);
-                    query_surf.update_surface(ad_tri_verts.iter().cloned());
+                    query_surf.update_surface(ad_tri_verts.iter().cloned(), true);
 
                     query_surf.surface_jacobian_values(&ad_query_points, &mut jac_values);
                     query_surf.surface_jacobian_indices(&mut jac_rows, &mut jac_cols);
@@ -2082,7 +2244,7 @@ mod tests {
     fn one_tet_hessian_test() -> Result<(), Error> {
         let qs: Vec<_> = (0..4).map(|i| [0.0, -0.5 + 0.25 * i as f64, 0.0]).collect();
 
-        let trimesh = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
+        let trimesh = TriMesh::from(PlatonicSolidBuilder::new().build_tetrahedron());
 
         for i in 1..10 {
             let radius_multiplier = 1.0 + 0.5 * (i as f64);
@@ -2171,7 +2333,6 @@ mod tests {
 
         // Compute the complete Hessian product.
         let mut jac_values = vec![F1::cst(0.0); num_jac_entries];
-        let mut jac_values2 = vec![F1::cst(0.0); num_jac_entries];
 
         let mut hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
         let mut ad_hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
@@ -2200,7 +2361,7 @@ mod tests {
                     for i in 0..3 {
                         // Set a variable to take the derivative with respect to, using autodiff.
                         ad_tri_verts[vtx][i] = F1::var(ad_tri_verts[vtx][i]);
-                        query_surf.update_surface(ad_tri_verts.iter().cloned());
+                        query_surf.update_surface(ad_tri_verts.iter().cloned(), true);
 
                         query_surf.contact_jacobian_values(&ad_query_points, &mut jac_values);
                         let (jac_rows, jac_cols): (Vec<_>, Vec<_>) =
@@ -2277,7 +2438,7 @@ mod tests {
     fn one_tet_full_contact_hessian_test() -> Result<(), Error> {
         let qs: Vec<_> = (0..4).map(|i| [0.0, -0.5 + 0.25 * i as f64, 0.0]).collect();
 
-        let trimesh = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
+        let trimesh = TriMesh::from(PlatonicSolidBuilder::new().build_tetrahedron());
 
         for i in 1..10 {
             let radius_multiplier = 1.0 + 0.5 * (i as f64);
@@ -2303,7 +2464,7 @@ mod tests {
         bg_field_params: BackgroundFieldParams,
         perturb: &mut P,
     ) {
-        let tet = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
+        let tet = TriMesh::from(PlatonicSolidBuilder::new().build_tetrahedron());
         let qs: Vec<_> = (0..4)
             .map(|i| Vector3::new([0.0, -0.5 + 0.25 * i as f64, 0.0]))
             .collect();
@@ -2601,7 +2762,7 @@ mod tests {
         bg_field_params: BackgroundFieldParams,
         perturb: &mut P,
     ) {
-        let tet = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
+        let tet = TriMesh::from(PlatonicSolidBuilder::new().build_tetrahedron());
         let qs: Vec<_> = (0..4)
             .map(|i| Vector3::new([0.1, -0.5 + 0.25 * i as f64, 0.0]))
             .collect();
@@ -2653,8 +2814,6 @@ mod tests {
         let tri_faces = mesh.indices.as_slice();
         let num_verts = tri_verts.len();
 
-        let dual_topo = ImplicitSurfaceBuilder::compute_dual_topo(num_verts, &tri_faces);
-
         let samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
 
         let neighbors: Vec<_> = samples
@@ -2685,7 +2844,6 @@ mod tests {
                 kernel,
                 &tri_verts,
                 tri_faces,
-                dual_topo.as_slice(),
                 bg_field_params,
                 multiplier,
             )
@@ -3027,7 +3185,9 @@ mod tests {
         build_mesh_and_run_test(make_three_test_triangles(0.0, &mut perturb));
 
         // Regular tetrahedron test
-        run_tester_on_mesh(TriMesh::from(PlatonicSolidBuilder::build_tetrahedron()));
+        run_tester_on_mesh(TriMesh::from(
+            PlatonicSolidBuilder::new().build_tetrahedron(),
+        ));
     }
 
     /// Test the second order derivatives of our normal computation method for face normals.

@@ -793,7 +793,9 @@ mod tests {
         use crate::kernel::LocalApproximate;
         use crate::samples::Samples;
         use autodiff::F1;
-        let tet = PlatonicSolidBuilder::build_tetrahedron().surface_trimesh();
+        let tet = PlatonicSolidBuilder::new()
+            .build_tetrahedron::<f64>()
+            .surface_trimesh();
         let pos: Vec<[F1; 3]> = tet
             .vertex_position_iter()
             .map(|&p| Vector3::from(p).mapd(F1::cst).into())
@@ -824,7 +826,7 @@ mod tests {
     #[test]
     fn constant_unweighted_bg() -> Result<(), Error> {
         // Create a surface sample mesh.
-        let octahedron_trimesh = PlatonicSolidBuilder::build_octahedron();
+        let octahedron_trimesh = PlatonicSolidBuilder::new().build_octahedron();
         let mut sphere = geo::mesh::PolyMesh::from(octahedron_trimesh);
 
         // Translate the mesh up
@@ -866,7 +868,7 @@ mod tests {
     #[test]
     fn constant_bg() -> Result<(), Error> {
         // Create a surface sample mesh.
-        let octahedron_trimesh = PlatonicSolidBuilder::build_octahedron();
+        let octahedron_trimesh = PlatonicSolidBuilder::new().build_octahedron();
         let mut sphere = geo::mesh::PolyMesh::from(octahedron_trimesh);
 
         // Translate the mesh up
@@ -1154,7 +1156,7 @@ mod tests {
 
     #[test]
     fn octahedron_distance_based_bg() -> Result<(), Error> {
-        let mesh = PlatonicSolidBuilder::build_octahedron();
+        let mesh = PlatonicSolidBuilder::new().build_octahedron();
         let grid = make_grid(5, 5);
 
         let query_points: Vec<_> = grid

@@ -200,11 +200,12 @@ pub(crate) fn make_grid(rows: usize, cols: usize) -> PolyMesh<f64> {
     use geo::mesh::topology::*;
 
     let mut mesh = GridBuilder {
-        rows,
-        cols,
+        rows: rows,
+        cols: cols,
         orientation: AxisPlaneOrientation::XY,
     }
     .build();
+
     mesh.insert_attrib_with_default::<_, VertexIndex>("potential", 0.0f32)
         .unwrap();
     mesh
@@ -226,7 +227,7 @@ mod tests {
     fn vertex_samples_test() -> Result<(), Error> {
         let mut grid = make_grid(22, 22);
 
-        let trimesh = PlatonicSolidBuilder::build_octahedron();
+        let trimesh = PlatonicSolidBuilder::new().radius(0.5).build_octahedron();
 
         let mut sphere = PolyMesh::from(trimesh);
 
@@ -267,7 +268,7 @@ mod tests {
     fn face_samples_test() -> Result<(), Error> {
         let mut grid = make_grid(22, 22);
 
-        let trimesh = PlatonicSolidBuilder::build_octahedron();
+        let trimesh = PlatonicSolidBuilder::new().radius(0.5).build_octahedron();
 
         let mut sphere = PolyMesh::from(trimesh);
 
@@ -289,11 +290,11 @@ mod tests {
             || false,
         )?;
 
-        //geo::io::save_polymesh(
-        //    &grid,
-        //    &PathBuf::from("out/octahedron_face_grid_expected.vtk"),
-        //)
-        //.unwrap();
+        // geo::io::save_polymesh(
+        //     &grid,
+        //     &PathBuf::from("out/octahedron_face_grid_expected.vtk"),
+        // )
+        // .unwrap();
 
         let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
         let expected_grid: PolyMesh<f64> =
@@ -354,7 +355,7 @@ mod tests {
     fn hrbf_vertex_test() -> Result<(), Error> {
         let mut grid = make_grid(22, 22);
 
-        let trimesh = PlatonicSolidBuilder::build_octahedron();
+        let trimesh = PlatonicSolidBuilder::new().radius(0.5).build_octahedron();
 
         let mut sphere = PolyMesh::from(trimesh);
 
@@ -396,7 +397,7 @@ mod tests {
 
         let grid = make_grid(22, 22);
 
-        let trimesh = PlatonicSolidBuilder::build_octahedron();
+        let trimesh = PlatonicSolidBuilder::new().radius(0.5).build_octahedron();
 
         let mut builder = ImplicitSurfaceBuilder::new();
         builder
@@ -444,7 +445,7 @@ mod tests {
             .map(|&p| Vector3::new(p).mapd(|x| F1::cst(x)).into())
             .collect();
 
-        let trimesh = PlatonicSolidBuilder::build_octahedron();
+        let trimesh = PlatonicSolidBuilder::new().build_octahedron();
 
         let implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {
@@ -491,7 +492,7 @@ mod tests {
                     })
                     .collect();
 
-                query_surf.update_surface(verts.into_iter());
+                query_surf.update_surface(verts.into_iter(), true);
 
                 let mut potential: Vec<F1> = vec![F1::cst(0); grid.num_vertices()];
 
@@ -531,7 +532,7 @@ mod tests {
             .map(|&p| Vector3::new(p).mapd(|x| F1::cst(x)).into())
             .collect();
 
-        let trimesh = PlatonicSolidBuilder::build_octahedron();
+        let trimesh = PlatonicSolidBuilder::new().build_octahedron();
 
         let implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {
@@ -622,7 +623,7 @@ mod tests {
             .map(|&p| Vector3::new(p).mapd(|x| F1::cst(x)).into())
             .collect();
 
-        let trimesh = PlatonicSolidBuilder::build_octahedron();
+        let trimesh = PlatonicSolidBuilder::new().build_octahedron();
 
         let implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {

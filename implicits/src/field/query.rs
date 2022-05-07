@@ -1041,7 +1041,7 @@ mod tests {
                 inner_divs: 500,
                 ..TorusBuilder::default()
             }
-            .build(),
+            .build_polymesh(),
         );
 
         let implicit_surface = ImplicitSurfaceBuilder::new()

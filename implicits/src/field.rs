@@ -1396,7 +1396,7 @@ where
 #[cfg(test)]
 pub(crate) fn make_tet() -> (Vec<[f64; 3]>, Vec<[usize; 3]>) {
     use geo::mesh::{builder, TriMesh};
-    let tet = builder::PlatonicSolidBuilder::build_tetrahedron();
+    let tet = builder::PlatonicSolidBuilder::new().build_tetrahedron();
     let TriMesh {
         vertex_positions,
         indices,
@@ -1436,7 +1436,7 @@ mod tests {
     // surface.
     fn make_octahedron_and_grid_local(reverse: bool) -> Result<(MLS, PolyMesh<f64>), Error> {
         // Create a surface sample mesh.
-        let octahedron_trimesh = PlatonicSolidBuilder::build_octahedron();
+        let octahedron_trimesh = PlatonicSolidBuilder::new().build_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
         if reverse {
             sphere.reverse();
@@ -1480,7 +1480,7 @@ mod tests {
         radius_multiplier: f64,
     ) -> Result<(MLS, PolyMesh<f64>), Error> {
         // Create a surface sample mesh.
-        let octahedron_trimesh = PlatonicSolidBuilder::build_octahedron();
+        let octahedron_trimesh = PlatonicSolidBuilder::new().build_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
         if reverse {
             sphere.reverse();

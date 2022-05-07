@@ -1,0 +1,21 @@
+SimParams(
+    gravity: (0.0, -9.81, 0.0),
+    time_step: None,
+    //residual_tolerance: Some(1e-8),
+    acceleration_tolerance: Some(1e-6),
+    velocity_tolerance: Some(1e-10),
+    velocity_clear_frequency: 0,
+    max_iterations: 100,
+    //linsolve: Direct,
+    linsolve: Iterative(
+      tolerance: 0.1,
+      max_iterations: 100,
+    ),
+    line_search: BackTracking(c: 1e-4, rho: 0.9),
+    derivative_test: 3,
+    friction_tolerance: 1e-5,
+    contact_tolerance: 1e-5,
+    contact_iterations: 5,
+    time_integration: BE,
+    preconditioner: ApproximateJacobi
+)

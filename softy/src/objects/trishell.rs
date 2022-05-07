@@ -12,6 +12,7 @@ use crate::energy_models::elasticity::*;
 use crate::energy_models::gravity::*;
 use crate::energy_models::inertia::*;
 use crate::fem::nl::state::VertexType;
+use crate::fem::ref_tri;
 use crate::objects::*;
 use crate::Mesh;
 use crate::Real;
@@ -337,7 +338,7 @@ pub struct DihedralElements {
     ///
     /// This is different than triangles in `TriangleElements` because dihedrals
     /// can have a face that is completely fixed, which means that there may be
-    /// elements here that are not in `TriangleElements`.  We need this vectors
+    /// elements here that are not in `TriangleElements`.  We need this vector
     /// since dihedrals are defined by face topology, not vertex topology. This
     /// allows the same dihedral be represented by different vertex topologies.
     pub triangles: Vec<[usize; 3]>,

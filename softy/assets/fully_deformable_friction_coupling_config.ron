@@ -8,9 +8,10 @@
             acceleration_tolerance: Some(0.001),
             velocity_tolerance: None,
             max_iterations: 200,
+            //linsolve: Direct,
             linsolve: Iterative(
                 tolerance: 0.1,
-                max_iterations: 11,
+                max_iterations: 100,
             ),
             line_search: AssistedBackTracking(
                 c: 0.0001,
@@ -18,10 +19,10 @@
             ),
             derivative_test: 3,
             friction_tolerance: 0.001,
-            contact_tolerance: 0.001,
+            contact_tolerance: 0.00001,
             contact_iterations: 5,
-            time_integration: SDIRK2,
-            preconditioner: ApproximateJacobi,
+            time_integration: BE,
+            preconditioner: None,
             log_file: None,
         ),
         materials: [

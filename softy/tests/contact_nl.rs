@@ -3,11 +3,14 @@ mod test_utils;
 use approx::*;
 use geo::algo::{Merge, TypedMesh};
 use geo::attrib::Attrib;
+use geo::builder::{AxisPlaneOrientation, GridBuilder};
 use geo::mesh::builder::PlatonicSolidBuilder;
 use geo::mesh::topology::*;
 use geo::mesh::VertexPositions;
+use geo::ops::{Rotate, Scale, Translate};
 use softy::fem::nl::{SimParams, SolverBuilder};
 use softy::nl_fem::Status::Success;
+use softy::scene::Scene;
 use softy::*;
 use std::path::PathBuf;
 use test_utils::*;
@@ -189,7 +192,7 @@ fn single_tri_push() -> Result<(), Error> {
 
     let meshes = trimesh.clone().split_by_face_partition(&vec![0, 1], 2);
 
-    dbg!(meshes.0[0].vertex_positions());
+    // dbg!(meshes.0[0].vertex_positions());
 
     compute_distance_potential(
         &meshes.0[1],
@@ -207,83 +210,83 @@ fn single_tri_push() -> Result<(), Error> {
         tolerance: 0.001,
     };
 
-    let params = SimParams {
-        derivative_test: 2,
-        ..static_nl_params()
-    };
+    for config_idx in 0..num_static_configs() {
+        let params = static_nl_params(config_idx);
+        let mut solver = SolverBuilder::new(params.clone())
+            .set_mesh(Mesh::from(trimesh.clone()))
+            .set_materials(vec![medium_shell_material().with_id(1).into()])
+            .add_frictional_contact(
+                FrictionalContactParams {
+                    contact_type: ContactType::Point,
+                    kernel,
+                    contact_offset: 0.0,
+                    use_fixed: true,
+                    friction_params: None,
+                },
+                (1, 0),
+            )
+            .build::<f64>()?;
 
-    let mut solver = SolverBuilder::new(params.clone())
-        .set_mesh(Mesh::from(trimesh.clone()))
-        .set_materials(vec![medium_shell_material().with_id(1).into()])
-        .add_frictional_contact(
-            FrictionalContactParams {
-                contact_type: ContactType::Point,
-                kernel,
-                contact_offset: 0.0,
-                use_fixed: true,
-                friction_params: None,
-            },
-            (1, 0),
-        )
-        .build::<f64>()?;
+        let step_result = solver.step()?;
+        let solve_result = step_result.first_solve_result();
+        assert_eq!(solve_result.status, Success);
 
-    let solve_result = solver.step()?;
-    assert_eq!(solve_result.status, Success);
+        let mesh = solver.mesh();
 
-    let mesh = solver.mesh();
+        // Expect no push since the triangle is outside the surface.
+        assert_relative_eq!(
+            mesh.vertex_positions[0][2],
+            tri_verts[0][2],
+            max_relative = 1e-5,
+            epsilon = 1e-6
+        );
 
-    // Expect no push since the triangle is outside the surface.
-    assert_relative_eq!(
-        mesh.vertex_positions[0][2],
-        tri_verts[0][2],
-        max_relative = 1e-5,
-        epsilon = 1e-6
-    );
+        // The triangle should be a bit lower due to gravity
+        assert!(mesh.vertex_positions[0][1] < -0.1);
 
-    // The triangle should be a bit lower due to gravity
-    assert!(mesh.vertex_positions[0][1] < -0.1);
+        // Push the static triangle vertex into the hanging triangle.
+        let offset = 0.0015;
+        let mut all_verts: Vec<_> = tri_verts.clone();
+        all_verts[3][2] -= offset;
 
-    // Push the static triangle vertex into the hanging triangle.
-    let offset = 0.0015;
-    let mut all_verts: Vec<_> = tri_verts.clone();
-    all_verts[3][2] -= offset;
+        let pts = PointCloud::new(all_verts);
+        assert!(solver.update_vertices(&pts).is_ok());
+        let step_result = solver.step()?;
+        let solve_result = step_result.first_solve_result();
+        assert_eq!(solve_result.status, Success);
+        assert!(solve_result.iterations < params.max_iterations);
 
-    let pts = PointCloud::new(all_verts);
-    assert!(solver.update_vertices(&pts).is_ok());
-    let solve_result = solver.step()?;
-    assert_eq!(solve_result.status, Success);
-    assert!(solve_result.iterations < params.max_iterations);
+        let split_into_parts = |result_mesh: Mesh| {
+            let typed_meshes = result_mesh.split_into_typed_meshes();
+            typed_meshes
+                .iter()
+                .find_map(|mesh| {
+                    if let TypedMesh::Tri(mesh) = mesh {
+                        let mut partition = mesh
+                            .clone()
+                            .split_by_face_partition(&vec![0, 1], 2)
+                            .0
+                            .into_iter();
+                        Some((partition.next().unwrap(), partition.next().unwrap()))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+        let (obj, coll) = split_into_parts(solver.mesh());
 
-    let split_into_parts = |result_mesh: Mesh| {
-        let typed_meshes = result_mesh.split_into_typed_meshes();
-        typed_meshes
-            .iter()
-            .find_map(|mesh| {
-                if let TypedMesh::Tri(mesh) = mesh {
-                    let mut partition = mesh
-                        .clone()
-                        .split_by_face_partition(&vec![0, 1], 2)
-                        .0
-                        .into_iter();
-                    Some((partition.next().unwrap(), partition.next().unwrap()))
-                } else {
-                    None
-                }
-            })
-            .unwrap()
-    };
-    let (obj, coll) = split_into_parts(solver.mesh());
+        // dbg!(obj.vertex_positions());
+        let constraint = compute_distance_potential(&coll, &obj, kernel, false);
+        assert!(
+            constraint.iter().all(|&x| x >= -params.contact_tolerance),
+            "Distance potential still negative after push: {:?} ",
+            &constraint
+        );
 
-    dbg!(obj.vertex_positions());
-    let constraint = compute_distance_potential(&coll, &obj, kernel, false);
-    assert!(
-        constraint.iter().all(|&x| x >= -params.contact_tolerance),
-        "Distance potential still negative after push: {:?} ",
-        &constraint
-    );
-
-    // Check that the free vertex moved away
-    assert!(obj.vertex_positions[0][2] < -offset);
+        // Check that the free vertex moved away
+        assert!(obj.vertex_positions[0][2] < -offset);
+    }
 
     Ok(())
 }
@@ -304,7 +307,7 @@ fn tet_push() -> Result<(), Error> {
     trimesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 1])?;
     trimesh.insert_attrib_data::<ObjectIdType, CellIndex>(OBJECT_ID_ATTRIB, vec![0])?;
 
-    let orig_tetmesh = PlatonicSolidBuilder::build_tetrahedron();
+    let orig_tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
     let mut mesh = Mesh::from(orig_tetmesh.clone());
     mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;
     mesh.insert_attrib_data::<MaterialIdType, CellIndex>(MATERIAL_ID_ATTRIB, vec![1])?;
@@ -320,101 +323,103 @@ fn tet_push() -> Result<(), Error> {
 
     compute_distance_potential_tetmesh(&orig_trimesh, &orig_tetmesh, kernel);
 
-    let params = SimParams {
-        gravity: [0.0f32; 3],
-        derivative_test: 2,
-        //time_step: Some(1.2),
-        ..static_nl_params()
-    };
+    for config_idx in 0..num_static_configs() {
+        let params = SimParams {
+            gravity: [0.0f32; 3],
+            ..static_nl_params(config_idx)
+        };
 
-    let mut solver = SolverBuilder::new(params.clone())
-        .set_mesh(mesh.clone())
-        .set_materials(vec![medium_solid_material().with_id(1).into()])
-        .add_frictional_contact(
-            FrictionalContactParams {
-                contact_type: ContactType::Point,
-                kernel,
-                contact_offset: 0.0,
-                use_fixed: true,
-                friction_params: None,
-            },
-            (1, 0),
-        )
-        .build::<f64>()?;
+        let mut solver = SolverBuilder::new(params.clone())
+            .set_mesh(mesh.clone())
+            .set_materials(vec![medium_solid_material().with_id(1).into()])
+            .add_frictional_contact(
+                FrictionalContactParams {
+                    contact_type: ContactType::Point,
+                    kernel,
+                    contact_offset: 0.0,
+                    use_fixed: true,
+                    friction_params: None,
+                },
+                (1, 0),
+            )
+            .build::<f64>()?;
 
-    let solve_result = solver.step()?;
-    assert_eq!(solve_result.iterations, 1); // should be no more than one outer iteration
+        let step_result = solver.step()?;
+        let solve_result = step_result.first_solve_result();
+        assert_eq!(solve_result.iterations, 1); // should be no more than one outer iteration
 
-    let split_into_parts = |result_mesh: Mesh| {
-        let typed_meshes = result_mesh.split_into_typed_meshes();
-        let tetmesh = typed_meshes
-            .iter()
-            .find_map(|mesh| {
-                if let TypedMesh::Tet(mesh) = mesh {
-                    Some(mesh.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap();
-        let trimesh = typed_meshes
-            .iter()
-            .find_map(|mesh| {
-                if let TypedMesh::Tri(mesh) = mesh {
-                    Some(mesh.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap();
-        (tetmesh, trimesh)
-    };
+        let split_into_parts = |result_mesh: Mesh| {
+            let typed_meshes = result_mesh.split_into_typed_meshes();
+            let tetmesh = typed_meshes
+                .iter()
+                .find_map(|mesh| {
+                    if let TypedMesh::Tet(mesh) = mesh {
+                        Some(mesh.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let trimesh = typed_meshes
+                .iter()
+                .find_map(|mesh| {
+                    if let TypedMesh::Tri(mesh) = mesh {
+                        Some(mesh.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            (tetmesh, trimesh)
+        };
 
-    let (tetmesh, trimesh) = split_into_parts(solver.mesh());
+        let (tetmesh, trimesh) = split_into_parts(solver.mesh());
 
-    // Expect no push since the triangle is outside the surface.
-    for (pos, exp_pos) in solver
-        .mesh()
-        .vertex_position_iter()
-        .zip(mesh.vertex_positions().iter())
-    {
-        for i in 0..3 {
-            assert_relative_eq!(pos[i], exp_pos[i], max_relative = 1e-5, epsilon = 1e-6);
+        // Expect no push since the triangle is outside the surface.
+        for (pos, exp_pos) in solver
+            .mesh()
+            .vertex_position_iter()
+            .zip(mesh.vertex_positions().iter())
+        {
+            for i in 0..3 {
+                assert_relative_eq!(pos[i], exp_pos[i], max_relative = 1e-5, epsilon = 1e-6);
+            }
         }
-    }
 
-    // Verify constraint, should be positive before push
-    let constraint = compute_distance_potential_tetmesh(&trimesh, &tetmesh, kernel);
-    assert!(constraint.iter().all(|&x| x >= 0.0f32));
+        // Verify constraint, should be positive before push
+        let constraint = compute_distance_potential_tetmesh(&trimesh, &tetmesh, kernel);
+        assert!(constraint.iter().all(|&x| x >= 0.0f32));
 
-    // Simulate push
-    let offset = 0.34;
-    let all_verts: Vec<_> = orig_tetmesh
-        .vertex_position_iter()
-        .cloned()
-        .chain(tri_verts.iter().map(|&[x, y, z]| [x, y - offset, z]))
-        .collect();
-    let pts = PointCloud::new(all_verts);
-    assert!(solver.update_vertices(&pts).is_ok());
-    let solve_result = solver.step()?;
-    assert!(solve_result.iterations <= params.max_iterations);
+        // Simulate push
+        let offset = 0.34;
+        let all_verts: Vec<_> = orig_tetmesh
+            .vertex_position_iter()
+            .cloned()
+            .chain(tri_verts.iter().map(|&[x, y, z]| [x, y - offset, z]))
+            .collect();
+        let pts = PointCloud::new(all_verts);
+        assert!(solver.update_vertices(&pts).is_ok());
+        let step_result = solver.step()?;
+        let solve_result = step_result.first_solve_result();
+        assert!(solve_result.iterations <= params.max_iterations);
 
-    let mesh = solver.mesh();
-    let (tetmesh, trimesh) = split_into_parts(mesh.clone());
+        let mesh = solver.mesh();
+        let (tetmesh, trimesh) = split_into_parts(mesh.clone());
 
-    // Verify constraint, should be positive after push
-    let constraint = compute_distance_potential_tetmesh(&trimesh, &tetmesh, kernel);
-    assert!(
-        constraint.iter().all(|&x| x >= -params.contact_tolerance),
-        "Distance potential still negative after push: {:?} ",
-        &constraint
-    );
+        // Verify constraint, should be positive after push
+        let constraint = compute_distance_potential_tetmesh(&trimesh, &tetmesh, kernel);
+        assert!(
+            constraint.iter().all(|&x| x >= -params.contact_tolerance),
+            "Distance potential still negative after push: {:?} ",
+            &constraint
+        );
 
-    // Expect only the top vertex to be pushed down.
-    let pos = mesh.vertex_position(0);
-    let exp_pos = [0.0, 0.629, 0.0];
-    for i in 0..3 {
-        assert_relative_eq!(pos[i], exp_pos[i], epsilon = 1e-3);
+        // Expect only the top vertex to be pushed down.
+        let pos = mesh.vertex_position(0);
+        let exp_pos = [0.0, 0.629, 0.0];
+        for i in 0..3 {
+            assert_relative_eq!(pos[i], exp_pos[i], epsilon = 1e-3);
+        }
     }
 
     Ok(())
@@ -435,41 +440,44 @@ fn ball_tri_push_tester(
         vec![1; tetmesh.num_cells()],
     )?;
 
-    let params = static_nl_params();
+    for config_idx in 0..num_static_configs() {
+        let params = static_nl_params(config_idx);
 
-    // If material is omitted it is assumed to be material 0 which is a completely fixed/animated mesh.
-    let mut polymesh = geo::io::load_polymesh(&PathBuf::from("assets/tri.vtk"))?;
-    polymesh.insert_attrib_data::<MaterialIdType, FaceIndex>(
-        MATERIAL_ID_ATTRIB,
-        vec![0; polymesh.num_faces()],
-    )?;
-    polymesh.insert_attrib_data::<ObjectIdType, FaceIndex>(
-        OBJECT_ID_ATTRIB,
-        vec![0; polymesh.num_faces()],
-    )?;
-    polymesh.insert_attrib_data::<FixedIntType, VertexIndex>(
-        FIXED_ATTRIB,
-        vec![1; polymesh.num_vertices()],
-    )?;
-    let mut mesh = Mesh::from(TriMesh::from(polymesh));
-    mesh.merge(Mesh::from(tetmesh));
+        // If material is omitted it is assumed to be material 0 which is a completely fixed/animated mesh.
+        let mut polymesh = geo::io::load_polymesh(&PathBuf::from("assets/tri.vtk"))?;
+        polymesh.insert_attrib_data::<MaterialIdType, FaceIndex>(
+            MATERIAL_ID_ATTRIB,
+            vec![0; polymesh.num_faces()],
+        )?;
+        polymesh.insert_attrib_data::<ObjectIdType, FaceIndex>(
+            OBJECT_ID_ATTRIB,
+            vec![0; polymesh.num_faces()],
+        )?;
+        polymesh.insert_attrib_data::<FixedIntType, VertexIndex>(
+            FIXED_ATTRIB,
+            vec![1; polymesh.num_vertices()],
+        )?;
+        let mut mesh = Mesh::from(TriMesh::from(polymesh));
+        mesh.merge(Mesh::from(tetmesh.clone()));
 
-    let mut solver = SolverBuilder::new(params.clone())
-        .set_mesh(mesh)
-        .set_materials(vec![
-            FixedMaterial::new(0).into(),
-            material.with_id(1).into(),
-        ])
-        .add_frictional_contact(fc_params, (0, 1))
-        .build::<f64>()?;
+        let mut solver = SolverBuilder::new(params.clone())
+            .set_mesh(mesh)
+            .set_materials(vec![
+                FixedMaterial::new(0).into(),
+                material.with_id(1).into(),
+            ])
+            .add_frictional_contact(fc_params, (0, 1))
+            .build::<f64>()?;
 
-    let res = solver.step()?;
+        let res = solver.step()?;
+        let solve_result = &res.stage_solves[0].solve_results[0].1;
 
-    //println!("res = {:?}", res);
-    assert!(
-        res.iterations <= params.max_iterations,
-        "Exceeded max outer iterations."
-    );
+        //println!("res = {:?}", res);
+        assert!(
+            solve_result.iterations <= params.max_iterations,
+            "Exceeded max outer iterations."
+        );
+    }
     Ok(())
 }
 
@@ -488,6 +496,81 @@ fn ball_tri_push_plain() -> Result<(), Error> {
     };
 
     ball_tri_push_tester(material, fc_params)
+}
+
+/// A regular tetrahedron sliding on a flat surface.
+#[test]
+fn sliding_tet_on_points() -> Result<(), Error> {
+    let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
+    let fc_params = FrictionalContactParams {
+        contact_type: ContactType::Point,
+        kernel: KernelType::Approximate {
+            radius_multiplier: 2.5,
+            tolerance: 0.001,
+        },
+        contact_offset: 0.0,
+        use_fixed: true,
+        friction_params: None,
+    };
+
+    let mut tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
+    let init_vel = vec![[0.0, 0.0, 0.0]; tetmesh.num_vertices()];
+    tetmesh.insert_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, init_vel)?;
+
+    let mut surface = GridBuilder {
+        rows: 5,
+        cols: 5,
+        orientation: AxisPlaneOrientation::ZX,
+    }
+    .build();
+    surface.scale([2.0, 1.0, 2.0]);
+    surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
+    surface.translate([0.0, -0.7, 0.0]);
+
+    // geo::io::save_polymesh(&surface, "./out/ramp.vtk");
+    // geo::io::save_tetmesh(&tetmesh, "./out/mesh.vtk");
+
+    contact_tester(material, fc_params, tetmesh, surface, true, 10)
+}
+
+/// A regular tetrahedron sliding on a flat surface.
+#[test]
+fn sliding_tet_on_implicit() -> Result<(), Error> {
+    let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
+
+    let fc_params = FrictionalContactParams {
+        contact_type: ContactType::Point,
+        kernel: KernelType::Approximate {
+            radius_multiplier: 1.5,
+            tolerance: 0.001,
+        },
+        contact_offset: 0.0,
+        use_fixed: true,
+        friction_params: None,
+    };
+
+    let tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
+    let mut surface = GridBuilder {
+        rows: 1,
+        cols: 1,
+        orientation: AxisPlaneOrientation::ZX,
+    }
+    .build();
+    surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
+    surface.translate([0.0, -0.5, 0.0]);
+
+    // geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
+
+    contact_tester(material, fc_params, tetmesh, surface, false, 50)
+}
+
+// A test with both surfaces deformable.
+#[test]
+fn fully_deformable_contact() -> Result<(), Error> {
+    init_logger();
+    let scene = Scene::load_from_ron("./assets/fully_deformable_contact_config.ron")?;
+    scene.run(3)?;
+    Ok(())
 }
 
 //#[test]

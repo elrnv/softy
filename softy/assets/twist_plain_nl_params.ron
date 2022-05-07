@@ -10,6 +10,7 @@ SimParams(
     jacobian_test: true,
     friction_tolerance: 1e-5,
     contact_tolerance: 1e-5,
-    time_integration: BE
+    time_integration: BE,
+    preconditioner: ApproximateJacobi
 )
 

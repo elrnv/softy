@@ -171,6 +171,9 @@ pub trait EnergyHessian<T: Real>: EnergyHessianTopology {
     /// This derivative is with respect to `x`.
     fn energy_hessian_values(&self, x: &[T], dx: &[T], scale: T, values: &mut [T], dqdv: T);
 
+    /// Diagonal of the energy hessian.
+    fn add_energy_hessian_diagonal(&self, x: &[T], dx: &[T], scale: T, diag: &mut [T], dqdv: T);
+
     /*
      * Below are convenience functions for auxiliary applications. Users should provide custom
      * implementations if performance is important.

@@ -912,9 +912,9 @@ mod tests {
             Ok(())
         };
 
-        let trimesh = PlatonicSolidBuilder::build_octahedron();
+        let trimesh = PlatonicSolidBuilder::new().build_octahedron();
         run(trimesh)?;
-        let trimesh = PlatonicSolidBuilder::build_icosahedron();
+        let trimesh = PlatonicSolidBuilder::new().build_icosahedron();
         run(trimesh)
     }
 
@@ -922,7 +922,7 @@ mod tests {
     // an iterator function like `from_tangent_space`.
     #[test]
     fn contact_basis_matrix_test() {
-        let trimesh = PlatonicSolidBuilder::build_octahedron();
+        let trimesh = PlatonicSolidBuilder::new().build_octahedron();
         let mut basis = ContactBasis::new();
         contact_basis_from_trimesh(&trimesh, &mut basis);
 

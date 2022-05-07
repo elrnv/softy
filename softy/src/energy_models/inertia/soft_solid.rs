@@ -400,6 +400,39 @@ impl<T: Real> EnergyHessian<T> for TetSolidInertia<'_> {
                 }
             });
     }
+
+    #[allow(non_snake_case)]
+    fn add_energy_hessian_diagonal(
+        &self,
+        _v0: &[T],
+        _v1: &[T],
+        scale: T,
+        diag: &mut [T],
+        _dqdv: T,
+    ) {
+        let tet_elems = &self.0;
+        // The momentum hessian is a diagonal matrix.
+        tet_elems
+            .tets
+            .iter()
+            .zip(
+                tet_elems
+                    .ref_volume
+                    .iter()
+                    .zip(tet_elems.density.iter().map(|&x| f64::from(x))),
+            )
+            .for_each(|(tet, (&vol, density))| {
+                for &vi in tet.iter() {
+                    if vi < diag.len() {
+                        // vertex index
+                        for j in 0..3 {
+                            // vector component
+                            diag[3 * vi + j] += T::from(0.25 * vol * density).unwrap() * scale;
+                        }
+                    }
+                }
+            });
+    }
 }
 
 impl<T: Real> EnergyHessianProduct<T> for TetSolidInertia<'_> {

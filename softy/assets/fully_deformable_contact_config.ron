@@ -2,13 +2,17 @@
     config: (
         sim_params: (
             gravity: (0.0, -9.81, 0.0),
-            time_step: Some(0.00005),
+            time_step: Some(0.0001),
             velocity_clear_frequency: 0.0,
             residual_tolerance: None,
             acceleration_tolerance: Some(0.001),
             velocity_tolerance: None,
             max_iterations: 200,
-            linsolve: Direct,
+            //linsolve: Direct,
+            linsolve: Iterative(
+                tolerance: 0.1,
+                max_iterations: 11,
+            ),
             line_search: AssistedBackTracking(
                 c: 0.0001,
                 rho: 0.9,
@@ -18,7 +22,7 @@
             contact_tolerance: 0.001,
             contact_iterations: 5,
             time_integration: BE,
-            preconditioner: ApproximateJacobi,
+            preconditioner: None,
             log_file: None,
         ),
         materials: [

@@ -1,7 +1,7 @@
 use num_traits::FromPrimitive;
 use unroll::unroll_for_loops;
 
-use tensr::{Chunked3, IntoData, Matrix2x3, Matrix3, Vector3};
+use tensr::{AsData, Chunked3, IntoData, IntoTensor, Matrix2x3, Matrix3, Vector3};
 
 use crate::energy::*;
 use crate::matrix::*;
@@ -150,6 +150,29 @@ impl<T: Real> EnergyHessian<T> for RigidShellInertia {
         values[3..].copy_from_slice(
             &(self.inertia.lower_triangular_vec().cast::<T>() * scale).into_data()[..],
         );
+    }
+    fn add_energy_hessian_diagonal(
+        &self,
+        _v0: &[T],
+        _v1: &[T],
+        scale: T,
+        diag: &mut [T],
+        _dqdv: T,
+    ) {
+        for v in diag[..3].iter_mut() {
+            *v += T::from(self.mass).unwrap() * scale;
+        }
+        diag[3..]
+            .iter_mut()
+            .zip(
+                (utils::get_diag3(self.inertia.as_data())
+                    .into_tensor()
+                    .cast::<T>()
+                    * scale)
+                    .into_data()
+                    .iter(),
+            )
+            .for_each(|(out, &input)| *out += input);
     }
 }
 

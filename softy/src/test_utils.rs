@@ -30,8 +30,25 @@ pub const STATIC_OPT_PARAMS: OptParams = OptParams {
     log_file: None,
 };
 
-pub fn static_nl_params() -> NLParams {
-    crate::io::load_nl_params("assets/static_nl_params.ron").unwrap()
+/// Returns the total number of configurations availble.
+pub fn num_static_configs() -> u32 {
+    4
+}
+
+/// Gets the name of the config which points to a ron file in the assets directory.
+pub fn config_name(config: u32) -> &'static str {
+    assert!(config < num_static_configs());
+    match config {
+        0 => "direct_static_nl_params",
+        1 => "direct_assisted_static_nl_params",
+        2 => "iterative_static_nl_params",
+        _ => "iterative_assisted_static_nl_params",
+    }
+}
+
+/// Get a sample configuration. These should all be tested to make sure all work.
+pub fn static_nl_params(config: u32) -> NLParams {
+    crate::io::load_nl_params(&format!("assets/{}.ron", config_name(config))).unwrap()
 }
 
 pub fn vertex_types_from_fixed(fixed: &[FixedIntType]) -> Vec<VertexType> {
@@ -347,6 +364,8 @@ pub fn make_one_tet_mesh() -> TetMesh {
 pub fn make_one_deformed_tet_mesh() -> TetMesh {
     let mut mesh = make_one_tet_mesh();
     mesh.vertex_positions_mut()[3][2] = 2.0;
+    mesh.vertex_positions_mut()[1][0] = -1.0;
+    mesh.vertex_positions_mut()[2][1] = -1.0;
     mesh
 }
 

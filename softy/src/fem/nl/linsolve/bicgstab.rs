@@ -180,7 +180,7 @@ where
         let mut alpha; // = T::one();
         let mut w; // = T::one();
 
-        let mut iterations = 0;
+        let mut iterations = 1;
 
         // Check residual size, if small return result, otherwise return nothing.
         let check_residual =

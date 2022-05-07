@@ -60,6 +60,7 @@ pub use attrib_defines::*;
 
 pub use implicits::KernelType;
 
+use crate::scene::SceneError;
 use thiserror::Error;
 
 pub trait Real: tensr::Real + na::RealField + num_traits::FloatConst {}
@@ -84,7 +85,7 @@ pub enum Error {
         // Look, keep it at the end of the laneway. No degens on the property.
         degens: Vec<usize>,
     },
-    #[error("Inverted reference element detected")]
+    #[error("Inverted reference element detected: {:?}", .inverted[0])]
     InvertedReferenceElement { inverted: Vec<usize> },
     #[error("Error during main non-linear solve step: {result:?}")]
     NLSolveError { result: nl_fem::SolveResult },
@@ -172,6 +173,10 @@ pub enum Error {
     NothingToSolve,
     #[error("Failed to load configuration")]
     LoadConfig(#[from] LoadConfigError),
+    #[error("Detected an orphaned vertex: {:?}", .orphaned[0])]
+    OrphanedVertices { orphaned: Vec<usize> },
+    #[error("Scene error: {:?}", .0)]
+    SceneError(#[from] SceneError),
 }
 
 pub enum SimResult {

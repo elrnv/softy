@@ -677,6 +677,126 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
             // eprintln!("]");
         }
     }
+
+    #[allow(non_snake_case)]
+    //#[unroll_for_loops]
+    fn add_energy_hessian_diagonal(&self, x: &[T], _: &[T], scale: T, diag: &mut [T], _dqdv: T) {
+        let tri_elems = &self.shell.triangle_elements;
+
+        let pos = Chunked3::from_flat(x).into_arrays();
+
+        let diag: &mut [Vector3<T>] = bytemuck::cast_slice_mut(diag);
+
+        // Membrane Hessian
+        let membrane_diag = {
+            zip!(
+                tri_elems.damping.par_iter().map(|&x| T::from(x).unwrap()),
+                // tri_elems.density.par_iter().map(|&x| T::from(x).unwrap()),
+                tri_elems.ref_area.par_iter().map(|&x| T::from(x).unwrap()),
+                tri_elems.ref_tri_shape_mtx_inv.par_iter(),
+                tri_elems.triangles.par_iter(),
+                tri_elems.lambda.par_iter().map(|&x| T::from(x).unwrap()),
+                tri_elems.mu.par_iter().map(|&x| T::from(x).unwrap()),
+            )
+            .map(|(damping, area, &DX_inv, face, lambda, mu)| {
+                // Make deformed triangle.
+                let tri_x = Triangle::from_indexed_slice(face, pos);
+                let Dx = Matrix2x3::new(tri_x.shape_matrix());
+                let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
+                let tri_energy = E::new(Dx, DX_inv, area, lambda, mu);
+
+                //let factor = T::from(1.0 + damping).unwrap() * scale;
+                let factor = scale;
+                let local_hessians = tri_energy.energy_hessian();
+
+                let mut diag = [Vector3::zeros(); 3];
+                for i in 0..3 {
+                    diag[i] =
+                        utils::get_diag3(local_hessians[i][i].as_data()).into_tensor() * factor;
+                }
+
+                // Damping
+                let ddF = DX_inv.transpose() * DX_inv * (area * mu * damping);
+                let id = Vector3::from([T::one(); 3]);
+                for k in 0..2 {
+                    diag[k] += id * ddF[k][k] * factor;
+                }
+                diag[2] += id * ddF.sum_inner() * factor;
+
+                diag
+            })
+            .collect::<Vec<_>>()
+        };
+
+        let di_elems = &self.shell.dihedral_elements;
+
+        // Bending Hessian
+        let bending_diag = {
+            zip!(
+                di_elems.dihedrals.par_iter(),
+                di_elems.angles.par_iter(),
+                di_elems.ref_angles.par_iter(),
+                di_elems.ref_length.par_iter(),
+                di_elems.bending_stiffness.par_iter(),
+            )
+            .map(|(&edge, &prev_theta, &ref_theta, &ref_shape, &stiffness)| {
+                let (dth_dx, d2w_dth2, dw_dth, d2th_dx2) = DiscreteShellBendingEnergy {
+                    cur_pos: pos,
+                    faces: di_elems.triangles.as_slice(),
+                    edge,
+                    prev_theta: T::from(prev_theta).unwrap(),
+                    ref_theta: T::from(ref_theta).unwrap(),
+                    ref_shape: T::from(ref_shape).unwrap(),
+                    stiffness: T::from(stiffness).unwrap(),
+                }
+                .energy_hessian();
+
+                let mut diag = [Vector3::zeros(); 4];
+
+                // Diagonal part
+                for vtx in 0..4 {
+                    let d2th_dx2_diag =
+                        [d2th_dx2.0[vtx][0], d2th_dx2.0[vtx][2], d2th_dx2.0[vtx][5]].into_tensor();
+                    let h = utils::get_diag3(
+                        (dth_dx[vtx] * (dth_dx[vtx].transpose() * d2w_dth2)).as_data(),
+                    )
+                    .into_tensor()
+                        + d2th_dx2_diag * dw_dth;
+                    diag[vtx] = h * scale;
+                }
+
+                diag
+            })
+            .collect::<Vec<_>>()
+        };
+
+        // Transfer local values to global vector.
+        membrane_diag
+            .iter()
+            .zip(self.shell.triangle_elements.triangles.iter())
+            .for_each(|(local_diag, cell)| {
+                for (&c, &g) in cell.iter().zip(local_diag.iter()) {
+                    if c < diag.len() {
+                        diag[c] += g;
+                    }
+                }
+            });
+
+        bending_diag
+            .iter()
+            .zip(self.shell.dihedral_elements.dihedrals.iter())
+            .for_each(|(local_diag, di)| {
+                for (&c, &g) in di
+                    .verts(|f, i| self.shell.dihedral_elements.triangles[f][i])
+                    .iter()
+                    .zip(local_diag.iter())
+                {
+                    if c < diag.len() {
+                        diag[c] += g;
+                    }
+                }
+            });
+    }
 }
 
 #[cfg(test)]

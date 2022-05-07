@@ -8,38 +8,38 @@ use softy::*;
 pub use test_utils::*;
 
 /// Helper function to generate a simple solver for one initially deformed tet under gravity.
-fn one_tet_solver() -> Solver<impl NLSolver<NLProblem<f64>, f64>, f64> {
+fn one_tet_solver(config_idx: u32) -> Solver<impl NLSolver<NLProblem<f64>, f64>, f64> {
     let mesh = make_one_deformed_tet_mesh();
 
-    SolverBuilder::new(SimParams {
-        ..static_nl_params()
-    })
-    .set_mesh(mesh)
-    .set_material(default_solid())
-    .build()
-    .expect("Failed to build a solver for a one tet test.")
+    SolverBuilder::new(static_nl_params(config_idx))
+        .set_mesh(mesh)
+        .set_material(default_solid())
+        .build()
+        .expect("Failed to build a solver for a one tet test.")
 }
 
 /// Test that the solver produces no change for an equilibrium configuration.
 #[test]
 fn equilibrium() {
-    let params = SimParams {
-        gravity: [0.0f32, 0.0, 0.0],
-        ..static_nl_params()
-    };
+    for config_idx in 0..num_static_configs() {
+        let params = SimParams {
+            gravity: [0.0f32, 0.0, 0.0],
+            ..static_nl_params(config_idx)
+        };
 
-    let mesh = make_one_tet_mesh();
+        let mesh = make_one_tet_mesh();
 
-    let mut solver = SolverBuilder::new(params)
-        .set_mesh(mesh.clone())
-        .set_material(default_solid())
-        .build()
-        .unwrap();
-    assert!(solver.step().is_ok());
+        let mut solver = SolverBuilder::new(params)
+            .set_mesh(mesh.clone())
+            .set_material(default_solid())
+            .build()
+            .unwrap();
+        assert!(solver.step().is_ok());
 
-    // Expect the tet to remain in original configuration
-    let solution_verts = PointCloud::new(solver.vertex_positions());
-    compare_meshes(&solution_verts, &mesh, 1e-6);
+        // Expect the tet to remain in original configuration
+        let solution_verts = PointCloud::new(solver.vertex_positions());
+        compare_meshes(&solution_verts, &mesh, 1e-6);
+    }
 }
 
 /// Test one deformed tet under gravity fixed at two vertices. This is not an easy test because
@@ -47,39 +47,49 @@ fn equilibrium() {
 /// This test has a unique solution.
 #[test]
 fn simple_deformed() {
-    let mut solver = one_tet_solver();
-    assert!(solver.step().is_ok());
+    init_logger();
+    for config_idx in 0..num_static_configs() {
+        let mut solver = one_tet_solver(config_idx);
 
-    let verts = solver.vertex_positions();
+        geo::io::save_mesh(&solver.mesh(), "./out/before_one_tet.vtk").unwrap();
 
-    // Check that the free verts are below the horizontal.
-    assert!(verts[2][1] < 0.0 && verts[3][1] < 0.0);
+        assert!(solver.step().is_ok());
+        let verts = solver.vertex_positions();
 
-    // Check that they are approximately at the same altitude.
-    assert_relative_eq!(verts[2][1], verts[3][1], max_relative = 1e-3);
+        geo::io::save_mesh(&solver.mesh(), "./out/one_tet.vtk").unwrap();
+
+        // Check that the free verts are below the horizontal.
+        assert!(verts[2][1] < 0.0 && verts[3][1] < 0.0);
+
+        // Check that they are approximately at the same altitude.
+        assert_relative_eq!(verts[2][1], verts[3][1], max_relative = 1e-3);
+    }
 }
 
-/// Test that subsequent outer iterations don't change the solution when Ipopt has converged.
+/// Test that subsequent outer iterations don't change the solution when the solver has converged.
 /// This is not the case with linearized constraints.
 #[test]
 fn consistent_outer_iterations() -> Result<(), Error> {
-    let params = SimParams {
-        ..static_nl_params()
-    };
+    init_logger();
+    for config_idx in 0..num_static_configs() {
+        let params = SimParams {
+            ..static_nl_params(config_idx)
+        };
 
-    let mesh = make_one_deformed_tet_mesh();
+        let mesh = make_one_deformed_tet_mesh();
 
-    let mut solver = SolverBuilder::new(params)
-        .set_mesh(mesh.clone())
-        .set_material(default_solid())
-        .build()?;
-    solver.step()?;
+        let mut solver = SolverBuilder::new(params)
+            .set_mesh(mesh.clone())
+            .set_material(default_solid())
+            .build()?;
+        solver.step()?;
 
-    let solution = PointCloud::new(solver.vertex_positions());
-    let mut expected_solver = one_tet_solver();
-    expected_solver.step()?;
-    let expected = PointCloud::new(expected_solver.vertex_positions());
-    compare_meshes(&solution, &expected, 1e-6);
+        let solution = PointCloud::new(solver.vertex_positions());
+        let mut expected_solver = one_tet_solver(config_idx);
+        expected_solver.step()?;
+        let expected = PointCloud::new(expected_solver.vertex_positions());
+        compare_meshes(&solution, &expected, 1e-6);
+    }
     Ok(())
 }
 
@@ -95,12 +105,14 @@ fn volume_penalty() -> Result<(), Error> {
 
     let material = default_solid();
 
-    let mut solver = SolverBuilder::new(static_nl_params())
-        .set_mesh(mesh)
-        .set_material(material)
-        .set_volume_penalty_params(vec![1.0], vec![0.0001], vec![false])
-        .build::<f64>()?;
-    solver.step()?;
+    for config_idx in 0..num_static_configs() {
+        let mut solver = SolverBuilder::new(static_nl_params(config_idx))
+            .set_mesh(mesh.clone())
+            .set_material(material)
+            .set_volume_penalty_params(vec![1.0], vec![0.0001], vec![false])
+            .build::<f64>()?;
+        solver.step()?;
+    }
     Ok(())
 }
 
@@ -118,11 +130,13 @@ fn volume_penalty_triangles() -> Result<(), Error> {
 
     let material = default_shell();
 
-    let mut solver = SolverBuilder::new(static_nl_params())
-        .set_mesh(mesh)
-        .set_material(material)
-        .set_volume_penalty_params(vec![1.0], vec![0.0001], vec![false])
-        .build::<f64>()?;
-    solver.step()?;
+    for config_idx in 0..num_static_configs() {
+        let mut solver = SolverBuilder::new(static_nl_params(config_idx))
+            .set_mesh(mesh.clone())
+            .set_material(material)
+            .set_volume_penalty_params(vec![1.0], vec![0.0001], vec![false])
+            .build::<f64>()?;
+        solver.step()?;
+    }
     Ok(())
 }

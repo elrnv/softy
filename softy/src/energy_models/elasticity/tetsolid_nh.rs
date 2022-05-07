@@ -348,6 +348,75 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
             );
         });
     }
+
+    #[allow(non_snake_case)]
+    #[unroll_for_loops]
+    fn add_energy_hessian_diagonal(&self, x: &[T], _: &[T], scale: T, diag: &mut [T], _dqdv: T) {
+        let pos: &[Vector3<T>] = bytemuck::cast_slice(x);
+
+        // Break up the hessian triplets into chunks of elements for each tet.
+        let hess_diag: &mut [Vector3<T>] = bytemuck::cast_slice_mut(diag);
+
+        let local_diag = zip!(
+            self.0.damping.par_iter().map(|&x| f64::from(x)),
+            // self.0.density.par_iter().map(|&x| f64::from(x)),
+            self.0.ref_volume.par_iter(),
+            self.0.ref_tet_shape_mtx_inv.par_iter(),
+            self.0.tets.par_iter(),
+            self.0.lambda.par_iter(),
+            self.0.mu.par_iter(),
+        )
+        .map(|(damping, &vol, &DX_inv, cell, &lambda, &mu)| {
+            // Make deformed tet.
+            let tet_x = Tetrahedron::from_indexed_slice(cell, pos);
+
+            let Dx = Matrix3::new(tet_x.shape_matrix());
+
+            let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
+            // let size = T::from(vol.cbrt()).unwrap();
+            let vol = T::from(vol).unwrap();
+            let lambda = T::from(lambda).unwrap();
+            let mu = T::from(mu).unwrap();
+
+            let tet_energy = E::new(Dx, DX_inv, vol, lambda, mu);
+
+            //let factor = T::from(1.0 + damping).unwrap() * scale;
+            let factor = scale;
+
+            let local_hessians = tet_energy.energy_hessian();
+
+            let mut diag = [Vector3::zeros(); 4];
+            for i in 0..4 {
+                diag[i] = utils::get_diag3(local_hessians[i][i].as_data()).into_tensor() * factor;
+            }
+
+            // Damping
+            let damping = T::from(damping).unwrap();
+            let ddF = DX_inv.transpose() * DX_inv * (vol * mu * damping);
+
+            let id = Vector3::from([T::one(); 3]);
+
+            for i in 0..3 {
+                diag[i] += id * ddF[i][i] * factor;
+            }
+            diag[3] += id * ddF.sum_inner() * factor;
+
+            diag
+        })
+        .collect::<Vec<_>>();
+
+        // Transfer forces from cell-vertices to vertices themselves.
+        local_diag
+            .iter()
+            .zip(self.0.tets.iter())
+            .for_each(|(local_diag, cell)| {
+                for (&c, &g) in cell.iter().zip(local_diag.iter()) {
+                    if c < hess_diag.len() {
+                        hess_diag[c] += g;
+                    }
+                }
+            });
+    }
 }
 
 #[cfg(test)]
@@ -366,7 +435,7 @@ mod tests {
                 ElasticityModel::NeoHookean,
             ))
             .with_density(10.0)
-            .with_damping(0.0)
+            .with_damping(1.0)
     }
 
     fn test_solids() -> Vec<(TetElements, Vec<[f64; 3]>)> {

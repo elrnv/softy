@@ -105,6 +105,15 @@ impl EnergyHessianTopology for TetSolidGravity<'_> {
 }
 impl<T: Real> EnergyHessian<T> for TetSolidGravity<'_> {
     fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T], _dqdv: T) {}
+    fn add_energy_hessian_diagonal(
+        &self,
+        _x0: &[T],
+        _x1: &[T],
+        _scale: T,
+        _diag: &mut [T],
+        _dqdv: T,
+    ) {
+    }
 }
 
 /// A constant directional force.
@@ -286,6 +295,15 @@ impl EnergyHessianTopology for SoftTriShellGravity<'_> {
 
 impl<T: Real> EnergyHessian<T> for SoftTriShellGravity<'_> {
     fn energy_hessian_values(&self, _x: &[T], _dx: &[T], _scale: T, _vals: &mut [T], _dqdv: T) {}
+    fn add_energy_hessian_diagonal(
+        &self,
+        _x: &[T],
+        _dx: &[T],
+        _scale: T,
+        _diag: &mut [T],
+        _dqdv: T,
+    ) {
+    }
 }
 
 /*
@@ -437,6 +455,15 @@ impl EnergyHessianTopology for RigidShellGravity {
 
 impl<T: Real> EnergyHessian<T> for RigidShellGravity {
     fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T], _dqdv: T) {}
+    fn add_energy_hessian_diagonal(
+        &self,
+        _x0: &[T],
+        _x1: &[T],
+        _scale: T,
+        _diag: &mut [T],
+        _dqdv: T,
+    ) {
+    }
 }
 
 #[cfg(test)]

@@ -165,7 +165,7 @@ impl<Q: Real, D: Real> GeneralizedState<Vec<Q>, Vec<D>> {
 //}
 
 #[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
-pub struct VertexWorkspaceComponent<X, V, XAD, VAD, R, RAD, M, I, VT> {
+pub struct VertexWorkspaceComponent<X, V, XAD, VAD, R, RAD, M, I, VT, RMS, LS> {
     #[component]
     pub cur: ParticleState<X, V>,
     #[component]
@@ -177,9 +177,12 @@ pub struct VertexWorkspaceComponent<X, V, XAD, VAD, R, RAD, M, I, VT> {
     pub mass_inv: M,
     pub orig_index: I,
     pub vertex_type: VT,
+    pub rel_mesh_size: RMS,
+    pub lumped_stiffness: LS,
 }
 
-pub type VertexWorkspace<V, VF, S, I, VT> = VertexWorkspaceComponent<V, V, VF, VF, V, VF, S, I, VT>;
+pub type VertexWorkspace<V, VF, S, I, VT> =
+    VertexWorkspaceComponent<V, V, VF, VF, V, VF, S, I, VT, S, S>;
 
 impl<T: Real, F: Real>
     VertexWorkspace<Chunked3<Vec<T>>, Chunked3<Vec<F>>, Vec<T>, Vec<usize>, Vec<VertexType>>
@@ -518,6 +521,15 @@ pub fn sort_mesh_vertices_by_type(mesh: &mut Mesh, materials: &[Material]) -> Ve
     vertex_type
 }
 
+pub fn vtx_to_dof<S: Real>(vtx: &[S], dof: ChunkedView<&mut [S]>) {
+    dof.isolate(VERTEX_DOFS)
+        .iter_mut()
+        .zip(vtx.iter())
+        .for_each(|(dof_r, vtx_r)| {
+            *dof_r = *vtx_r;
+        });
+}
+
 impl<T: Real> State<T, ad::FT<T>> {
     /// Constructs a state struct from a global mesh and a set of materials.
     pub fn try_from_mesh_and_materials(
@@ -551,6 +563,9 @@ impl<T: Real> State<T, ad::FT<T>> {
 
         // Masses don't usually change so we can initialize them now.
         let mass = Self::compute_vertex_masses(&solid, &shell, num_verts);
+
+        // Compute lumped vertex stiffnesses to be used for scaling problems.
+        let lumped_stiffness = Self::compute_lumped_vertex_stiffnesses(&solid, &shell, num_verts);
 
         let next: ParticleState<Chunked3<Vec<_>>, Chunked3<Vec<_>>> = ParticleState {
             pos: mesh
@@ -596,6 +611,14 @@ impl<T: Real> State<T, ad::FT<T>> {
                 SOURCE_INDEX_ATTRIB,
             )?,
             vertex_type: vertex_type.to_vec(),
+            rel_mesh_size: mesh
+                .direct_attrib_iter::<RelMeshSizeType, VertexIndex>(REL_MESH_SIZE_ATTRIB)?
+                .map(|&x| T::from(x).unwrap())
+                .collect(),
+            lumped_stiffness: lumped_stiffness
+                .into_iter()
+                .map(|x| T::from(x).unwrap())
+                .collect(),
         };
 
         assert_eq!(vtx.mass_inv.len(), num_verts);
@@ -685,6 +708,8 @@ impl<T: Real> State<T, ad::FT<T>> {
             mass_inv: convert(ws.mass_inv),
             orig_index: ws.orig_index.to_vec(),
             vertex_type: ws.vertex_type.to_vec(),
+            rel_mesh_size: convert(ws.rel_mesh_size),
+            lumped_stiffness: convert(ws.lumped_stiffness),
         };
         let dof_storage = convert_coords(dof.view().storage());
         let dof = dof.clone_with_storage(dof_storage);
@@ -706,25 +731,18 @@ impl<T: Real> State<T, ad::FT<T>> {
     /// Copies entries from the vertex residual to the dof residual for vertex degrees of freedom
     /// using dual numbers.
     pub fn dof_residual_ad_from_vertices(&mut self) {
-        self.dof
-            .view_mut()
-            .isolate(VERTEX_DOFS)
-            .r_ad
-            .iter_mut()
-            .zip(self.vtx.residual_ad.storage().iter())
-            .for_each(|(dof_r, vtx_r)| {
-                *dof_r = *vtx_r;
-            });
+        vtx_to_dof(
+            self.vtx.residual_ad.view().storage(),
+            self.dof.view_mut().map_storage(|dof| dof.r_ad),
+        );
     }
 
     /// Copies entries from the vertex residual to the dof residual for vertex degrees of freedom.
     pub fn dof_residual_from_vertices(&self, r: &mut [T]) {
-        r.iter_mut()
-            .take(self.dof.view().isolate(VERTEX_DOFS).len())
-            .zip(self.vtx.residual.storage().iter())
-            .for_each(|(dof_r, vtx_r)| {
-                *dof_r = *vtx_r;
-            });
+        vtx_to_dof(
+            self.vtx.residual.view().storage(),
+            self.dof.view().map_storage(|_| r),
+        );
     }
 
     /// Set current vertex state to be some blend between previous and current degrees of freedom.
@@ -1442,7 +1460,7 @@ impl<T: Real> State<T, ad::FT<T>> {
         self.dof.len()
     }
 
-    /// Compute vertex masses on the given solid and shell elements.
+    /// Computes vertex masses on the given solid and shell elements.
     pub fn compute_vertex_masses(
         solid: &TetSolid,
         shell: &TriShell,
@@ -1476,5 +1494,44 @@ impl<T: Real> State<T, ad::FT<T>> {
         }
 
         masses
+    }
+
+    // Computes lumped vertex stiffnesses to be used for scaling problems.
+    pub fn compute_lumped_vertex_stiffnesses(
+        solid: &TetSolid,
+        shell: &TriShell,
+        num_vertices: usize,
+    ) -> Vec<StiffnessType> {
+        let mut stiffnesses = vec![0.0; num_vertices];
+
+        // Collect max stiffnesses in Pa units.
+
+        for (&lambda, &mu, cell) in zip!(
+            solid.nh_tet_elements.lambda.iter(),
+            solid.nh_tet_elements.mu.iter(),
+            solid.nh_tet_elements.tets.iter(),
+        )
+        .chain(zip!(
+            solid.snh_tet_elements.lambda.iter(),
+            solid.snh_tet_elements.mu.iter(),
+            solid.snh_tet_elements.tets.iter(),
+        )) {
+            for &v in cell {
+                stiffnesses[v] = stiffnesses[v].max(lambda).max(mu);
+            }
+        }
+
+        // Assume here that bending stiffness is related to lambda and mu, so these would be enough.
+        for (&lambda, &mu, cell) in zip!(
+            shell.triangle_elements.lambda.iter(),
+            shell.triangle_elements.mu.iter(),
+            shell.triangle_elements.triangles.iter(),
+        ) {
+            for &v in cell {
+                stiffnesses[v] = stiffnesses[v].max(lambda).max(mu);
+            }
+        }
+
+        stiffnesses
     }
 }

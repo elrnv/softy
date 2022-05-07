@@ -56,7 +56,7 @@ pub mod complex_tests {
         let mesh = geo::io::load_tetmesh("assets/torus_tets.vtk")?;
         let params = nl::SimParams {
             time_step: Some(0.01),
-            ..static_nl_params()
+            ..static_nl_params(0)
         };
         let mut solver = nl::SolverBuilder::new(params)
             .set_mesh(Mesh::from(mesh))
@@ -72,7 +72,7 @@ pub mod complex_tests {
         let mesh = geo::io::load_tetmesh("assets/torus_tets.vtk")?;
         let params = nl::SimParams {
             time_step: Some(0.01),
-            ..static_nl_params()
+            ..static_nl_params(0)
         };
         let mut solver = nl::SolverBuilder::new(params)
             .set_mesh(Mesh::from(mesh))

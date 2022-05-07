@@ -63,6 +63,12 @@ impl<T: Real + Send + Sync, E: EnergyHessian<T>> EnergyHessian<T> for Option<E> 
             None => {}
         }
     }
+    fn add_energy_hessian_diagonal(&self, x0: &[T], x1: &[T], scale: T, diag: &mut [T], dqdv: T) {
+        match self {
+            Some(e) => e.add_energy_hessian_diagonal(x0, x1, scale, diag, dqdv),
+            None => {}
+        }
+    }
 }
 
 /// Either energy adapter for combining two different energies.
@@ -138,6 +144,12 @@ impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHess
             Either::Right(e) => e.energy_hessian_values(x, v, scale, vals, dqdv),
         }
     }
+    fn add_energy_hessian_diagonal(&self, x: &[T], v: &[T], scale: T, diag: &mut [T], dqdv: T) {
+        match self {
+            Either::Left(e) => e.add_energy_hessian_diagonal(x, v, scale, diag, dqdv),
+            Either::Right(e) => e.add_energy_hessian_diagonal(x, v, scale, diag, dqdv),
+        }
+    }
 }
 
 /*
@@ -202,6 +214,10 @@ impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHess
             .energy_hessian_values(x, v, scale, &mut vals[..self.0.energy_hessian_size()], dqdv);
         self.1
             .energy_hessian_values(x, v, scale, &mut vals[self.0.energy_hessian_size()..], dqdv);
+    }
+    fn add_energy_hessian_diagonal(&self, x: &[T], v: &[T], scale: T, diag: &mut [T], dqdv: T) {
+        self.0.add_energy_hessian_diagonal(x, v, scale, diag, dqdv);
+        self.1.add_energy_hessian_diagonal(x, v, scale, diag, dqdv);
     }
 }
 
@@ -319,6 +335,16 @@ pub(crate) mod test_utils {
                 vec![Triplet::new(0, 0, F::zero()); energy.energy_hessian_size()];
             energy.energy_hessian(&x, &dx, F::cst(scale), &mut hess_triplets, F::cst(dt));
 
+            // Tests the energy hessian diagonal which is used for preconditioners.
+            let mut hess_diagonal = vec![F::zero(); dx.len()];
+            energy.add_energy_hessian_diagonal(
+                &x,
+                &dx,
+                F::cst(scale),
+                &mut hess_diagonal,
+                F::cst(dt),
+            );
+
             // Build a dense hessian
             let mut hess_ad = vec![vec![0.0; x.len()]; x.len()];
             let mut hess = vec![vec![0.0; x.len()]; x.len()];
@@ -331,6 +357,16 @@ pub(crate) mod test_utils {
                 if row != col {
                     hess[col][row] += val.value();
                 }
+            }
+
+            // Test diagonal
+            for idx in 0..x.len() {
+                assert_relative_eq!(
+                    hess_diagonal[idx].value(),
+                    hess[idx][idx],
+                    max_relative = 1e-6,
+                    epsilon = 1e-10
+                );
             }
 
             let mut success = true;

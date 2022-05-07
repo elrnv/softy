@@ -40,6 +40,10 @@ where
         self.problem.debug_friction()
     }
     #[inline]
+    fn time_step(&self) -> f64 {
+        self.problem.time_step()
+    }
+    #[inline]
     fn num_contacts(&self) -> usize {
         self.problem.num_contacts()
     }
@@ -58,6 +62,10 @@ where
     #[inline]
     fn lumped_mass_inv(&self) -> Ref<'_, [T]> {
         self.problem.lumped_mass_inv()
+    }
+    #[inline]
+    fn lumped_stiffness(&self) -> Ref<'_, [T]> {
+        self.problem.lumped_stiffness()
     }
     #[inline]
     fn kappa(&self) -> f64 {
@@ -111,6 +119,9 @@ where
                 x - T::from(l).unwrap(),
             );
         });
+    }
+    fn diagonal_preconditioner(&self, v: &[T], precond: &mut [T]) {
+        self.problem.diagonal_preconditioner(v, precond);
     }
     fn jacobian_indices(&self, with_constraints: bool) -> (Vec<usize>, Vec<usize>) {
         self.problem.jacobian_indices(with_constraints)

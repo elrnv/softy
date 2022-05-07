@@ -396,6 +396,39 @@ impl<T: Real> EnergyHessian<T> for SoftTriShellInertia<'_> {
                 }
             });
     }
+
+    #[allow(non_snake_case)]
+    fn add_energy_hessian_diagonal(
+        &self,
+        _v0: &[T],
+        _v1: &[T],
+        scale: T,
+        diag: &mut [T],
+        _dqdv: T,
+    ) {
+        let tri_elems = &self.0.triangle_elements;
+
+        let third = 1.0 / 3.0;
+        // The momentum hessian is a diagonal matrix.
+        tri_elems
+            .triangles
+            .iter()
+            .zip(
+                tri_elems
+                    .ref_area
+                    .iter()
+                    .zip(tri_elems.density.iter().map(|&x| f64::from(x))),
+            )
+            .for_each(|(tri, (&area, density))| {
+                for vi in tri.iter() {
+                    // vertex index
+                    for j in 0..3 {
+                        // vector component
+                        diag[3 * vi + j] += T::from(third * area * density).unwrap() * scale;
+                    }
+                }
+            });
+    }
 }
 impl<T: Real> EnergyHessianProduct<T> for SoftTriShellInertia<'_> {
     fn energy_hessian_product(&self, _x: &[T], _dx: &[T], p: &[T], scale: T, prod: &mut [T]) {

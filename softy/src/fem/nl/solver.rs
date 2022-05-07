@@ -1,10 +1,12 @@
 use num_traits::{One, ToPrimitive, Zero};
+use rayon::prelude::*;
 use std::cell::RefCell;
 use std::io::Write;
 
 use geo::attrib::Attrib;
 use geo::mesh::{topology::*, VertexPositions};
-use geo::Index;
+use geo::ops::{Area, Volume};
+use geo::{CellType, Index};
 use tensr::*;
 
 use super::mcp::*;
@@ -17,10 +19,11 @@ use super::{NLSolver, SimParams, SolveResult, Status};
 use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
+use crate::fem::{ref_tet, ref_tri};
 use crate::inf_norm;
 use crate::nl_fem::{
-    ContactViolation, JacobianWorkspace, ProblemInfo, SingleStepTimeIntegration, StageResult,
-    StepResult, ZoneParams,
+    ContactViolation, JacobianWorkspace, PreconditionerWorkspace, ProblemInfo,
+    SingleStepTimeIntegration, StageResult, StepResult, ZoneParams,
 };
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
@@ -176,8 +179,8 @@ impl SolverBuilder {
         }
 
         let parts = mesh.clone().split_by_cell_partition(partition, num_parts).0;
-        let object_surface_meshes: HashMap<usize, TriMesh> = parts
-            .into_iter()
+        let object_surface_meshes_vec: Vec<(usize, TriMesh)> = parts
+            .into_par_iter()
             .enumerate()
             .map(|(part_index, part)| {
                 // Split a tetmesh from the mesh and construct a surface mesh out of that.
@@ -214,6 +217,8 @@ impl SolverBuilder {
                 (id_map[part_index], surface_mesh)
             })
             .collect();
+        let object_surface_meshes: HashMap<usize, TriMesh> =
+            object_surface_meshes_vec.into_iter().collect();
 
         let build_contact_surface = |id| -> Result<_, Error> {
             let mesh = object_surface_meshes
@@ -382,6 +387,70 @@ impl SolverBuilder {
             (0..mesh.num_vertices()).collect(),
         )
         .unwrap();
+    }
+
+    /// A helper function to initialize a relative mesh size attribute on a given mesh.
+    ///
+    /// Any previously added attributes of the same name are overwritten.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the reference position attribute is not present in the mesh.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error::OrphanedVertices` error if there are vertices in mesh that have
+    /// no neighboring elements.
+    pub(crate) fn init_relative_mesh_size_attribute(mesh: &mut Mesh) -> Result<(), Error> {
+        let ref_pos = mesh
+            .attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)
+            .expect("Reference position attribute missing");
+
+        // Set the vertex relative size to be the size of the smallest adjacent element.
+        let mut rel_mesh_size = vec![f64::INFINITY; mesh.num_vertices()];
+        for (cell_idx, (cell, cell_type)) in mesh.cell_iter().zip(mesh.cell_type_iter()).enumerate()
+        {
+            let size = match cell_type {
+                CellType::Triangle => {
+                    let tri = [
+                        ref_pos[mesh.cell_vertex(cell_idx, 0).unwrap().into_inner()],
+                        ref_pos[mesh.cell_vertex(cell_idx, 1).unwrap().into_inner()],
+                        ref_pos[mesh.cell_vertex(cell_idx, 2).unwrap().into_inner()],
+                    ];
+                    ref_tri(&tri).area().sqrt()
+                }
+                CellType::Tetrahedron => {
+                    let tet = [
+                        ref_pos[mesh.cell_vertex(cell_idx, 0).unwrap().into_inner()],
+                        ref_pos[mesh.cell_vertex(cell_idx, 1).unwrap().into_inner()],
+                        ref_pos[mesh.cell_vertex(cell_idx, 2).unwrap().into_inner()],
+                        ref_pos[mesh.cell_vertex(cell_idx, 3).unwrap().into_inner()],
+                    ];
+                    ref_tet(&tet).volume().cbrt()
+                }
+            };
+            for &v in cell {
+                rel_mesh_size[v] = rel_mesh_size[v].min(size);
+            }
+        }
+
+        if rel_mesh_size.iter().cloned().any(f64::is_infinite) {
+            return Err(Error::OrphanedVertices {
+                orphaned: rel_mesh_size
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, x)| x.is_infinite())
+                    .map(|(i, _)| i)
+                    .collect(),
+            });
+        }
+        let _ = mesh.remove_attrib::<VertexIndex>(REL_MESH_SIZE_ATTRIB).ok();
+        mesh.insert_attrib_data::<RelMeshSizeType, VertexIndex>(
+            REL_MESH_SIZE_ATTRIB,
+            rel_mesh_size,
+        )
+        .unwrap(); // Should not panic, since we removed the attribute beforehand.
+        Ok(())
     }
 
     /// A helper function to initialize the inverse mass vertex attribute.
@@ -609,6 +678,9 @@ impl SolverBuilder {
         Self::init_object_id_attribute(&mut mesh)?;
         Self::init_fixed_attribute(&mut mesh)?;
 
+        // This function depends on reference positions being initialized.
+        Self::init_relative_mesh_size_attribute(&mut mesh)?;
+
         let vertex_type = crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
 
         // Fill state_vertex_indices for optimization and debugging purposes.
@@ -654,7 +726,7 @@ impl SolverBuilder {
             &mesh,
             &vertex_type,
             frictional_contacts,
-            matches!(params.linsolve, LinearSolver::Direct),
+            params.should_compute_jacobian_matrix(),
         )?;
         let frictional_contact_constraints_ad = frictional_contact_constraints
             .iter()
@@ -749,7 +821,7 @@ impl SolverBuilder {
         Ok(NLProblem {
             state: RefCell::new(state),
             state_vertex_indices,
-            kappa: 1.0e2 / params.contact_tolerance as f64,
+            kappa: 1.0 / params.contact_tolerance as f64,
             delta: params.contact_tolerance as f64,
             epsilon: params.friction_tolerance as f64,
             frictional_contact_constraints,
@@ -767,8 +839,10 @@ impl SolverBuilder {
             candidate_force: RefCell::new(vec![T::zero(); num_verts * 3]),
             prev_force: vec![T::zero(); num_verts * 3],
             jacobian_workspace: RefCell::new(JacobianWorkspace::default()),
+            preconditioner_workspace: RefCell::new(PreconditionerWorkspace::default()),
             // Time integration is set during time stepping and can change between subsequent steps.
             time_integration: SingleStepTimeIntegration::BE,
+            preconditioner: params.preconditioner,
             line_search_ws: RefCell::new(LineSearchWorkspace {
                 pos_cur: Chunked3::default(),
                 pos_next: Chunked3::default(),
@@ -1066,7 +1140,7 @@ where
         log::debug!("Updating constraint set...");
         self.solver
             .problem_mut()
-            .update_constraint_set(matches!(self.sim_params.linsolve, LinearSolver::Direct));
+            .update_constraint_set(self.sim_params.should_compute_jacobian_matrix());
 
         let mut contact_iterations = self.sim_params.contact_iterations as i64;
 
@@ -1106,12 +1180,12 @@ where
 
             let mut stage_result = StageResult::new(step_integrator);
             // Loop to resolve all contacts.
-            let mut first_contact_iteration = true;
+            let mut update_jacobian_indices = true;
             loop {
                 /****    Main solve step    ****/
                 let solve_result = self
                     .solver
-                    .solve_with(self.solution.as_mut_slice(), first_contact_iteration);
+                    .solve_with(self.solution.as_mut_slice(), update_jacobian_indices);
                 // if stage < time_integration.num_stages() - 1 {
                 //     match result.status {
                 //         Status::Success | Status::MaximumIterationsExceeded => {
@@ -1124,33 +1198,11 @@ where
                 //         }
                 //     }
                 // }
-                first_contact_iteration = false;
+                update_jacobian_indices = false;
                 /*******************************/
 
                 match solve_result.status {
                     Status::Success | Status::MaximumIterationsExceeded => {
-                        // // Compute contact violation.
-                        // let constraint = self
-                        //     .solver
-                        //     .problem()
-                        //     .contact_constraint(self.solution.as_slice())
-                        //     .into_storage();
-                        // //let mut orig_lambda = constraint.clone();
-                        // //let mut shifted_lambda = constraint.clone();
-                        // let deepest = constraint
-                        //     .iter()
-                        //     .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
-                        //     .copied()
-                        //     .unwrap_or_else(T::zero)
-                        //     .to_f64()
-                        //     .unwrap();
-                        //
-                        // let delta = self.sim_params.contact_tolerance as f64;
-                        // let largest_penalty = ContactPenalty::new(delta).b(deepest);
-                        // let bump_ratio: f64 = ContactPenalty::new(delta).db(deepest)
-                        //     / ContactPenalty::new(delta).db(0.5 * delta);
-                        // let contact_violation = 0.0_f64.max(-deepest);
-
                         let ContactViolation {
                             bump_ratio,
                             violation: contact_violation,
@@ -1165,15 +1217,31 @@ where
                         log::debug!("Kappa: {}", self.solver.problem().kappa);
                         log::debug!("Contact violation: {}", contact_violation);
 
+                        // Save results for future reporting and analysis.
+                        let problem_info = ProblemInfo {
+                            total_contacts: self.solver.problem().num_contacts() as u64,
+                            total_in_proximity: self.solver.problem().num_in_proximity() as u64,
+                        };
+
                         contact_iterations -= 1;
 
                         if contact_iterations < 0 {
-                            return Err(Error::NLSolveError {
-                                result: SolveResult {
+                            // Technically in this case contacts are not yet resolved, but we treat
+                            // this leniently to allow for applications that need to resolve contacts
+                            // gradually.
+                            stage_result.solve_results.push((
+                                problem_info,
+                                SolveResult {
                                     status: Status::MaximumContactIterationsExceeded,
                                     ..solve_result
                                 },
-                            });
+                            ));
+                            self.commit_solution(false);
+                            // Kill velocities if needed.
+                            if self.iteration_count % velocity_clear_steps == 0 {
+                                self.solver.problem_mut().clear_velocities();
+                            }
+                            break;
                         }
 
                         if contact_violation > 0.0 {
@@ -1184,17 +1252,12 @@ where
                         let max_step_violation = self.solver.problem().max_step_violation();
                         if max_step_violation {
                             stage_result.max_step_violations += 1;
-                            self.solver.problem_mut().update_constraint_set(matches!(
-                                self.sim_params.linsolve,
-                                LinearSolver::Direct
-                            ));
+                            self.solver.problem_mut().update_constraint_set(
+                                self.sim_params.should_compute_jacobian_matrix(),
+                            );
+                            update_jacobian_indices = true;
                         }
 
-                        // Save results for future reporting and analysis.
-                        let problem_info = ProblemInfo {
-                            total_contacts: self.solver.problem().num_contacts() as u64,
-                            total_in_proximity: self.solver.problem().num_in_proximity() as u64,
-                        };
                         stage_result
                             .solve_results
                             .push((problem_info, solve_result));

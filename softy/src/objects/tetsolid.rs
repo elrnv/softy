@@ -178,6 +178,7 @@ impl TetElements {
             .enumerate()
             .filter_map(|(i, &v)| if v <= 0.0 { Some(i) } else { None })
             .collect();
+
         if !inverted.is_empty() {
             return Err(Error::InvertedReferenceElement { inverted });
         }

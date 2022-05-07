@@ -100,9 +100,42 @@ pub enum SingleStepTimeIntegration {
     SDIRK2,
 }
 
+impl SingleStepTimeIntegration {
+    /// Returns the fraction of the implicit step represented by this single step integrator.
+    pub fn implicit_factor(&self) -> f32 {
+        match self {
+            SingleStepTimeIntegration::BE => 1.0,
+            SingleStepTimeIntegration::TR => 0.5,
+            SingleStepTimeIntegration::BDF2 => 2.0 / 3.0,
+            SingleStepTimeIntegration::MixedBDF2(t) => t / (1.0 + t),
+            SingleStepTimeIntegration::SDIRK2 => 1.0 - 0.5 * 2.0_f32.sqrt(),
+        }
+    }
+}
+
 impl Default for SingleStepTimeIntegration {
     fn default() -> Self {
         SingleStepTimeIntegration::BE
+    }
+}
+
+/// Diagonal preconditioner used to scale the problem as well as postcondition the iterative
+/// solve if used.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Preconditioner {
+    /// No preconditioner.
+    None,
+    /// Incomplete Jacobi preconditioner addresses only the elasticity, damping and inertia part of
+    /// the Jacobian.
+    IncompleteJacobi,
+    /// Approximate Jacobi preconditioner combines the `IncompleteJacobi` preconditioner
+    /// with an approximation to the constraint jacobian diagonal.
+    ApproximateJacobi,
+}
+
+impl Default for Preconditioner {
+    fn default() -> Self {
+        Preconditioner::ApproximateJacobi
     }
 }
 
@@ -139,8 +172,15 @@ pub struct SimParams {
     /// Number of contact iterations.
     pub contact_iterations: u32,
     pub time_integration: TimeIntegration,
+    pub preconditioner: Preconditioner,
     /// Path to a file where to store logs.
     pub log_file: Option<PathBuf>,
+}
+
+impl SimParams {
+    pub fn should_compute_jacobian_matrix(&self) -> bool {
+        self.derivative_test > 0 || matches!(self.linsolve, LinearSolver::Direct)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -214,6 +254,7 @@ pub struct ResidualTimings {
     pub contact_jacobian: Duration,
     pub jacobian: JacobianTimings,
     pub friction_force: FrictionTimings,
+    pub preconditioner: Duration,
 }
 
 impl ResidualTimings {
@@ -227,6 +268,7 @@ impl ResidualTimings {
         self.contact_jacobian = Duration::new(0, 0);
         self.volume_force = Duration::new(0, 0);
         self.friction_force.clear();
+        self.preconditioner = Duration::new(0, 0);
     }
 }
 
@@ -453,6 +495,11 @@ impl Display for Timings {
         )?;
         writeln!(
             f,
+            "  Preconditioner time:        {}",
+            self.residual.preconditioner.as_millis()
+        )?;
+        writeln!(
+            f,
             "  Total solve time            {}",
             self.total.as_millis()
         )
@@ -463,6 +510,18 @@ impl Display for Timings {
 pub struct StepResult {
     /// Collection of all integration stages in a step.
     pub stage_solves: Vec<StageResult>,
+}
+
+impl StepResult {
+    /// Get the first solve result.
+    ///
+    /// # Panics
+    ///
+    /// There should always be at least one, but if there is an internal bug and no
+    /// results are available this function will panic.
+    pub fn first_solve_result(&self) -> &SolveResult {
+        &self.stage_solves[0].solve_results[0].1
+    }
 }
 
 impl std::fmt::Display for StepResult {

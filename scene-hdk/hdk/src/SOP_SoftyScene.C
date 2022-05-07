@@ -648,14 +648,14 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftySceneParms &so
     }
     switch (static_cast<SOP_SoftySceneEnums::Preconditioner>(sopparms.getPreconditioner()))
     {
-        case SOP_SoftySceneEnums::Preconditioner::None:
+        case SOP_SoftySceneEnums::Preconditioner::NONE:
             sim_params.preconditioner = softy::Preconditioner::None;
             break;
-        case SOP_SoftySceneEnums::Preconditioner::IncompleteJacobi:
-            sim_params.Preconditioner = softy::Preconditioner::IncompleteJacobi;
+        case SOP_SoftySceneEnums::Preconditioner::INCOMPLETEJACOBI:
+            sim_params.preconditioner = softy::Preconditioner::IncompleteJacobi;
             break;
-        case SOP_SoftySceneEnums::Preconditioner::ApproximateJacobi:
-            sim_params.Preconditioner = softy::Preconditioner::ApproximateJacobi;
+        case SOP_SoftySceneEnums::Preconditioner::APPROXIMATEJACOBI:
+            sim_params.preconditioner = softy::Preconditioner::ApproximateJacobi;
             break;
     }
     sim_params.velocity_clear_frequency = sopparms.getVelocityClearFrequency();

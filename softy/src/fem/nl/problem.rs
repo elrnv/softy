@@ -3587,7 +3587,8 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
             dx_norm < T::from(x_tol).unwrap() * denom
         }) || (a_tol > 0.0 && {
-            let dt_inv = 1.0 / NLProblem::time_step(self);
+            let h_inv =
+                1.0 / (NLProblem::time_step(self) * self.time_integration.implicit_factor() as f64);
             let a_tol = T::from(a_tol).unwrap();
             Chunked3::from_flat(&*r)
                 .iter()
@@ -3599,7 +3600,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
                         .zip(Chunked3::from_flat(&*x).iter()),
                 )
                 .all(|(((&r, &m_inv), &size), (&_v_prev, &v))| {
-                    let a_abs = a_tol * T::from(size * dt_inv).unwrap();
+                    let a_abs = a_tol * T::from(size * h_inv).unwrap();
                     let v = Vector3::from(v);
                     // let v_prev = Vector3::from(v_prev);
                     let r = Vector3::from(r);

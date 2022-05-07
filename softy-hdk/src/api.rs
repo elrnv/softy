@@ -10,7 +10,7 @@ use geo::mesh::topology::*;
 use geo::topology::NumVertices;
 use hdkrs::interop::CookResult;
 use softy::nl_fem::LinearSolver;
-use softy::{self, fem, Mesh, PointCloud};
+use softy::{self, fem, Mesh, PointCloud, RefPosType, REFERENCE_CELL_VERTEX_POS_ATTRIB};
 #[cfg(feature = "optsolver")]
 use softy::{PolyMesh, TetMesh, TetMeshExt};
 
@@ -109,6 +109,16 @@ impl From<TimeIntegration> for softy::nl_fem::TimeIntegration {
     }
 }
 
+impl From<Preconditioner> for softy::nl_fem::Preconditioner {
+    fn from(p: Preconditioner) -> softy::nl_fem::Preconditioner {
+        match p {
+            Preconditioner::IncompleteJacobi => softy::nl_fem::Preconditioner::IncompleteJacobi,
+            Preconditioner::ApproximateJacobi => softy::nl_fem::Preconditioner::ApproximateJacobi,
+            _ => softy::nl_fem::Preconditioner::None,
+        }
+    }
+}
+
 impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
     fn into(self) -> softy::nl_fem::SimParams {
         let SimParams {
@@ -130,6 +140,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             contact_tolerance,
             contact_iterations,
             time_integration,
+            preconditioner,
             ref log_file,
             ..
         } = *self;
@@ -180,6 +191,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             contact_tolerance,
             contact_iterations,
             time_integration: time_integration.into(),
+            preconditioner: preconditioner.into(),
             log_file: if log_file.is_empty() {
                 None
             } else {

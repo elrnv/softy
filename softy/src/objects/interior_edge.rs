@@ -8,7 +8,6 @@ use geo::prim::Triangle;
 use num_traits::Float;
 use tensr::{IntoData, IntoTensor, Matrix, Matrix3, Vector3};
 
-use crate::attrib_defines::*;
 use crate::fem::nl::state::VertexType;
 use crate::Real;
 use crate::{Error, Mesh};
@@ -548,15 +547,6 @@ impl EdgeData {
     }
 }
 
-/// Get reference triangle.
-pub fn ref_tri(ref_tri: &[RefPosType]) -> Triangle<f64> {
-    Triangle::new([
-        Vector3::new(ref_tri[0]).cast::<f64>().into(),
-        Vector3::new(ref_tri[1]).cast::<f64>().into(),
-        Vector3::new(ref_tri[2]).cast::<f64>().into(),
-    ])
-}
-
 /// Compute a set of interior edges of a given unstructured mesh.
 ///
 /// Interior edges are edges which have exactly two adjacent faces.
@@ -568,13 +558,13 @@ pub(crate) fn compute_interior_edge_topology_from_mesh(
     // An edge is actually defined by a pair of vertices.
     // We iterate through all the faces and register each half edge (sorted by vertex index)
     // into a hashmap along with the originating face index.
-    #[cfg(test)]
+    #[cfg(feature = "deterministic")]
     let mut edges = {
         // We want our tests to be deterministic, so we opt for hardcoding the seeds here.
         let hash_builder = ahash::RandomState::with_seeds(7, 47, 271, 101);
         HashMap::with_capacity_and_hasher(mesh.num_cells(), hash_builder)
     };
-    #[cfg(not(test))]
+    #[cfg(not(feature = "deterministic"))]
     let mut edges = HashMap::with_capacity(mesh.num_cells());
 
     let add_face_edges = |(face_idx, face): (usize, [usize; 3])| {

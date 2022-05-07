@@ -54,9 +54,10 @@ criterion = "0.3"
 env_logger = "0.9"
 
 [features]
-default = []
+default = ["deterministic"]
 unstable = ["criterion/real_blackbox"]
 optsolver = ["ipopt"]
+deterministic = [] # Enables seeded random state.
 
 [[bench]]
 name = "box_stretch"

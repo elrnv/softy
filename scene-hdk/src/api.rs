@@ -43,9 +43,9 @@ impl From<TimeIntegration> for softy::nl_fem::TimeIntegration {
 impl From<Preconditioner> for softy::nl_fem::Preconditioner {
     fn from(p: Preconditioner) -> softy::nl_fem::Preconditioner {
         match p {
-            Preconditioner::None => softy::nl_fem::Preconditioner::None,
             Preconditioner::IncompleteJacobi => softy::nl_fem::Preconditioner::IncompleteJacobi,
             Preconditioner::ApproximateJacobi => softy::nl_fem::Preconditioner::ApproximateJacobi,
+            _ => softy::nl_fem::Preconditioner::None,
         }
     }
 }

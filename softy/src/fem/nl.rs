@@ -111,6 +111,20 @@ impl SingleStepTimeIntegration {
             SingleStepTimeIntegration::SDIRK2 => 1.0 - 0.5 * 2.0_f32.sqrt(),
         }
     }
+    /// Returns the fraction of the explicit step represented by this single step integrator.
+    ///
+    /// This is not always `1 - implicit_factor` (e.g. check BDF2).
+    pub fn explicit_factor(&self) -> f32 {
+        match self {
+            SingleStepTimeIntegration::BE => 0.0,
+            SingleStepTimeIntegration::TR => 0.5,
+            // BDF2 objective is computed same as BE, but note that vtx.cur is different.
+            // vtx.cur is set in update_cur_vertices at the beginning of the step.
+            SingleStepTimeIntegration::BDF2 => 0.0,
+            SingleStepTimeIntegration::MixedBDF2(_) => 0.0,
+            SingleStepTimeIntegration::SDIRK2 => 0.5 * 2.0_f32.sqrt(),
+        }
+    }
 }
 
 impl Default for SingleStepTimeIntegration {
@@ -248,7 +262,9 @@ pub struct ResidualTimings {
     pub energy_gradient: Duration,
     pub update_state: Duration,
     pub update_distance_potential: Duration,
+    pub update_constraint_gradient: Duration,
     pub update_multipliers: Duration,
+    pub update_sliding_basis: Duration,
     pub contact_force: Duration,
     pub volume_force: Duration,
     pub contact_jacobian: Duration,
@@ -263,7 +279,9 @@ impl ResidualTimings {
         self.energy_gradient = Duration::new(0, 0);
         self.update_state = Duration::new(0, 0);
         self.update_distance_potential = Duration::new(0, 0);
+        self.update_constraint_gradient = Duration::new(0, 0);
         self.update_multipliers = Duration::new(0, 0);
+        self.update_sliding_basis = Duration::new(0, 0);
         self.contact_force = Duration::new(0, 0);
         self.contact_jacobian = Duration::new(0, 0);
         self.volume_force = Duration::new(0, 0);
@@ -333,6 +351,11 @@ impl Display for Timings {
         )?;
         writeln!(
             f,
+            "      Update sliding basis:   {}",
+            self.residual.update_sliding_basis.as_millis()
+        )?;
+        writeln!(
+            f,
             "    Contact force time:       {}",
             self.residual.contact_force.as_millis()
         )?;
@@ -345,33 +368,6 @@ impl Display for Timings {
             f,
             "      Jac + basis mul time:   {}",
             self.residual.friction_force.jac_basis_mul.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Contact vel prep time:  {}",
-            self.residual
-                .friction_force
-                .contact_velocity
-                .prep
-                .as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Contact Jacobian time:  {}",
-            self.residual
-                .friction_force
-                .contact_velocity
-                .contact_jac
-                .as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Contact velocity time:  {}",
-            self.residual
-                .friction_force
-                .contact_velocity
-                .velocity
-                .as_millis()
         )?;
         writeln!(
             f,

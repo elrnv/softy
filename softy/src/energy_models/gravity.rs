@@ -46,7 +46,7 @@ impl<'a> TetSolidGravity<'a> {
 /// Gravity is a position based energy.
 impl<T: Real> Energy<T> for TetSolidGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
-    fn energy(&self, x: &[T], _: &[T]) -> T {
+    fn energy(&self, x: &[T], _: &[T], _dqdv: T) -> T {
         let pos1: &[Vector3<T>] = bytemuck::cast_slice(x);
         let tet_elems = &self.solid;
         let tet_iter = tet_elems
@@ -233,7 +233,7 @@ impl<'a> SoftTriShellGravity<'a> {
 /// Gravity is a position based energy.
 impl<T: Real> Energy<T> for SoftTriShellGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
-    fn energy(&self, x: &[T], _dx: &[T]) -> T {
+    fn energy(&self, x: &[T], _dx: &[T], _dqdv: T) -> T {
         let pos1: &[Vector3<T>] = bytemuck::cast_slice(x);
         let tri_elems = &self.shell.triangle_elements;
         let tri_iter = tri_elems
@@ -427,7 +427,7 @@ impl RigidShellGravity {
 /// Gravity is a position based energy.
 impl<T: Real> Energy<T> for RigidShellGravity {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
-    fn energy(&self, x: &[T], _dx: &[T]) -> T {
+    fn energy(&self, x: &[T], _dx: &[T], _dqdv: T) -> T {
         let pos = Vector3::new([x[0], x[1], x[2]]);
         T::from(-self.mass).unwrap() * self.g.cast::<T>().dot(pos)
     }

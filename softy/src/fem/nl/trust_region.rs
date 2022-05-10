@@ -176,7 +176,7 @@ where
         let mut iterations = 0;
 
         // Initialize the residual.
-        problem.residual(x, r.as_mut_slice());
+        problem.residual(x, r.as_mut_slice(), false);
 
         //let cr = ConjugateResidual::new(
         //    |x, out| {
@@ -264,7 +264,7 @@ where
                 for alpha in (0..100).map(|i| T::from(i).unwrap() / T::from(100.0).unwrap()) {
                     zip!(probe_x.iter_mut(), r.iter(), x.iter())
                         .for_each(|(px, &r, &x)| *px = x - alpha * r);
-                    problem.residual(&probe_x, probe_r.as_mut_slice());
+                    problem.residual(&probe_x, probe_r.as_mut_slice(), false);
                     writeln!(
                         &mut f,
                         "{:?} {:10.3e};",
@@ -281,7 +281,7 @@ where
 
             // Take the full step
             *x.as_mut_tensor() -= p.as_tensor();
-            problem.residual(x, r_next.as_mut_slice());
+            problem.residual(x, r_next.as_mut_slice(), false);
 
             iterations += 1;
 

@@ -11,8 +11,8 @@ use num_traits::FromPrimitive;
 /// a fixed mesh can use this energy in place of elasticity, gravity or inertia.
 
 impl<T: Real, E: Energy<T>> Energy<T> for Option<E> {
-    fn energy(&self, x: &[T], v: &[T]) -> T {
-        self.as_ref().map_or(T::zero(), |e| e.energy(x, v))
+    fn energy(&self, x: &[T], v: &[T], dqdv: T) -> T {
+        self.as_ref().map_or(T::zero(), |e| e.energy(x, v, dqdv))
     }
 }
 
@@ -79,10 +79,10 @@ pub enum Either<A, B> {
 }
 
 impl<T: Real, A: Energy<T>, B: Energy<T>> Energy<T> for Either<A, B> {
-    fn energy(&self, x: &[T], v: &[T]) -> T {
+    fn energy(&self, x: &[T], v: &[T], dqdv: T) -> T {
         match self {
-            Either::Left(e) => e.energy(x, v),
-            Either::Right(e) => e.energy(x, v),
+            Either::Left(e) => e.energy(x, v, dqdv),
+            Either::Right(e) => e.energy(x, v, dqdv),
         }
     }
 }
@@ -157,8 +157,8 @@ impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHess
  */
 
 impl<T: Real, A: Energy<T>, B: Energy<T>> Energy<T> for (A, B) {
-    fn energy(&self, x: &[T], v: &[T]) -> T {
-        self.0.energy(x, v) + self.1.energy(x, v)
+    fn energy(&self, x: &[T], v: &[T], dqdv: T) -> T {
+        self.0.energy(x, v, dqdv) + self.1.energy(x, v, dqdv)
     }
 }
 
@@ -304,7 +304,7 @@ pub(crate) mod test_utils {
             for i in 0..x.len() {
                 dx[i] = F::var(dx[i]);
                 x[i] = x0[i] + dx[i] * F::cst(dqdv);
-                let energy = energy.energy(&x, &dx);
+                let energy = energy.energy(&x, &dx, F::cst(dqdv));
                 assert_relative_eq!(
                     grad[i].value(),
                     energy.deriv(),

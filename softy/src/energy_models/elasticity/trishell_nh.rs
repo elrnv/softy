@@ -143,11 +143,13 @@ impl<'a, E> TriShellElasticity<'a, E> {
 /// Define a hyperelastic energy model for `TriMeshShell`s.
 impl<T: Real, E: TriEnergy<T>> Energy<T> for TriShellElasticity<'_, E> {
     #[allow(non_snake_case)]
-    fn energy(&self, x: &[T], v: &[T]) -> T {
+    fn energy(&self, x: &[T], v: &[T], dqdv: T) -> T {
         let tri_elems = &self.shell.triangle_elements;
 
         let x = Chunked3::from_flat(x).into_arrays();
         let v = Chunked3::from_flat(v).into_arrays();
+
+        let dqdv2 = dqdv * dqdv;
 
         // Membrane energy
         let membrane: T = zip!(
@@ -170,7 +172,7 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriShellElasticity<'_, E> {
             let dFTdF_tr = dF[0].dot(dF[0]) + dF[1].dot(dF[1]); // trace
             tri_energy.energy() + {
                 // damping (viscosity)
-                mu * area * dFTdF_tr * half * damping
+                mu * area * dFTdF_tr * half * damping * dqdv2
                 //let dH = tri_energy.energy_hessian_product_transpose(&tri_dx);
                 //half * damping * (dH[0].dot(Vector3::new(tri_dx.0.into()))
                 //    + dH[1].dot(Vector3::new(tri_dx.1.into()))

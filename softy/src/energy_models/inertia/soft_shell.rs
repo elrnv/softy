@@ -223,7 +223,7 @@ pub(crate) struct SoftTriShellInertia<'a>(pub &'a TriShell);
 
 impl<T: Real> Energy<T> for SoftTriShellInertia<'_> {
     #[allow(non_snake_case)]
-    fn energy(&self, v0: &[T], v1: &[T]) -> T {
+    fn energy(&self, v0: &[T], v1: &[T], _dqdv: T) -> T {
         let tri_elems = &self.0.triangle_elements;
 
         let vel0: &[Vector3<T>] = bytemuck::cast_slice(v0);

@@ -154,7 +154,7 @@ impl<T: Real> PointContactConstraint<T> {
         // Collision object consisting of points pushing against the solid object.
         collider: ContactSurface<&VP, f64>,
         kernel: KernelType,
-        friction_params: Option<FrictionParams>,
+        friction_params: Option<crate::friction::FrictionParams>,
         contact_offset: f64,
         linearized: bool,
     ) -> Result<Self, Error> {

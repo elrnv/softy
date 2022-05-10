@@ -19,7 +19,7 @@ pub trait Energy<T: Real> {
     /// example elastic energy expects position while momentum energy expects velocity.
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     /// differential of `x` but it often is.
-    fn energy(&self, x: &[T], dx: &[T]) -> T;
+    fn energy(&self, x: &[T], dx: &[T], dqdv: T) -> T;
 }
 
 /// The energy gradient is required for optimization methods that require first order derivative

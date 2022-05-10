@@ -15,7 +15,7 @@ macro_rules! add_time {
 
 mod attrib_defines;
 mod constraint;
-mod constraints;
+pub mod constraints;
 mod contact;
 mod energy;
 pub mod energy_models;

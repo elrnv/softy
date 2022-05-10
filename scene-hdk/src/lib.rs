@@ -97,6 +97,7 @@ mod ffi {
         // pub friction_tolerance: f32,
         // pub friction_inner_iterations: u32,
         pub friction_profile: FrictionProfile,
+        pub lagged_friction: bool,
     }
 
     #[derive(Debug)]

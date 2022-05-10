@@ -8,6 +8,7 @@ use geo::mesh::builder::PlatonicSolidBuilder;
 use geo::mesh::topology::*;
 use geo::mesh::VertexPositions;
 use geo::ops::{Rotate, Scale, Translate};
+use softy::constraints::penalty_point_contact::FrictionalContactParams;
 use softy::fem::nl::{SimParams, SolverBuilder};
 use softy::nl_fem::Status::Success;
 use softy::scene::Scene;
@@ -217,7 +218,6 @@ fn single_tri_push() -> Result<(), Error> {
             .set_materials(vec![medium_shell_material().with_id(1).into()])
             .add_frictional_contact(
                 FrictionalContactParams {
-                    contact_type: ContactType::Point,
                     kernel,
                     contact_offset: 0.0,
                     use_fixed: true,
@@ -334,7 +334,6 @@ fn tet_push() -> Result<(), Error> {
             .set_materials(vec![medium_solid_material().with_id(1).into()])
             .add_frictional_contact(
                 FrictionalContactParams {
-                    contact_type: ContactType::Point,
                     kernel,
                     contact_offset: 0.0,
                     use_fixed: true,
@@ -485,7 +484,6 @@ fn ball_tri_push_tester(
 fn ball_tri_push_plain() -> Result<(), Error> {
     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(10e6, 0.4));
     let fc_params = FrictionalContactParams {
-        contact_type: ContactType::Point,
         kernel: KernelType::Approximate {
             radius_multiplier: 19.812,
             tolerance: 0.07,
@@ -503,7 +501,6 @@ fn ball_tri_push_plain() -> Result<(), Error> {
 fn sliding_tet_on_points() -> Result<(), Error> {
     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
     let fc_params = FrictionalContactParams {
-        contact_type: ContactType::Point,
         kernel: KernelType::Approximate {
             radius_multiplier: 2.5,
             tolerance: 0.001,
@@ -539,7 +536,6 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
 
     let fc_params = FrictionalContactParams {
-        contact_type: ContactType::Point,
         kernel: KernelType::Approximate {
             radius_multiplier: 1.5,
             tolerance: 0.001,

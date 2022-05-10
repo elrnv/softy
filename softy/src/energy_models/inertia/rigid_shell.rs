@@ -30,7 +30,7 @@ fn rigid_dofs<T: Real>(x: &[T]) -> Matrix2x3<T> {
 
 impl<T: Real> Energy<T> for RigidShellInertia {
     #[allow(non_snake_case)]
-    fn energy(&self, v0: &[T], v1: &[T]) -> T {
+    fn energy(&self, v0: &[T], v1: &[T], _dqdv: T) -> T {
         // There are translation and rotation dofs only for rigid bodies.
         let v0 = rigid_dofs(v0);
         let v1 = rigid_dofs(v1);

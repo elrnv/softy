@@ -7,6 +7,7 @@ use geo::mesh::{VertexMesh, VertexPositions};
 use geo::ops::transform::*;
 use geo::topology::{CellIndex, FaceIndex, NumCells, NumFaces, NumVertices, VertexIndex};
 use num_traits::Zero;
+use softy::constraints::{FrictionParams, FrictionalContactParams};
 use softy::nl_fem::*;
 use softy::scene::Scene;
 use softy::Error;
@@ -15,16 +16,11 @@ use std::io::Write;
 use tensr::Vector3;
 pub use test_utils::*;
 
-fn fc_params(mu: f64) -> FrictionParams {
+fn fc_params(mu: f64, lagged: bool) -> FrictionParams {
     FrictionParams {
         dynamic_friction: mu,
-        // Ignored:
-        smoothing_weight: 0.0,
-        friction_forwarding: 1.0,
-        inner_iterations: 100,
-        tolerance: 1e-6,
-        print_level: 5,
         friction_profile: FrictionProfile::default(),
+        lagged,
     }
 }
 
@@ -173,7 +169,6 @@ fn friction_experiment(
 // fn max_step_violation() -> Result<(), Error> {
 //     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
 //     let fc_params = FrictionalContactParams {
-//         contact_type: ContactType::Point,
 //         kernel: KernelType::Approximate {
 //             radius_multiplier: 1.5,
 //             tolerance: 0.001,
@@ -205,17 +200,49 @@ fn friction_experiment(
 
 /// A regular tetrahedron sliding on a flat surface.
 #[test]
-fn sliding_tet_on_points() -> Result<(), Error> {
+#[ignore]
+fn sliding_tet_on_points_lagged() -> Result<(), Error> {
     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
     let fc_params = FrictionalContactParams {
-        contact_type: ContactType::Point,
         kernel: KernelType::Approximate {
             radius_multiplier: 2.5,
             tolerance: 0.001,
         },
         contact_offset: 0.0,
         use_fixed: true,
-        friction_params: Some(fc_params(0.2)),
+        friction_params: Some(fc_params(0.2, true)),
+    };
+
+    let tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
+
+    let mut surface = GridBuilder {
+        rows: 5,
+        cols: 5,
+        orientation: AxisPlaneOrientation::ZX,
+    }
+    .build();
+    surface.scale([2.0, 1.0, 2.0]);
+    surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
+    surface.translate([0.0, -0.7, 0.0]);
+
+    // geo::io::save_polymesh(&surface, "./out/ramp.vtk");
+    // geo::io::save_tetmesh(&tetmesh, "./out/mesh.vtk");
+
+    contact_tester(material, fc_params, tetmesh, surface, true, 10)
+}
+
+/// A regular tetrahedron sliding on a flat surface.
+#[test]
+fn sliding_tet_on_points() -> Result<(), Error> {
+    let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
+    let fc_params = FrictionalContactParams {
+        kernel: KernelType::Approximate {
+            radius_multiplier: 2.5,
+            tolerance: 0.001,
+        },
+        contact_offset: 0.0,
+        use_fixed: true,
+        friction_params: Some(fc_params(0.2, false)),
     };
 
     let tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
@@ -242,14 +269,44 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
 
     let fc_params = FrictionalContactParams {
-        contact_type: ContactType::Point,
         kernel: KernelType::Approximate {
             radius_multiplier: 1.5,
             tolerance: 0.001,
         },
         contact_offset: 0.0,
         use_fixed: true,
-        friction_params: Some(fc_params(0.5)),
+        friction_params: Some(fc_params(0.5, false)),
+    };
+
+    let tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
+    let mut surface = GridBuilder {
+        rows: 1,
+        cols: 1,
+        orientation: AxisPlaneOrientation::ZX,
+    }
+    .build();
+    surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
+    surface.translate([0.0, -0.7, 0.0]);
+
+    // geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
+
+    contact_tester(material, fc_params, tetmesh, surface, false, 50)
+}
+
+/// A regular tetrahedron sliding on a flat surface.
+#[test]
+#[ignore]
+fn sliding_tet_on_implicit_lagged() -> Result<(), Error> {
+    let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
+
+    let fc_params = FrictionalContactParams {
+        kernel: KernelType::Approximate {
+            radius_multiplier: 1.5,
+            tolerance: 0.001,
+        },
+        contact_offset: 0.0,
+        use_fixed: true,
+        friction_params: Some(fc_params(0.5, true)),
     };
 
     let tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
@@ -283,14 +340,13 @@ fn box_slide_experiment() -> Result<(), Error> {
     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e9, 0.0));
 
     let fc_params = FrictionalContactParams {
-        contact_type: ContactType::Point,
         kernel: KernelType::Approximate {
             radius_multiplier: 1.5,
             tolerance: 0.001,
         },
         contact_offset: 0.0,
         use_fixed: true,
-        friction_params: Some(fc_params(0.177)),
+        friction_params: Some(fc_params(0.177, false)),
     };
 
     for config_idx in 0..num_static_configs() {

@@ -11,7 +11,7 @@
             //linsolve: Direct,
             linsolve: Iterative(
                 tolerance: 0.1,
-                max_iterations: 11,
+                max_iterations: 20,
             ),
             line_search: AssistedBackTracking(
                 c: 0.0001,

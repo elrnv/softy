@@ -27,8 +27,8 @@ use crate::matrix::*;
 use crate::nl_fem::{state, Preconditioner, ResidualTimings, SingleStepTimeIntegration};
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
+use crate::Mesh;
 use crate::PointCloud;
-use crate::{FrictionWorkspace, Mesh};
 use crate::{Real, Real64};
 
 #[derive(Clone)]
@@ -110,7 +110,7 @@ impl<T: Real> FrictionalContactConstraint<T> {
 /// Workspace variables for line search assist.
 #[derive(Clone, Debug)]
 pub struct LineSearchWorkspace<T> {
-    pub pos_cur: Chunked3<Vec<T>>,
+    // pub pos_cur: Chunked3<Vec<T>>,
     pub pos_next: Chunked3<Vec<T>>,
     pub dq: Vec<T>,
     pub vel: Chunked3<Vec<T>>,
@@ -262,7 +262,7 @@ impl<T: Real> NLProblem<T> {
             .iter()
             .map(|fc| {
                 let constraint = fc.constraint.borrow();
-                constraint.constraint_size()
+                constraint.contact_state.constraint_size()
             })
             .sum()
     }
@@ -270,8 +270,13 @@ impl<T: Real> NLProblem<T> {
         self.frictional_contact_constraints
             .iter()
             .map(|fc| {
-                let constraint = fc.constraint.borrow();
-                constraint.lambda.iter().filter(|&&l| l > T::zero()).count()
+                let constraint = &*fc.constraint.borrow();
+                constraint
+                    .contact_state
+                    .lambda
+                    .iter()
+                    .filter(|&&l| l > T::zero())
+                    .count()
             })
             .sum()
     }
@@ -509,6 +514,7 @@ impl<T: Real64> NLProblem<T> {
                     friction_force.view_mut(),
                     Chunked3::from_flat(next.vel),
                     self.epsilon as f32,
+                    false,
                 );
             }
         }
@@ -656,6 +662,9 @@ impl<T: Real64> NLProblem<T> {
 
         let dt = self.time_step();
 
+        let kappa = self.kappa as f32;
+        let delta = self.delta as f32;
+
         let NLProblem {
             ref mut frictional_contact_constraints,
             ref mut frictional_contact_constraints_ad,
@@ -678,14 +687,16 @@ impl<T: Real64> NLProblem<T> {
             let new_max_step = fc.constraint.borrow_mut().compute_max_step(vel, dt);
             fc.constraint.borrow_mut().set_max_step(new_max_step);
             fc_ad.constraint.borrow_mut().set_max_step(new_max_step);
-            changed |= fc
-                .constraint
-                .borrow_mut()
-                .update_neighbors(pos, and_contact_hessian);
-            changed |= fc_ad
-                .constraint
-                .borrow_mut()
-                .update_neighbors(pos_ad.view(), and_contact_hessian);
+            changed |=
+                fc.constraint
+                    .borrow_mut()
+                    .update_neighbors(pos, delta, kappa, and_contact_hessian);
+            changed |= fc_ad.constraint.borrow_mut().update_neighbors(
+                pos_ad.view(),
+                delta,
+                kappa,
+                and_contact_hessian,
+            );
         }
 
         // TODO: REMOVE THE BELOW DEBUG CODE
@@ -738,13 +749,34 @@ impl<T: Real64> NLProblem<T> {
     //}
 
     /// Commit velocity by advancing the internal state by the given unscaled velocity `uv`.
-    pub fn advance(&mut self, v: &[T]) {
-        self.integrate_step(v);
+    ///
+    /// If `and_autodiff` is true, then the autodiff state is also advanced, since it is used to
+    /// verify derivatives for lagged friction solutions.
+    pub fn advance(&mut self, v: &[T], and_autodiff: bool, explicit_jacobian: bool) {
+        // Update next state
+        if and_autodiff {
+            self.update_state_ad_cst(v, true);
+        }
+
+        self.update_state(v, true, explicit_jacobian);
+
+        // Advance to next state
+
         self.state.borrow_mut().advance(v);
+
         // Commit candidate forces. This is used for TR and SDIRK2 integration.
         self.prev_force.clone_from(&*self.candidate_force.borrow());
-        // self.prev_force_ad
-        //     .clone_from(&*self.candidate_force_ad.borrow());
+
+        // This caches current state so we don't have to recompute a lot of things during the next step.
+        for fc in self.frictional_contact_constraints.iter_mut() {
+            fc.constraint.borrow_mut().advance_state();
+        }
+        if and_autodiff {
+            // First we need to make sure that the autodiff state is up to date, then advance.
+            for fc in self.frictional_contact_constraints_ad.iter_mut() {
+                fc.constraint.borrow_mut().advance_state();
+            }
+        }
     }
 
     //    /// Advance object data one step back.
@@ -1587,15 +1619,15 @@ impl<T: Real64> NLProblem<T> {
                 constraint.update_multipliers(delta, kappa);
                 // TODO: Refactor this to just compute the count.
                 let dt = T::from(self.time_step()).unwrap();
+                let State { vtx, .. } = &*self.state.borrow();
                 let f_jac_count = constraint
                     .friction_jacobian_indexed_value_iter(
-                        self.state.borrow().vtx.next.vel.view(),
+                        vtx.next.vel.view(),
                         delta,
                         kappa,
                         epsilon,
                         dt,
                         num_active_coords / 3,
-                        true,
                     )
                     .map(|iter| iter.count())
                     .unwrap_or(0);
@@ -1629,16 +1661,16 @@ impl<T: Real64> NLProblem<T> {
             .add_energy_gradient(cur.vel, next.vel, r, dqdv);
     }
 
-    pub fn contact_constraint(&self, v: &[T]) -> Vec<T> {
-        self.integrate_step(v);
-        self.state.borrow_mut().update_vertices(v);
+    pub fn contact_constraint(&self, _v: &[T]) -> Vec<T> {
+        // self.integrate_step(v);
+        // self.state.borrow_mut().update_vertices(v);
         let State { vtx, .. } = &*self.state.borrow_mut();
         let pos = vtx.next.pos.view();
         let mut constraint = Vec::new();
         for fc in self.frictional_contact_constraints.iter() {
-            let mut fc_constraint = fc.constraint.borrow_mut();
-            fc_constraint.update_state(pos);
-            fc_constraint.update_distance_potential();
+            let fc_constraint = fc.constraint.borrow_mut();
+            // fc_constraint.update_state(pos);
+            // fc_constraint.update_distance_potential();
             constraint.extend(fc_constraint.cached_distance_potential(pos.len()));
         }
         constraint
@@ -1649,24 +1681,28 @@ impl<T: Real64> NLProblem<T> {
         state: ResidualState<&[T], &[T], &mut [T]>,
         solid: &TetSolid,
         shell: &TriShell,
+        dqdv: T,
     ) -> T {
         let ResidualState { cur, next, .. } = state;
-        solid.inertia().energy(cur.vel, next.vel) + shell.inertia().energy(cur.vel, next.vel)
+        solid.inertia().energy(cur.vel, next.vel, dqdv)
+            + shell.inertia().energy(cur.vel, next.vel, dqdv)
     }
 
+    /// Energy with lagged friction.
     fn energy(
         &self,
         state: ResidualState<&[T], &[T], &mut [T]>,
         solid: &TetSolid,
         shell: &TriShell,
         frictional_contacts: &[FrictionalContactConstraint<T>],
+        dqdv: T,
     ) -> T {
         let ResidualState { cur, next, .. } = state;
 
-        let mut energy = solid.elasticity().energy(cur.pos, next.pos);
-        energy += solid.gravity(self.gravity).energy(cur.pos, next.pos);
-        energy += shell.elasticity().energy(cur.pos, next.pos);
-        energy += shell.gravity(self.gravity).energy(cur.pos, next.pos);
+        let mut energy = solid.elasticity().energy(next.pos, next.vel, dqdv);
+        energy += solid.gravity(self.gravity).energy(next.pos, next.vel, dqdv);
+        energy += shell.elasticity().energy(next.pos, next.vel, dqdv);
+        energy += shell.gravity(self.gravity).energy(next.pos, next.vel, dqdv);
 
         for vc in self.volume_constraints.iter() {
             energy += vc.borrow().compute_penalty(cur.pos, next.pos);
@@ -1674,20 +1710,21 @@ impl<T: Real64> NLProblem<T> {
 
         let delta = self.delta as f32;
         let kappa = self.kappa as f32;
-        //let epsilon = self.epsilon as f32;
+        let epsilon = self.epsilon as f32;
 
         // Compute contact potential and lagged friction potential
         let ResidualState { next, .. } = state;
         for fc in frictional_contacts.iter() {
-            let mut fc_constraint = fc.constraint.borrow_mut();
-            fc_constraint.update_state(Chunked3::from_flat(next.pos));
-            fc_constraint.update_distance_potential();
+            let fc_constraint = fc.constraint.borrow();
+            // fc_constraint.update_state(Chunked3::from_flat(next.pos));
+            // fc_constraint.update_distance_potential();
             energy += fc_constraint.contact_constraint(delta, kappa);
 
-            // fc_constraint.update_state_cast(Chunked3::from_flat(cur.pos));
-            // fc_constraint.update_distance_potential();
-            // fc_constraint.update_multipliers(delta, kappa);
-            // energy += fc_constraint.lagged_friction_potential(Chunked3::from_flat(next.vel), epsilon);
+            energy += fc_constraint.lagged_friction_potential(
+                Chunked3::from_flat(next.vel),
+                epsilon,
+                dqdv,
+            );
         }
 
         energy
@@ -1706,7 +1743,7 @@ impl<T: Real64> NLProblem<T> {
         vel: &[S],
         r: &mut [S],
         frictional_contact_constraints: &[FrictionalContactConstraint<S>],
-        rebuild_tree: bool,
+        lagged_friction: bool,
     ) {
         assert_eq!(pos.len(), vel.len());
         assert_eq!(r.len(), pos.len());
@@ -1717,83 +1754,72 @@ impl<T: Real64> NLProblem<T> {
             add_time!(timings.volume_force; vc.borrow().subtract_pressure_force(prev_pos, pos, r));
         }
 
-        // let mut dbgr = vec![S::zero(); vel.len()];
+        // let mut f = vec![S::zero(); r.len()];
 
         // Compute contact lambda.
         for fc in frictional_contact_constraints.iter() {
-            let mut fc_constraint = fc.constraint.borrow_mut();
+            let fc_constraint = fc.constraint.borrow_mut();
 
             let timings = &mut *self.timings.borrow_mut();
 
-            add_time!(timings.update_state; fc_constraint.update_state_with_rebuild(Chunked3::from_flat(pos), rebuild_tree));
-            add_time!(timings.update_distance_potential; fc_constraint.update_distance_potential() );
-            add_time!(timings.update_multipliers; fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32));
             add_time!(timings.contact_force; fc_constraint.subtract_constraint_force(Chunked3::from_flat(r)));
+            // add_time!(timings.contact_force; fc_constraint.subtract_constraint_force(Chunked3::from_flat(f.as_mut_slice())));
             // fc_constraint.subtract_constraint_force(Chunked3::from_flat(dbgr.as_mut_slice()));
         }
+        // eprintln!("f = {:?}", &f);
 
-        // DBG CODE
-        // let dbgdata_out = &mut *self.debug_friction.borrow_mut();
-        // dbgdata_out.clear();
-        // dbgdata_out.extend(dbgr.iter().map(|&x| T::from(x).unwrap()));
-        // END OF DBG CODE
-
-        self.subtract_friction_forces(pos, vel, r, frictional_contact_constraints);
+        self.subtract_friction_forces(
+            prev_pos,
+            pos,
+            vel,
+            r,
+            frictional_contact_constraints,
+            lagged_friction,
+        );
     }
 
     /// Computes and subtracts friction forces from the given residual vector `r`.
     /// This function assumes that the frictional_contact_constraints were already updated
     /// for state, distance potential and multipliers.
     ///
+    /// `prev_pos` are the stacked position coordinates of all vertices from the previous step.
     /// `pos` are the stacked position coordinates of all vertices.
     /// `vel` are the stacked velocity coordinates of all vertices.
     /// `lambda` is the workspace per constraint constraint force magnitude.
     /// `r` is the output stacked force vector.
     fn subtract_friction_forces<S: Real>(
         &self,
-        pos: &[S],
+        _prev_pos: &[T],
+        _pos: &[S],
         vel: &[S],
         r: &mut [S],
         frictional_contact_constraints: &[FrictionalContactConstraint<S>],
+        lagged: bool,
     ) {
-        assert_eq!(pos.len(), vel.len());
-        assert_eq!(r.len(), pos.len());
+        // assert_eq!(pos.len(), vel.len());
+        // assert_eq!(r.len(), pos.len());
 
         // Compute contact lambda.
         for fc in frictional_contact_constraints.iter() {
             let mut fc_constraint = fc.constraint.borrow_mut();
-            // fc_constraint.update_state_cast(Chunked3::from_flat(_prev_pos));
-            // fc_constraint.update_distance_potential();
-            // fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
-
             let timings = &mut *self.timings.borrow_mut();
-
-            // DEBUG
-            // fc_constraint.subtract_constraint_force(Chunked3::from_flat(dbg_data.as_mut_slice()));
-            // END OF DEBUG
             fc_constraint.timings.borrow_mut().clear();
             fc_constraint.subtract_friction_force(
                 Chunked3::from_flat(r),
                 Chunked3::from_flat(vel),
                 self.epsilon as f32,
+                lagged,
             );
             timings.friction_force += *fc_constraint.timings.borrow();
-            // fc_constraint.subtract_constraint_force(Chunked3::from_flat(f.as_mut_slice()));
-            // fc_constraint.subtract_friction_force(
-            //     Chunked3::from_flat(f.as_mut_slice()),
-            //     Chunked3::from_flat(vel),
-            //     self.epsilon as f32,
-            // );
         }
-        // let dbgdata_out = &mut *self.debug_friction.borrow_mut();
-        // dbgdata_out.clear();
-        // dbgdata_out.extend(dbg_data.iter().map(|&x| T::from(x).unwrap()));
     }
 
     /// Compute the acting force for the problem.
     ///
     /// For the velocity part of the force balance equation
     /// `M dv/dt - f(q,v) = 0`, this function subtracts `f(q,v)`.
+    ///
+    /// If symmetric is true, lagged friction is enforced.
     fn subtract_force<S: Real>(
         &self,
         state: ResidualState<&[T], &[S], &mut [S]>,
@@ -1801,17 +1827,9 @@ impl<T: Real64> NLProblem<T> {
         shell: &TriShell,
         frictional_contacts: &[FrictionalContactConstraint<S>],
         dqdv: S,
+        lagged_friction: bool,
     ) {
         let ResidualState { cur, next, r } = state;
-
-        // let mut dbg_data = vec![S::zero(); r.len()];
-
-        // for (out_pos, in_pos) in dbg_data.chunks_exact_mut(3).zip(next.pos.iter()) {
-        //     *out_pos = *in_pos;
-        // }
-
-        // eprintln!("next.pos = {:?}", &next.pos);
-        // eprintln!("next.vel = {:?}", &next.vel);
 
         add_time!(self.timings.borrow_mut().energy_gradient; {
             solid.elasticity().add_energy_gradient(next.pos, next.vel, r, dqdv);
@@ -1824,11 +1842,14 @@ impl<T: Real64> NLProblem<T> {
                 .add_energy_gradient(next.pos, next.vel, r, dqdv);
         });
 
-        // let dbgdata_out = &mut *self.debug_friction.borrow_mut();
-        // dbgdata_out.clear();
-        // dbgdata_out.extend(r.iter().map(|&x| T::from(x).unwrap()));
-
-        self.subtract_constraint_forces(cur.pos, next.pos, next.vel, r, frictional_contacts, true);
+        self.subtract_constraint_forces(
+            cur.pos,
+            next.pos,
+            next.vel,
+            r,
+            frictional_contacts,
+            lagged_friction,
+        );
 
         debug_assert!(r.iter().all(|r| r.is_finite()));
     }
@@ -2007,6 +2028,7 @@ impl<T: Real64> NLProblem<T> {
             shell,
             self.frictional_contact_constraints_ad.as_slice(),
             dt * force_mul,
+            false,
         );
 
         // Save the current force for when the step is advanced.
@@ -2044,9 +2066,6 @@ impl<T: Real64> NLProblem<T> {
 
     #[inline]
     fn residual_ad(&self) {
-        self.integrate_step_ad();
-        self.state.borrow_mut().update_vertices_ad();
-
         self.compute_vertex_residual_ad();
 
         // Transfer residual to degrees of freedom.
@@ -2056,20 +2075,9 @@ impl<T: Real64> NLProblem<T> {
     /// Compute the residual on simulated vertices using dual numbers.
     #[inline]
     fn compute_vertex_residual_ad(&self) {
-        match self.time_integration {
-            SingleStepTimeIntegration::BE => self.compute_vertex_residual_ad_impl(1.0, 0.0),
-            SingleStepTimeIntegration::TR => self.compute_vertex_residual_ad_impl(0.5, 0.5),
-            SingleStepTimeIntegration::BDF2 => self.compute_vertex_residual_ad_impl(2.0 / 3.0, 0.0),
-            SingleStepTimeIntegration::MixedBDF2(t) => {
-                let factor = t / (1.0 + t);
-                self.compute_vertex_residual_ad_impl(factor as f64, 0.0)
-            }
-            SingleStepTimeIntegration::SDIRK2 => {
-                let factor = 0.5 * 2.0_f64.sqrt();
-                self.compute_vertex_residual_ad_impl(1.0 - factor, factor)
-                // self.compute_vertex_residual_ad_impl(1.0, 0.0)
-            }
-        }
+        let implicit_factor = self.time_integration.implicit_factor();
+        let explicit_factor = self.time_integration.explicit_factor();
+        self.compute_vertex_residual_ad_impl(implicit_factor as f64, explicit_factor as f64);
     }
 
     /// Update current vertex state to coincide with current dof state.
@@ -2108,36 +2116,39 @@ impl<T: Real64> NLProblem<T> {
     /// Compute the objective on simulated vertices.
     ///
     /// This is typically the total system energy with lagged friction potential.
-    pub fn compute_objective(&self, prev_force_mul: f64) -> T {
+    pub fn compute_objective(&self, force_mul: f64, prev_force_mul: f64) -> T {
         let State {
             vtx, solid, shell, ..
         } = &mut *self.state.borrow_mut();
 
-        let mut objective = T::zero();
-        if prev_force_mul > 0.0 {
-            // TR objective should have an extra term (compared to BE): h/2 grad W ^T v
-            // To activate this term prev_force_mul should be 0.5.
+        let force_mul = T::from(force_mul).unwrap();
+        let dt = T::from(self.time_step()).unwrap();
+        let dqdv = dt * force_mul;
 
+        let mut objective = T::zero();
+
+        if prev_force_mul > 0.0 {
+            let prev_force_mul = T::from(prev_force_mul).unwrap();
             objective += self
                 .prev_force
                 .iter()
                 .zip(vtx.next.vel.storage().iter())
                 .map(|(&r, &v)| r * v)
                 .sum::<T>()
-                * T::from(prev_force_mul).unwrap()
-                * self.time_step();
+                * prev_force_mul
+                * dt;
         }
 
-        objective += T::from(1.0 - prev_force_mul).unwrap()
-            * self.energy(
-                vtx.residual_state().into_storage(),
-                solid,
-                shell,
-                self.frictional_contact_constraints.as_slice(),
-            );
+        objective += self.energy(
+            vtx.residual_state().into_storage(),
+            solid,
+            shell,
+            self.frictional_contact_constraints.as_slice(),
+            dqdv,
+        );
 
         if !self.is_static() {
-            objective += self.inertia(vtx.residual_state().into_storage(), solid, shell);
+            objective += self.inertia(vtx.residual_state().into_storage(), solid, shell, dqdv);
         }
         objective
     }
@@ -2146,7 +2157,7 @@ impl<T: Real64> NLProblem<T> {
     ///
     /// This function takes a current force multiplier and previous force multiplier.
     /// For backward euler, one should pass `force_mul = 1.0` and `prev_force_mul = 0.0`.
-    fn compute_vertex_residual_impl(&self, force_mul: f64, prev_force_mul: f64) {
+    fn compute_vertex_residual_impl(&self, force_mul: f64, prev_force_mul: f64, symmetric: bool) {
         let State {
             vtx, solid, shell, ..
         } = &mut *self.state.borrow_mut();
@@ -2168,6 +2179,7 @@ impl<T: Real64> NLProblem<T> {
             shell,
             self.frictional_contact_constraints.as_slice(),
             dqdv,
+            symmetric,
         );
 
         // eprintln!("dt = {:?}; force_mul = {:?}; prev_force_mul = {:?}", dt, force_mul, prev_force_mul);
@@ -2203,23 +2215,17 @@ impl<T: Real64> NLProblem<T> {
     }
 
     /// Compute the residual on simulated vertices.
+    ///
+    /// If symmetric is false, lagged friction will be used which symmetrizes the system completely.
     #[inline]
-    fn compute_vertex_residual(&self) {
-        match self.time_integration {
-            SingleStepTimeIntegration::BE => self.compute_vertex_residual_impl(1.0, 0.0),
-            SingleStepTimeIntegration::TR => self.compute_vertex_residual_impl(0.5, 0.5),
-            SingleStepTimeIntegration::BDF2 => self.compute_vertex_residual_impl(2.0 / 3.0, 0.0),
-            // SingleStepTimeIntegration::BDF2 => self.compute_vertex_residual_impl(1.0, 0.0),
-            SingleStepTimeIntegration::MixedBDF2(t) => {
-                let factor = t / (1.0 + t);
-                self.compute_vertex_residual_impl(factor as f64, 0.0)
-            }
-            SingleStepTimeIntegration::SDIRK2 => {
-                let factor = 0.5 * 2.0_f64.sqrt();
-                self.compute_vertex_residual_impl(1.0 - factor, factor)
-                // self.compute_vertex_residual_impl(1.0, 0.0)
-            }
-        }
+    fn compute_vertex_residual(&self, symmetric: bool) {
+        let implicit_factor = self.time_integration.implicit_factor();
+        let explicit_factor = self.time_integration.explicit_factor();
+        self.compute_vertex_residual_impl(
+            implicit_factor as f64,
+            explicit_factor as f64,
+            symmetric,
+        );
     }
 
     fn jacobian_indices(&self, with_constraints: bool) -> (Vec<usize>, Vec<usize>) {
@@ -2228,8 +2234,6 @@ impl<T: Real64> NLProblem<T> {
         let mut cols = vec![0; jac_nnz];
         let count = self.compute_jacobian_indices(&mut rows, &mut cols, with_constraints);
 
-        //assert_eq!(count, rows.len());
-        //assert_eq!(count, cols.len());
         rows.resize(count, 0);
         cols.resize(count, 0);
 
@@ -2265,11 +2269,6 @@ impl<T: Real64> NLProblem<T> {
 
         count += n;
 
-        // use std::io::Write;
-        // let mut f = std::fs::File::create("./out/jac2_indices.jl").unwrap();
-        // writeln!(f, "jrows2 = {:?}", &rows[..count]).unwrap();
-        // writeln!(f, "jcols2 = {:?}", &cols[..count]).unwrap();
-
         if !self.is_static() {
             let inertia = solid.inertia();
             let n = inertia.energy_hessian_size();
@@ -2285,8 +2284,6 @@ impl<T: Real64> NLProblem<T> {
                 .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
             count += n;
         }
-
-        // eprintln!("i lower triangular = {count}");
 
         // Duplicate off-diagonal indices to form a complete matrix.
         let (rows_begin, rows_end) = rows.split_at_mut(count);
@@ -2380,18 +2377,18 @@ impl<T: Real64> NLProblem<T> {
                 // constraint.update_state(vtx.cur.pos.view());
                 // constraint.update_distance_potential();
                 // constraint.update_constraint_gradient();
-                constraint.update_multipliers(delta, kappa);
+                // constraint.update_multipliers(delta, kappa);
                 // Compute friction hessian second term (multipliers held constant)
                 let dt = T::from(self.time_step()).unwrap();
+                let State { vtx, .. } = &*self.state.borrow();
                 let f_jac_count = constraint
                     .friction_jacobian_indexed_value_iter(
-                        self.state.borrow().vtx.next.vel.view(),
+                        vtx.next.vel.view(),
                         delta,
                         kappa,
                         epsilon,
                         dt,
                         num_active_coords / 3,
-                        false,
                     )
                     .map(|iter| {
                         iter.zip(rows[count..].iter_mut().zip(cols[count..].iter_mut()))
@@ -2412,32 +2409,12 @@ impl<T: Real64> NLProblem<T> {
     /// Jacobian diagonal excluding constraints.
     #[inline]
     fn jacobian_incomplete_diagonal(&self, v: &[T], r: &[T], diag: &mut [T]) {
-        self.integrate_step(v);
-        self.state.borrow_mut().update_vertices(v);
-        match self.time_integration {
-            SingleStepTimeIntegration::BE => {
-                let dt = T::from(self.time_step()).unwrap();
-                self.jacobian_diagonal_impl(v, r, diag, dt, dt);
-            }
-            SingleStepTimeIntegration::TR => {
-                let half_dt = T::from(0.5 * self.time_step()).unwrap();
-                self.jacobian_diagonal_impl(v, r, diag, half_dt, half_dt);
-            }
-            SingleStepTimeIntegration::BDF2 => {
-                let factor = T::from(2.0 * self.time_step() / 3.0).unwrap();
-                self.jacobian_diagonal_impl(v, r, diag, factor, factor);
-            }
-            SingleStepTimeIntegration::MixedBDF2(t) => {
-                let gamma = 1.0 - t as f64;
-                let factor = T::from(((1.0 - gamma) / (2.0 - gamma)) * self.time_step()).unwrap();
-                self.jacobian_diagonal_impl(v, r, diag, factor, factor);
-            }
-            SingleStepTimeIntegration::SDIRK2 => {
-                let factor = T::from((1.0 - 0.5 * 2.0_f64.sqrt()) * self.time_step()).unwrap();
-                // let factor = T::from(self.time_step()).unwrap();
-                self.jacobian_diagonal_impl(v, r, diag, factor, factor);
-            }
-        }
+        // self.integrate_step(v);
+        // self.state.borrow_mut().update_vertices(v);
+        let implicit_factor = T::from(self.time_integration.implicit_factor()).unwrap();
+        let dt = T::from(self.time_step()).unwrap();
+        let h = dt * implicit_factor;
+        self.jacobian_diagonal_impl(v, r, diag, h, h);
     }
 
     fn jacobian_diagonal_impl<'v>(
@@ -2499,32 +2476,12 @@ impl<T: Real64> NLProblem<T> {
         vals: &mut [T],
         with_constraints: bool,
     ) {
-        self.integrate_step(v);
-        self.state.borrow_mut().update_vertices(v);
-        match self.time_integration {
-            SingleStepTimeIntegration::BE => {
-                let dt = T::from(self.time_step()).unwrap();
-                self.jacobian_values(v, r, rows, cols, vals, dt, dt, with_constraints);
-            }
-            SingleStepTimeIntegration::TR => {
-                let half_dt = T::from(0.5 * self.time_step()).unwrap();
-                self.jacobian_values(v, r, rows, cols, vals, half_dt, half_dt, with_constraints);
-            }
-            SingleStepTimeIntegration::BDF2 => {
-                let factor = T::from(2.0 * self.time_step() / 3.0).unwrap();
-                self.jacobian_values(v, r, rows, cols, vals, factor, factor, with_constraints);
-            }
-            SingleStepTimeIntegration::MixedBDF2(t) => {
-                let gamma = 1.0 - t as f64;
-                let factor = T::from(((1.0 - gamma) / (2.0 - gamma)) * self.time_step()).unwrap();
-                self.jacobian_values(v, r, rows, cols, vals, factor, factor, with_constraints);
-            }
-            SingleStepTimeIntegration::SDIRK2 => {
-                let factor = T::from((1.0 - 0.5 * 2.0_f64.sqrt()) * self.time_step()).unwrap();
-                // let factor = T::from(self.time_step()).unwrap();
-                self.jacobian_values(v, r, rows, cols, vals, factor, factor, with_constraints);
-            }
-        }
+        // self.integrate_step(v);
+        // self.state.borrow_mut().update_vertices(v);
+        let implicit_factor = T::from(self.time_integration.implicit_factor()).unwrap();
+        let dt = T::from(self.time_step()).unwrap();
+        let h = dt * implicit_factor;
+        self.jacobian_values(v, r, rows, cols, vals, h, h, with_constraints);
     }
 
     fn jacobian_values<'v>(
@@ -2691,11 +2648,13 @@ impl<T: Real64> NLProblem<T> {
         if with_constraints {
             // Add contact constraint jacobian entries here.
             for fc in self.frictional_contact_constraints.iter() {
-                let mut constraint = fc.constraint.borrow_mut();
+                let constraint = fc.constraint.borrow_mut();
                 let delta = self.delta as f32;
                 let kappa = self.kappa as f32;
-                constraint.update_constraint_gradient();
-                constraint.update_multipliers(delta, kappa);
+                // constraint.update_state_with_rebuild(Chunked3::from_flat(next.pos), false);
+                //constraint.update_distance_potential();
+                // constraint.update_constraint_gradient();
+                // constraint.update_multipliers(delta, kappa);
                 // Compute constraint hessian first term (multipliers held constant)
                 // let bcount = count;
 
@@ -2703,11 +2662,13 @@ impl<T: Real64> NLProblem<T> {
                     .constraint_hessian_indexed_values_iter(delta, kappa, num_active_coords / 3)
                     .zip(vals[count..].iter_mut())
                     .map(|((_, val), out_val)| {
-                        // if idx.row == 0 && idx.col == 2 {
-                        //     eprintln!(
-                        //         "contact jac (0,2): {:?}",
-                        //         -dqdv * force_multiplier * factor * val
-                        //     );
+                        // if idx.row == 10 && idx.col == 10 {
+                        // eprintln!(
+                        //     "contact jac ({:?}, {:?}): {:?}",
+                        //     idx.row,
+                        //     idx.col,
+                        //     -dqdv * force_multiplier * factor * val
+                        // );
                         // }
                         *out_val = -dqdv * force_multiplier * factor * val;
                         // jac[idx.row][idx.col] += out_val.to_f64().unwrap();
@@ -2766,14 +2727,17 @@ impl<T: Real64> NLProblem<T> {
                         epsilon,
                         dqdv,
                         num_active_coords / 3,
-                        false,
                     )
                     .map(|iter| {
                         iter.zip(vals[count..].iter_mut())
                             .map(|((_r, _c, val), out_val)| {
                                 // jac[_r][_c] = val.to_f64().unwrap();
-                                // if _r == 1 && _c == 15 {
-                                // eprintln!("({_r},{_c}): {:?}", force_multiplier * factor * val);
+                                // if _r == 9 && _c == 9 {
+                                //     eprintln!(
+                                //         "({_r},{_c}): {:?} -- {:?}",
+                                //         val,
+                                //         force_multiplier * factor * val
+                                //     );
                                 // }
                                 *out_val = force_multiplier * factor * val;
                                 //*out_val = T::zero();
@@ -2871,16 +2835,8 @@ impl<T: Real64> NLProblem<T> {
     #[allow(dead_code)]
     fn jacobian_product_ad(&self, v: &[T], p: &[T], jp: &mut [T]) {
         let t_begin = Instant::now();
-        {
-            let State { dof, .. } = &mut *self.state.borrow_mut();
-            let dq_ad = &mut dof.storage_mut().next_ad.dq;
-            // Construct automatically differentiable vector of velocities.
-            // The residual will be computed into the state workspace vector r_ad.
-            for (&v, &p, dq_ad) in zip!(v.iter(), p.iter(), dq_ad.iter_mut()) {
-                *dq_ad = ad::FT::new(v, p);
-            }
-            // End of dynamic mutable borrow.
-        }
+
+        self.update_state_ad(v, p, true);
 
         // Compute residual using dual numbers, the result is stored in dof residual.
         self.residual_ad();
@@ -2957,19 +2913,14 @@ impl<T: Real64> NLProblem<T> {
         // self.state.borrow_mut().update_vertices(v);
 
         let State { vtx, .. } = &*self.state.borrow_mut();
-        let vtx_pos = vtx.next.pos.view();
         let vtx_vel = vtx.next.vel.view();
 
         for fc in self.frictional_contact_constraints.iter() {
             // {
             let constraint = &mut *fc.constraint.borrow_mut();
 
-            constraint.update_state(vtx_pos);
-            constraint.update_constraint_gradient();
-            constraint.update_distance_potential();
-            constraint.update_multipliers(self.delta as f32, self.kappa as f32);
-            let pot = constraint.distance_potential.as_slice();
-            let lambda = constraint.lambda.as_slice();
+            let pot = constraint.contact_state.distance_potential.as_slice();
+            let lambda = constraint.contact_state.lambda.as_slice();
             {
                 constraint
                     .object_distance_potential_hessian_indexed_blocks_iter(lambda)
@@ -2992,6 +2943,7 @@ impl<T: Real64> NLProblem<T> {
 
                 // Contact
                 let MappedDistanceGradient { matrix: g, .. } = constraint
+                    .contact_state
                     .distance_gradient
                     .borrow()
                     .expect("Uninitialized constraint gradient.");
@@ -3011,9 +2963,10 @@ impl<T: Real64> NLProblem<T> {
                 });
             }
 
-            if constraint.point_constraint.friction_workspace.is_none() {
+            if constraint.friction_params.is_none() {
                 continue;
             }
+            let friction_params = constraint.friction_params.unwrap();
             // }
 
             // Friction
@@ -3038,33 +2991,11 @@ impl<T: Real64> NLProblem<T> {
             //     })
             // }
 
-            use crate::constraints::ContactConstraint;
-            let normals = constraint.point_constraint.contact_normals();
-
             let constrained_collider_vertices = constraint.constrained_collider_vertices.as_slice();
+            let contact_basis = &constraint.contact_state.contact_basis;
 
-            // Contact Jacobian is defined for object vertices only. Contact Jacobian for collider vertices is the negative identity.
-            PenaltyPointContactConstraint::update_contact_jacobian(
-                constraint.contact_jacobian.as_mut().unwrap(),
-                &constraint.point_constraint.implicit_surface,
-                constraint.point_constraint.collider_vertex_positions.view(),
-                constrained_collider_vertices,
-            );
-
-            let FrictionWorkspace {
-                params,
-                contact_basis,
-                ..
-            } = constraint
-                .point_constraint
-                .friction_workspace
-                .as_mut()
-                .unwrap();
-
-            contact_basis.update_from_normals(normals);
-
-            let mu = T::from(params.dynamic_friction).unwrap();
-            let jac = constraint.contact_jacobian.as_ref().unwrap();
+            let mu = T::from(friction_params.dynamic_friction).unwrap();
+            let jac = constraint.contact_state.contact_jacobian.as_ref().unwrap();
             let mut vc = jac.mul(
                 vtx_vel,
                 &constrained_collider_vertices,
@@ -3082,7 +3013,10 @@ impl<T: Real64> NLProblem<T> {
                 let vc = contact_basis.to_contact_coordinates(*scale_contact, contact_idx);
                 let lambda = -ContactPenalty::new(delta).db(d);
                 let v2 = Vector2::from([vc[1], vc[2]]);
-                let mtx = constraint.eta.jacobian(v2, lambda, epsilon) * (kappa * mu * h * h);
+                let mtx = friction_params
+                    .friction_profile
+                    .jacobian(v2, lambda, epsilon)
+                    * (kappa * mu * h * h);
                 let eta_jac = [
                     [T::zero(); 3],
                     [T::zero(), mtx[0][0], mtx[0][1]],
@@ -3132,22 +3066,13 @@ impl<T: Real64> NLProblem<T> {
     /// Computes the Jacobian product using forward mode AD for friction Jacobian.
     fn jacobian_product_constraint_ad(&self, v: &[T], p: &[T], jp: &mut [T]) {
         let t_begin = Instant::now();
-        {
-            let State { dof, .. } = &mut *self.state.borrow_mut();
-            let dq_ad = &mut dof.storage_mut().next_ad.dq;
-            // Construct automatically differentiable vector of velocities.
-            // The residual will be computed into the state workspace vector r_ad.
-            for (&v, &p, dq_ad) in zip!(v.iter(), p.iter(), dq_ad.iter_mut()) {
-                *dq_ad = ad::FT::new(v, p);
-            }
-            // End of dynamic mutable borrow.
-        }
-
         // Compute Jacobian product normally. Use AD for friction and contact only.
 
+        // State should have been updated with update_state call.
+        //self.integrate_step(v);
+        //self.state.borrow_mut().update_vertices(v);
+
         // First pre-compute the Jacobian rows, cols and values.
-        self.integrate_step(v);
-        self.state.borrow_mut().update_vertices(v);
         let JacobianWorkspace {
             rows,
             cols,
@@ -3161,8 +3086,24 @@ impl<T: Real64> NLProblem<T> {
         }
 
         // Compute the contact and friction Jacobians using AD
-        self.integrate_step_ad();
-        self.state.borrow_mut().update_vertices_ad();
+
+        self.update_state_ad(v, p, true);
+
+        // // Update state
+        // self.integrate_step_ad();
+        // self.state.borrow_mut().update_vertices_ad();
+        // {
+        //     let State { vtx, .. } = &*self.state.borrow();
+        //     for fc in self.frictional_contact_constraints_ad.iter() {
+        //         let mut fc_constraint = fc.constraint.borrow_mut();
+        //         let timings = &mut *self.timings.borrow_mut();
+        //         add_time!(timings.update_state; fc_constraint.update_state_with_rebuild(vtx.next_ad.pos.view(), false));
+        //         add_time!(timings.update_distance_potential; fc_constraint.update_distance_potential() );
+        //         add_time!(timings.update_constraint_gradient; fc_constraint.update_constraint_gradient() );
+        //         add_time!(timings.update_multipliers; fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32));
+        //         add_time!(timings.update_sliding_basis; fc_constraint.update_sliding_basis());
+        //     }
+        // }
 
         let multiplier: f32 = self.time_integration.implicit_factor();
 
@@ -3206,6 +3147,43 @@ impl<T: Real64> NLProblem<T> {
         }
 
         self.timings.borrow_mut().total += Instant::now() - t_begin;
+    }
+
+    /// Same as `update_state_ad` but uses an all zero vector for the dual part of `x`.
+    fn update_state_ad_cst(&self, x: &[T], rebuild_tree: bool) {
+        self.update_state_ad(x, std::iter::repeat(&T::zero()), rebuild_tree);
+    }
+
+    fn update_state_ad<'a, PI>(&self, v: &[T], p: PI, rebuild_tree: bool)
+    where
+        PI: IntoIterator<Item = &'a T>,
+    {
+        {
+            let State { dof, .. } = &mut *self.state.borrow_mut();
+            let dq_ad = &mut dof.storage_mut().next_ad.dq;
+            // Construct automatically differentiable vector of velocities.
+            // The residual will be computed into the state workspace vector r_ad.
+            for (&v, &p, dq_ad) in zip!(v.iter(), p.into_iter(), dq_ad.iter_mut()) {
+                *dq_ad = ad::FT::new(v, p);
+            }
+            // End of dynamic mutable borrow.
+        }
+
+        self.integrate_step_ad();
+        self.state.borrow_mut().update_vertices_ad();
+        let state = self.state.borrow();
+        let pos = state.vtx.next_ad.pos.view();
+
+        for fc in self.frictional_contact_constraints_ad.iter() {
+            let mut fc_constraint = fc.constraint.borrow_mut();
+            let timings = &mut *self.timings.borrow_mut();
+
+            add_time!(timings.update_state; fc_constraint.update_state_with_rebuild(pos, rebuild_tree));
+            add_time!(timings.update_distance_potential; fc_constraint.update_distance_potential() );
+            add_time!(timings.update_constraint_gradient; fc_constraint.update_constraint_gradient() );
+            add_time!(timings.update_multipliers; fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32));
+            add_time!(timings.update_sliding_basis; fc_constraint.update_sliding_basis(false, pos.len()));
+        }
     }
 }
 
@@ -3293,18 +3271,17 @@ pub trait NonLinearProblem<T: Real> {
     ///
     /// This can be an energy or a residual norm. It is used by the newton solver to guide the
     /// root finding method.
-    ///
-    /// By default it is implemented as half of the squared norm of the residual.
-    fn objective(&self, x: &[T]) -> T {
-        let mut r = vec![T::zero(); x.len()];
-        self.residual(x, &mut r);
-        T::from(0.5).unwrap() * r.as_tensor().norm_squared()
-    }
+    fn objective(&self, x: &[T]) -> T;
 
     /// The vector function `r` whose roots we want to find.
     ///
     /// `r(x) = 0`.
-    fn residual(&self, x: &[T], r: &mut [T]);
+    fn residual(&self, x: &[T], r: &mut [T], symmetric: bool);
+
+    /// Update internal state according to the given velocity.
+    ///
+    /// This function automatically decides which state should be updated.
+    fn update_state(&self, x: &[T], rebuild_tree: bool, explicit_jacobian: bool);
 
     /// Compute a diagonal preconditioner.
     fn diagonal_preconditioner(&self, v: &[T], precond: &mut [T]);
@@ -3416,24 +3393,18 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     }
 
     #[inline]
-    fn objective(&self, dq: &[T]) -> T {
-        self.integrate_step(dq);
-        self.state.borrow_mut().update_vertices(dq);
-
-        match self.time_integration {
-            SingleStepTimeIntegration::BE => self.compute_objective(0.0),
-            SingleStepTimeIntegration::TR => self.compute_objective(0.5),
-            SingleStepTimeIntegration::SDIRK2 => self.compute_objective(0.5 * 2.0_f64.sqrt()),
-            // BDF2 objective is computed same as BE, but note that vtx.cur is different.
-            // vtx.cur is set in update_cur_vertices at the beginning of the step.
-            SingleStepTimeIntegration::BDF2 => self.compute_objective(0.0),
-            SingleStepTimeIntegration::MixedBDF2(_) => self.compute_objective(0.0),
-        }
+    fn objective(&self, _dq: &[T]) -> T {
+        // self.integrate_step(dq);
+        // self.state.borrow_mut().update_vertices(dq);
+        //
+        let implicit_factor = self.time_integration.implicit_factor();
+        let explicit_factor = self.time_integration.explicit_factor();
+        self.compute_objective(implicit_factor as f64, explicit_factor as f64)
     }
 
     fn assist_line_search(&self, mut alpha: T, p: &[T], v: &[T], r_cur: &[T], r_next: &[T]) -> T {
         let LineSearchWorkspace {
-            pos_cur,
+            // pos_cur,
             pos_next,
             dq,
             vel,
@@ -3444,8 +3415,8 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
         // Prepare positions
         {
-            dq.resize(v.len(), T::zero());
-            dq.copy_from_slice(v);
+            // dq.resize(v.len(), T::zero());
+            // dq.copy_from_slice(v);
             let num_coords = {
                 let state = &*self.state.borrow_mut();
                 state.vtx.next.pos.len() * 3
@@ -3453,7 +3424,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
             vel.storage_mut().resize(num_coords, T::zero());
             search_dir.storage_mut().resize(num_coords, T::zero());
-            pos_cur.storage_mut().resize(num_coords, T::zero());
+            // pos_cur.storage_mut().resize(num_coords, T::zero());
             pos_next.storage_mut().resize(num_coords, T::zero());
             f1vtx.storage_mut().resize(num_coords, T::zero());
             f2vtx.storage_mut().resize(num_coords, T::zero());
@@ -3480,43 +3451,54 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             // Here we can save two rtree rebuilds if we strategically restructure the code
             // to capture/cache the needed info throughout the solve.
             {
-                self.integrate_step(dq);
-                let state = &mut *self.state.borrow_mut();
-                state.update_vertices(dq);
+                // self.integrate_step(dq);
+                let state = &*self.state.borrow();
+                // state.update_vertices(dq);
+                // vel.storage_mut()
+                //     .copy_from_slice(state.vtx.next.vel.storage());
                 vel.storage_mut()
-                    .copy_from_slice(state.vtx.next.vel.storage());
-                pos_cur
-                    .storage_mut()
-                    .copy_from_slice(state.vtx.next.pos.storage());
+                    .copy_from_slice(state.vtx.cur.vel.storage());
+                // pos_cur
+                //     .storage_mut()
+                //     .copy_from_slice(state.vtx.next.pos.storage());
             }
 
-            *dq.as_mut_tensor() += p.as_tensor();
-            {
-                self.integrate_step(dq);
-                let state = &mut *self.state.borrow_mut();
-                state.update_vertices(dq);
-                pos_next
-                    .storage_mut()
-                    .copy_from_slice(state.vtx.next.pos.storage());
-            }
+            // *dq.as_mut_tensor() += p.as_tensor();
+            // {
+            //     self.integrate_step(dq);
+            //     let state = &mut *self.state.borrow_mut();
+            //     state.update_vertices(dq);
+            //     pos_next
+            //         .storage_mut()
+            //         .copy_from_slice(state.vtx.next.pos.storage());
+            // }
         }
 
         // Contact assist
         for fc in self.frictional_contact_constraints.iter() {
-            let mut fc_constraint = fc.constraint.borrow_mut();
+            let fc_constraint = fc.constraint.borrow_mut();
             alpha = num_traits::Float::min(
                 alpha,
                 fc_constraint.assist_line_search_for_contact(
                     alpha,
-                    pos_cur.view(),
-                    pos_next.view(),
+                    // pos_cur.view(),
+                    // pos_next.view(),
                     self.delta as f32,
                 ),
             );
         }
 
         // Prepare for friction
-        {
+        let do_friction = self
+            .frictional_contact_constraints
+            .iter()
+            .any(|fc| fc.constraint.borrow().friction_params.is_some());
+        if !do_friction {
+            return alpha;
+        }
+
+        if alpha < T::one() {
+            dq.resize(v.len(), T::zero());
             dq.copy_from_slice(v);
             dq.iter_mut()
                 .zip(p.iter())
@@ -3532,11 +3514,17 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         }
 
         // Friction assist
-        let state = &*self.state.borrow_mut();
+        // let state = &*self.state.borrow_mut();
         // let vel_next = state.vtx.next.vel.view();
+
         assert_eq!(vel.len(), search_dir.len());
         for fc in self.frictional_contact_constraints.iter() {
             let mut fc_constraint = fc.constraint.borrow_mut();
+
+            if alpha < T::one() {
+                fc_constraint.update_state(pos_next.view());
+                fc_constraint.update_distance_potential();
+            }
             alpha = num_traits::Float::min(
                 alpha,
                 fc_constraint.assist_line_search_for_friction(
@@ -3545,8 +3533,8 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
                     vel.view(),
                     f1vtx.view(),
                     f2vtx.view(),
-                    state.vtx.cur.pos.view(),
-                    pos_next.view(),
+                    // state.vtx.cur.pos.view(),
+                    // pos_next.view(),
                     self.delta as f32,
                     // self.epsilon as f32,
                 ),
@@ -3640,6 +3628,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             shell,
             self.frictional_contact_constraints.as_slice(),
             T::from(dt).unwrap(),
+            false,
         );
 
         eprintln!("force = {:?}", vtx.residual.storage());
@@ -3654,13 +3643,29 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         eprintln!("after = {:?}", &*dq);
     }
 
-    #[inline]
-    fn residual(&self, dq: &[T], r: &mut [T]) {
+    fn update_state(&self, x: &[T], rebuild_tree: bool, explicit_jacobian: bool) {
+        self.integrate_step(x);
+        self.state.borrow_mut().update_vertices(x);
+        let state = self.state.borrow();
+        let pos = state.vtx.next.pos.view();
+
+        for fc in self.frictional_contact_constraints.iter() {
+            let mut fc_constraint = fc.constraint.borrow_mut();
+            let timings = &mut *self.timings.borrow_mut();
+            add_time!(timings.update_state; fc_constraint.update_state_with_rebuild(pos, rebuild_tree));
+            add_time!(timings.update_distance_potential; fc_constraint.update_distance_potential() );
+            add_time!(timings.update_constraint_gradient; fc_constraint.update_constraint_gradient() );
+            add_time!(timings.update_multipliers; fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32));
+            add_time!(timings.update_sliding_basis; fc_constraint.update_sliding_basis(explicit_jacobian, pos.len()));
+        }
+    }
+
+    fn residual(&self, _x: &[T], r: &mut [T], symmetric: bool) {
         // eprintln!("dq = {dq:?}");
         let t_begin = Instant::now();
-        self.integrate_step(dq);
-        self.state.borrow_mut().update_vertices(dq);
-        self.compute_vertex_residual();
+        // self.integrate_step(dq);
+        // self.state.borrow_mut().update_vertices(dq);
+        self.compute_vertex_residual(symmetric);
 
         // Transfer residual to degrees of freedom.
         let state = &*self.state.borrow();
@@ -3668,7 +3673,6 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         self.timings.borrow_mut().total += Instant::now() - t_begin;
     }
 
-    #[inline]
     fn diagonal_preconditioner(&self, v: &[T], precond: &mut [T]) {
         let t_begin = Instant::now();
         match self.preconditioner {
@@ -3799,7 +3803,7 @@ impl<T: Real64> NLProblem<T> {
             preconditioner,
             debug_friction: RefCell::new(Vec::new()),
             line_search_ws: RefCell::new(LineSearchWorkspace {
-                pos_cur: Chunked3::default(),
+                // pos_cur: Chunked3::default(),
                 pos_next: Chunked3::default(),
                 vel: Chunked3::default(),
                 search_dir: Chunked3::default(),
@@ -3823,12 +3827,12 @@ impl<T: Real64> NLProblem<T> {
             return Ok(());
         }
 
-        let objective_result = Ok(());
-        // let objective_result = self.check_objective_gradient(x, perturb_initial);
-        //
-        // if level == 1 {
-        //     return objective_result;
-        // }
+        // let objective_result = Ok(());
+        let objective_result = self.check_objective_gradient(x, perturb_initial);
+
+        if level == 1 {
+            return objective_result;
+        }
 
         log::debug!("Checking Jacobian...");
         use ad::F1 as F;
@@ -3841,10 +3845,11 @@ impl<T: Real64> NLProblem<T> {
                 perturb(&mut x0);
             }
 
-            let mut r = vec![T::zero(); n];
-            problem_clone.residual(&x0, &mut r);
-
             let (jac_rows, jac_cols) = problem_clone.jacobian_indices(true);
+
+            let mut r = vec![T::zero(); n];
+            problem_clone.update_state(&x0, true, true);
+            problem_clone.residual(&x0, &mut r, false);
 
             let mut jac_values = vec![T::zero(); jac_rows.len()];
             NonLinearProblem::jacobian_values(
@@ -3876,7 +3881,8 @@ impl<T: Real64> NLProblem<T> {
         }
 
         let mut r = vec![F::zero(); n];
-        problem.residual(&x0, &mut r);
+        problem.update_state(&x0, true, true);
+        problem.residual(&x0, &mut r, false);
 
         let mut jac_ad = vec![vec![0.0; n]; n];
 
@@ -3884,7 +3890,8 @@ impl<T: Real64> NLProblem<T> {
         for col in 0..n {
             // eprintln!("CHECK JAC AUTODIFF WRT {}", col);
             x0[col] = F::var(x0[col]);
-            problem.residual(&x0, &mut r);
+            problem.update_state(&x0, false, true);
+            problem.residual(&x0, &mut r, false);
             let d: Vec<f64> = r.iter().map(|r| r.deriv()).collect();
             let avg_deriv = d.into_tensor().norm();
             for row in 0..n {
@@ -3965,75 +3972,78 @@ impl<T: Real64> NLProblem<T> {
         }
     }
 
-    ///// Checks that the given problem has a consistent Jacobian implementation.
-    // pub(crate) fn check_objective_gradient(
-    //     &self,
-    //     x: &[T],
-    //     perturb_initial: bool,
-    // ) -> Result<(), crate::Error> {
-    //     log::debug!("Checking Objective Gradient...");
-    //     use ad::F1 as F;
-    //     // Compute Gradient
-    //     let grad: Vec<f64> = {
-    //         let problem_clone = self.clone();
-    //         let n = problem_clone.num_variables();
-    //         let mut x0 = x.to_vec();
-    //         if perturb_initial {
-    //             perturb(&mut x0);
-    //         }
-    //
-    //         let mut r = vec![T::zero(); n];
-    //         problem_clone.residual(&x0, &mut r);
-    //         r.iter().map(|&x| x.to_f64().unwrap()).collect()
-    //     };
-    //
-    //     let problem = self.clone_as_autodiff();
-    //     let n = problem.num_variables();
-    //     let mut x0: Vec<_> = x.iter().map(|&x| F::cst(x.to_f64().unwrap())).collect();
-    //     if perturb_initial {
-    //         perturb(&mut x0);
-    //     }
-    //
-    //     let mut grad_ad = vec![0.0; n];
-    //
-    //     // Precompute constraints.
-    //     let mut _r = vec![ad::F1::zero(); n];
-    //     problem.residual(&x0, &mut _r);
-    //
-    //     let mut success = true;
-    //     for i in 0..n {
-    //         // eprintln!("CHECK GRAD AUTODIFF WRT {}", i);
-    //         x0[i] = F::var(x0[i]);
-    //         let obj = problem.objective(&x0);
-    //         let dobj = obj.deriv();
-    //         let res = approx::relative_eq!(grad[i], dobj, max_relative = 1e-6, epsilon = 1e-7,);
-    //         grad_ad[i] = dobj;
-    //         if !res {
-    //             success = false;
-    //             log::debug!("({}): {} vs. {}", i, grad[i], dobj);
-    //         }
-    //         x0[i] = F::cst(x0[i]);
-    //     }
-    //
-    //     if !success && n < 15 {
-    //         // Print dense grad if its small
-    //         log::debug!("Actual:");
-    //         for i in 0..n {
-    //             log::debug!("{:10.2e}", grad[i]);
-    //         }
-    //
-    //         log::debug!("Expected:");
-    //         for i in 0..n {
-    //             log::debug!("{:10.2e}", grad_ad[i]);
-    //         }
-    //     }
-    //     if success {
-    //         log::debug!("No errors during Gradient check.");
-    //         Ok(())
-    //     } else {
-    //         Err(crate::Error::DerivativeCheckFailure)
-    //     }
-    // }
+    // Checks that the given problem has a consistent Jacobian implementation.
+    pub(crate) fn check_objective_gradient(
+        &self,
+        x: &[T],
+        perturb_initial: bool,
+    ) -> Result<(), crate::Error> {
+        log::debug!("Checking Objective Gradient...");
+        use ad::F1 as F;
+        // Compute Gradient
+        let grad: Vec<f64> = {
+            let problem_clone = self.clone();
+            let n = problem_clone.num_variables();
+            let mut x0 = x.to_vec();
+            if perturb_initial {
+                perturb(&mut x0);
+            }
+
+            let mut r = vec![T::zero(); n];
+            problem_clone.update_state(&x0, true, false);
+            problem_clone.residual(&x0, &mut r, true);
+            r.iter().map(|&x| x.to_f64().unwrap()).collect()
+        };
+
+        let problem = self.clone_as_autodiff();
+        let n = problem.num_variables();
+        let mut x0: Vec<_> = x.iter().map(|&x| F::cst(x.to_f64().unwrap())).collect();
+        if perturb_initial {
+            perturb(&mut x0);
+        }
+
+        let mut grad_ad = vec![0.0; n];
+
+        // Precompute constraints.
+        let mut _r = vec![ad::F1::zero(); n];
+        problem.update_state(&x0, true, false);
+        problem.residual(&x0, &mut _r, true);
+
+        let mut success = true;
+        for i in 0..n {
+            // eprintln!("CHECK GRAD AUTODIFF WRT {}", i);
+            x0[i] = F::var(x0[i]);
+            problem.update_state(&x0, true, false);
+            let obj = problem.objective(&x0);
+            let dobj = obj.deriv();
+            let res = approx::relative_eq!(grad[i], dobj, max_relative = 1e-5, epsilon = 1e-6,);
+            grad_ad[i] = dobj;
+            if !res {
+                success = false;
+                log::debug!("({}): {} vs. {}", i, grad[i], dobj);
+            }
+            x0[i] = F::cst(x0[i]);
+        }
+
+        if !success && n < 15 {
+            // Print dense grad if its small
+            log::debug!("Actual:");
+            for i in 0..n {
+                log::debug!("{:10.2e}", grad[i]);
+            }
+
+            log::debug!("Expected:");
+            for i in 0..n {
+                log::debug!("{:10.2e}", grad_ad[i]);
+            }
+        }
+        if success {
+            log::debug!("No errors during Gradient check.");
+            Ok(())
+        } else {
+            Err(crate::Error::DerivativeCheckFailure)
+        }
+    }
 }
 
 pub(crate) fn perturb<T: Real>(x: &mut [T]) {
@@ -4055,28 +4065,38 @@ mod tests {
     /// Verifies that the problem jacobian is implemented correctly.
     #[test]
     fn nl_problem_jacobian_one_tet() {
+        use TimeIntegration::*;
         init_logger();
-        let mut solver_builder = SolverBuilder::new(sample_params());
-        solver_builder
-            .set_mesh(Mesh::from(make_one_tet_mesh()))
-            .set_materials(vec![solid_material().into()]);
-        let problem = solver_builder.build_problem::<f64>().unwrap();
-        assert!(problem
-            .check_jacobian(2, &problem.initial_point(), true)
-            .is_ok());
+        for ti in [BE, BDF2, SDIRK2, TRBDF2(0.5)] {
+            let mut params = sample_params();
+            params.time_integration = ti;
+            let mut solver_builder = SolverBuilder::new(params);
+            solver_builder
+                .set_mesh(Mesh::from(make_one_tet_mesh()))
+                .set_materials(vec![solid_material().into()]);
+            let problem = solver_builder.build_problem::<f64>().unwrap();
+            assert!(problem
+                .check_jacobian(2, &problem.initial_point(), true)
+                .is_ok());
+        }
     }
 
     #[test]
     fn nl_problem_jacobian_three_tets() {
+        use TimeIntegration::*;
         init_logger();
-        let mut solver_builder = SolverBuilder::new(sample_params());
-        solver_builder
-            .set_mesh(Mesh::from(make_three_tet_mesh()))
-            .set_materials(vec![solid_material().into()]);
-        let problem = solver_builder.build_problem::<f64>().unwrap();
-        assert!(problem
-            .check_jacobian(2, &problem.initial_point(), true)
-            .is_ok());
+        for ti in [BE, BDF2, SDIRK2, TRBDF2(0.5)] {
+            let mut params = sample_params();
+            params.time_integration = ti;
+            let mut solver_builder = SolverBuilder::new(params);
+            solver_builder
+                .set_mesh(Mesh::from(make_three_tet_mesh()))
+                .set_materials(vec![solid_material().into()]);
+            let problem = solver_builder.build_problem::<f64>().unwrap();
+            assert!(problem
+                .check_jacobian(2, &problem.initial_point(), true)
+                .is_ok());
+        }
     }
 
     fn solid_material() -> SolidMaterial {

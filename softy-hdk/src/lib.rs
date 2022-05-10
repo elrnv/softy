@@ -144,6 +144,7 @@ mod ffi {
         pub friction_forwarding: f32,
         pub dynamic_cof: f32,
         pub friction_profile: FrictionProfile,
+        pub lagged_friction: bool,
         pub friction_tolerance: f32,
         pub friction_inner_iterations: u32,
     }

@@ -6,8 +6,8 @@ use geo::{Mesh, TriMesh};
 use softy::nl_fem::{SimParams, SolverBuilder};
 pub use softy::test_utils::*;
 use softy::{
-    Error, FixedIntType, FrictionalContactParams, MaterialIdType, ObjectIdType, PolyMesh,
-    SolidMaterial, TetMesh, FIXED_ATTRIB, MATERIAL_ID_ATTRIB, OBJECT_ID_ATTRIB,
+    constraints::FrictionalContactParams, Error, FixedIntType, MaterialIdType, ObjectIdType,
+    PolyMesh, SolidMaterial, TetMesh, FIXED_ATTRIB, MATERIAL_ID_ATTRIB, OBJECT_ID_ATTRIB,
 };
 
 /// Utility function to compare positions of two meshes.

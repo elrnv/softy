@@ -211,6 +211,7 @@ fn get_frictional_contacts<'a>(
                 use_fixed,
                 dynamic_cof,
                 friction_profile,
+                lagged_friction,
             } = *frictional_contact;
             let radius_multiplier = f64::from(radius_multiplier);
             let tolerance = f64::from(smoothness_tolerance);
@@ -245,6 +246,7 @@ fn get_frictional_contacts<'a>(
                                 FrictionProfile::Quadratic => softy::FrictionProfile::Quadratic,
                                 _ => softy::FrictionProfile::Stabilized,
                             },
+                            lagged: lagged_friction,
                         })
                     },
                 },

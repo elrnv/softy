@@ -91,9 +91,11 @@ where
     fn objective(&self, x: &[T]) -> T {
         self.problem.objective(x)
     }
+    #[inline]
     fn assist_line_search(&self, alpha: T, p: &[T], x: &[T], r_cur: &[T], r_next: &[T]) -> T {
         self.problem.assist_line_search(alpha, p, x, r_cur, r_next)
     }
+    #[inline]
     fn converged(
         &self,
         x_prev: &[T],
@@ -107,11 +109,18 @@ where
         self.problem
             .converged(x_prev, x, r, merit, x_tol, r_tol, a_tol)
     }
+    #[inline]
     fn compute_warm_start(&self, x: &mut [T]) {
         self.problem.compute_warm_start(x);
     }
-    fn residual(&self, x: &[T], r: &mut [T]) {
-        self.problem.residual(x, r);
+    #[inline]
+    fn update_state(&self, x: &[T], rebuild_tree: bool, explicit_jacobian: bool) {
+        self.problem
+            .update_state(x, rebuild_tree, explicit_jacobian);
+    }
+    #[inline]
+    fn residual(&self, x: &[T], r: &mut [T], symmetric: bool) {
+        self.problem.residual(x, r, symmetric);
         let (l, u) = &*self.bounds.borrow();
         zip!(r.iter_mut(), x.iter(), l.iter(), u.iter()).for_each(|(r, &x, &l, &u)| {
             *r = Float::min(
@@ -120,12 +129,15 @@ where
             );
         });
     }
+    #[inline]
     fn diagonal_preconditioner(&self, v: &[T], precond: &mut [T]) {
         self.problem.diagonal_preconditioner(v, precond);
     }
+    #[inline]
     fn jacobian_indices(&self, with_constraints: bool) -> (Vec<usize>, Vec<usize>) {
         self.problem.jacobian_indices(with_constraints)
     }
+    #[inline]
     fn jacobian_values(&self, x: &[T], r: &[T], rows: &[usize], cols: &[usize], values: &mut [T]) {
         self.problem.jacobian_values(x, r, rows, cols, values);
         let mut seen = self.workspace_seen.borrow_mut();
@@ -150,6 +162,7 @@ where
             }
         }
     }
+    #[inline]
     fn jacobian_product(&self, x: &[T], p: &[T], r: &[T], jp: &mut [T]) {
         self.problem.jacobian_product(x, p, r, jp);
         let (l, u) = &*self.bounds.borrow();

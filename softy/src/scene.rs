@@ -15,8 +15,9 @@ use thiserror::Error;
 
 use flatk::IntoStorage;
 
+use crate::constraints::penalty_point_contact::FrictionalContactParams;
 use crate::nl_fem::{SimParams, SolverBuilder, StepResult, ZoneParams};
-use crate::{FrictionalContactParams, Material, Mesh};
+use crate::{Material, Mesh};
 
 #[derive(Debug, Error)]
 pub enum SerializeError {

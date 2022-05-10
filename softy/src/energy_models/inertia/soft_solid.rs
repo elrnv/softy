@@ -227,7 +227,7 @@ pub(crate) struct TetSolidInertia<'a>(pub &'a TetElements);
 
 impl<T: Real> Energy<T> for TetSolidInertia<'_> {
     #[allow(non_snake_case)]
-    fn energy(&self, v0: &[T], v1: &[T]) -> T {
+    fn energy(&self, v0: &[T], v1: &[T], _dqdv: T) -> T {
         let tet_elems = &self.0;
 
         let vel0: &[Vector3<T>] = bytemuck::cast_slice(v0);

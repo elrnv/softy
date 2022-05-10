@@ -2,7 +2,6 @@ use tensr::{IntoData, Vector3};
 
 use geo::attrib::Attrib;
 use geo::builder::AxisPlaneOrientation;
-use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
 use geo::topology::{CellVertexIndex, FaceIndex, FaceVertexIndex, NumFaces};
 use softy::nl_fem::*;

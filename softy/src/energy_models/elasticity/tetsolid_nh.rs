@@ -79,9 +79,11 @@ impl<'a, E> TetSolidElasticity<'a, E> {
 /// Define a hyperelastic energy model for `TetElements`s.
 impl<T: Real, E: TetEnergy<T>> Energy<T> for TetSolidElasticity<'_, E> {
     #[allow(non_snake_case)]
-    fn energy(&self, x: &[T], v: &[T]) -> T {
+    fn energy(&self, x: &[T], v: &[T], dqdv: T) -> T {
         let x: &[Vector3<T>] = bytemuck::cast_slice(x);
         let v: &[Vector3<T>] = bytemuck::cast_slice(v);
+
+        let dqdv2 = dqdv * dqdv;
 
         zip!(
             self.0.damping.iter().map(|&x| f64::from(x)),
@@ -97,7 +99,6 @@ impl<T: Real, E: TetEnergy<T>> Energy<T> for TetSolidElasticity<'_, E> {
             let tet_v = Tetrahedron::from_indexed_slice(cell, v);
             let Dx = Matrix3::new(tet_x.shape_matrix());
             let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
-            // let size = T::from(vol.cbrt()).unwrap();
             let vol = T::from(vol).unwrap();
             let lambda = T::from(lambda).unwrap();
             let mu = T::from(mu).unwrap();
@@ -108,7 +109,7 @@ impl<T: Real, E: TetEnergy<T>> Energy<T> for TetSolidElasticity<'_, E> {
             // elasticity
             tet_energy.energy()
                 // damping (viscosity)
-                + mu * vol * dF.norm_squared() * half * damping
+                + mu * vol * dF.norm_squared() * half * damping * dqdv2
             //+ half * damping * {
             //    let dH = tet_energy.energy_hessian_product_transpose(&tet_dx);
             //    dH[0].dot(Vector3::new(tet_dx.0.into()))

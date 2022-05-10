@@ -17,8 +17,8 @@ use super::problem::{
 use super::state::*;
 use super::{NLSolver, SimParams, SolveResult, Status};
 use crate::attrib_defines::*;
+use crate::constraints::penalty_point_contact::FrictionalContactParams;
 use crate::constraints::*;
-use crate::contact::*;
 use crate::fem::{ref_tet, ref_tri};
 use crate::inf_norm;
 use crate::nl_fem::{
@@ -160,6 +160,8 @@ impl SolverBuilder {
         vertex_type: &[VertexType],
         frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
         precompute_hessian_matrices: bool,
+        delta: f32,
+        kappa: f32,
     ) -> Result<Vec<FrictionalContactConstraint<T>>, crate::Error> {
         use super::problem::ObjectId;
         use crate::TriMesh;
@@ -246,10 +248,9 @@ impl SolverBuilder {
 
         frictional_contacts
             .into_iter()
-            .map(|(mut params, (object_id, collider_id))| {
+            .map(|(params, (object_id, collider_id))| {
                 let object = build_contact_surface(object_id)?;
                 let collider = build_contact_surface(collider_id)?;
-                params.contact_type = ContactType::Point; // linearized not supported on nl solvers.
                 Ok(FrictionalContactConstraint {
                     object_id: ObjectId {
                         obj_id: object_id,
@@ -259,13 +260,17 @@ impl SolverBuilder {
                         obj_id: collider_id,
                         include_fixed: params.use_fixed,
                     },
-                    constraint: build_penalty_contact_constraint(
+                    constraint: std::cell::RefCell::new(PenaltyPointContactConstraint::new(
                         object,
                         collider,
-                        params,
+                        params.kernel,
+                        params.friction_params,
+                        params.contact_offset,
                         num_vertices,
                         precompute_hessian_matrices,
-                    )?,
+                        delta,
+                        kappa,
+                    )?),
                 })
             })
             .collect::<Result<Vec<_>, crate::Error>>()
@@ -722,11 +727,16 @@ impl SolverBuilder {
         // Frictional contacts need to be built after state since state initializes the vertex mass inverses.
         Self::init_mass_inv_attribute::<T>(&mut mesh, &state.vtx.mass_inv);
 
+        let kappa = 1.0 / params.contact_tolerance;
+        let delta = params.contact_tolerance;
+
         let frictional_contact_constraints = Self::build_frictional_contact_constraints::<T>(
             &mesh,
             &vertex_type,
             frictional_contacts,
             params.should_compute_jacobian_matrix(),
+            delta,
+            kappa,
         )?;
         let frictional_contact_constraints_ad = frictional_contact_constraints
             .iter()
@@ -821,8 +831,8 @@ impl SolverBuilder {
         Ok(NLProblem {
             state: RefCell::new(state),
             state_vertex_indices,
-            kappa: 1.0 / params.contact_tolerance as f64,
-            delta: params.contact_tolerance as f64,
+            kappa: kappa as f64,
+            delta: delta as f64,
             epsilon: params.friction_tolerance as f64,
             frictional_contact_constraints,
             frictional_contact_constraints_ad,
@@ -844,7 +854,7 @@ impl SolverBuilder {
             time_integration: SingleStepTimeIntegration::BE,
             preconditioner: params.preconditioner,
             line_search_ws: RefCell::new(LineSearchWorkspace {
-                pos_cur: Chunked3::default(),
+                //pos_cur: Chunked3::default(),
                 pos_next: Chunked3::default(),
                 vel: Chunked3::default(),
                 search_dir: Chunked3::default(),
@@ -1007,7 +1017,7 @@ where
         self.solver.problem_mut()
     }
 
-    /// Get a slice of solid objects represented in this solver.
+    /// Get a slice of solid objects represented in this solver
     pub fn solid(&self) -> std::cell::Ref<TetSolid> {
         std::cell::Ref::map(self.problem().state.borrow(), |state| &state.solid)
     }
@@ -1055,11 +1065,19 @@ where
     fn commit_solution(&mut self, relax_max_step: bool) {
         {
             let Self {
-                solver, solution, ..
+                solver,
+                solution,
+                sim_params,
+                ..
             } = self;
 
             // Advance internal state (positions and velocities) of the problem.
-            solver.problem_mut().advance(solution);
+            solver.problem_mut().advance(
+                solution,
+                sim_params.derivative_test > 0,
+                !matches!(sim_params.linsolve, LinearSolver::Iterative { .. })
+                    || sim_params.derivative_test > 0,
+            );
             //TODO Remove debug code:
             // solution.iter_mut().for_each(|x| *x = T::zero());
         }

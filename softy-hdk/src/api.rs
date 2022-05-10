@@ -10,7 +10,7 @@ use geo::mesh::topology::*;
 use geo::topology::NumVertices;
 use hdkrs::interop::CookResult;
 use softy::nl_fem::LinearSolver;
-use softy::{self, fem, Mesh, PointCloud, RefPosType, REFERENCE_CELL_VERTEX_POS_ATTRIB};
+use softy::{self, fem, Mesh, PointCloud};
 #[cfg(feature = "optsolver")]
 use softy::{PolyMesh, TetMesh, TetMeshExt};
 
@@ -408,9 +408,81 @@ fn get_shell_material(params: &SimParams, material_id: u32) -> Result<softy::She
     }
 }
 
+#[derive(Copy, Clone, PartialEq)]
+enum GenericFrictionalContactParams {
+    #[cfg(feature = "optsolver")]
+    Ipopt(softy::FrictionalContactParams),
+    NL(softy::constraints::penalty_point_contact::FrictionalContactParams),
+}
+
 fn get_frictional_contacts<'a>(
     params: &'a SimParams,
-) -> Vec<(softy::FrictionalContactParams, (usize, &'a [u32]))> {
+) -> Vec<(GenericFrictionalContactParams, (usize, &'a [u32]))> {
+    params
+        .frictional_contacts
+        .as_slice()
+        .iter()
+        .map(|frictional_contact| {
+            let FrictionalContactParams {
+                object_material_id,
+                ref collider_material_ids,
+                kernel,
+                radius_multiplier,
+                smoothness_tolerance,
+                contact_offset,
+                use_fixed,
+                dynamic_cof,
+                friction_profile,
+                lagged_friction,
+                friction_inner_iterations,
+                ..
+            } = *frictional_contact;
+            let radius_multiplier = f64::from(radius_multiplier);
+            let tolerance = f64::from(smoothness_tolerance);
+            (
+                GenericFrictionalContactParams::NL(
+                    softy::constraints::penalty_point_contact::FrictionalContactParams {
+                        kernel: match kernel {
+                            Kernel::Interpolating => {
+                                softy::KernelType::Interpolating { radius_multiplier }
+                            }
+                            Kernel::Approximate => softy::KernelType::Approximate {
+                                tolerance,
+                                radius_multiplier,
+                            },
+                            Kernel::Cubic => softy::KernelType::Cubic { radius_multiplier },
+                            Kernel::Global => softy::KernelType::Global { tolerance },
+                            i => panic!("Unrecognized kernel: {:?}", i),
+                        },
+                        contact_offset: f64::from(contact_offset),
+                        use_fixed,
+                        friction_params: if dynamic_cof == 0.0 || friction_inner_iterations == 0 {
+                            None
+                        } else {
+                            Some(softy::constraints::penalty_point_contact::FrictionParams {
+                                dynamic_friction: f64::from(dynamic_cof),
+                                friction_profile: match friction_profile {
+                                    FrictionProfile::Quadratic => softy::FrictionProfile::Quadratic,
+                                    _ => softy::FrictionProfile::Stabilized,
+                                },
+                                lagged: lagged_friction,
+                            })
+                        },
+                    },
+                ),
+                (
+                    object_material_id as usize,
+                    collider_material_ids.as_slice(),
+                ),
+            )
+        })
+        .collect()
+}
+
+#[cfg(feature = "optsolver")]
+fn get_frictional_contacts_ipopt<'a>(
+    params: &'a SimParams,
+) -> Vec<(GenericFrictionalContactParams, (usize, &'a [u32]))> {
     params
         .frictional_contacts
         .as_slice()
@@ -428,14 +500,14 @@ fn get_frictional_contacts<'a>(
                 smoothing_weight,
                 friction_forwarding,
                 dynamic_cof,
-                friction_profile,
                 friction_tolerance,
                 friction_inner_iterations,
+                ..
             } = *frictional_contact;
             let radius_multiplier = f64::from(radius_multiplier);
             let tolerance = f64::from(smoothness_tolerance);
             (
-                softy::FrictionalContactParams {
+                GenericFrictionalContactParams::Ipopt(softy::FrictionalContactParams {
                     kernel: match kernel {
                         Kernel::Interpolating => {
                             softy::KernelType::Interpolating { radius_multiplier }
@@ -465,13 +537,9 @@ fn get_frictional_contacts<'a>(
                             inner_iterations: friction_inner_iterations as usize,
                             tolerance: f64::from(friction_tolerance),
                             print_level: 0,
-                            friction_profile: match friction_profile {
-                                FrictionProfile::Quadratic => softy::FrictionProfile::Quadratic,
-                                _ => softy::FrictionProfile::Stabilized,
-                            },
                         })
                     },
-                },
+                }),
                 (
                     object_material_id as usize,
                     collider_material_ids.as_slice(),
@@ -491,7 +559,7 @@ trait SolverBuilder {
     );
     fn add_frictional_contact(
         &mut self,
-        fc: softy::FrictionalContactParams,
+        fc: GenericFrictionalContactParams,
         indices: (usize, usize),
     );
     fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error>;
@@ -561,10 +629,12 @@ impl SolverBuilder for fem::opt::SolverBuilder {
     }
     fn add_frictional_contact(
         &mut self,
-        fc: softy::FrictionalContactParams,
+        fc: GenericFrictionalContactParams,
         indices: (usize, usize),
     ) {
-        fem::opt::SolverBuilder::add_frictional_contact(self, fc, indices);
+        if let GenericFrictionalContactParams::Ipopt(fc) = fc {
+            fem::opt::SolverBuilder::add_frictional_contact(self, fc, indices);
+        }
     }
     fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error> {
         Ok(Arc::new(Mutex::new(fem::opt::SolverBuilder::build(self)?)))
@@ -593,10 +663,20 @@ impl SolverBuilder for fem::nl::SolverBuilder {
     }
     fn add_frictional_contact(
         &mut self,
-        fc: softy::FrictionalContactParams,
+        fc: GenericFrictionalContactParams,
         indices: (usize, usize),
     ) {
-        fem::nl::SolverBuilder::add_frictional_contact(self, fc, indices);
+        #[cfg(feature = "optsolver")]
+        {
+            if let GenericFrictionalContactParams::NL(fc) = fc {
+                fem::nl::SolverBuilder::add_frictional_contact(self, fc, indices);
+            }
+        }
+        #[cfg(not(feature = "optsolver"))]
+        {
+            let GenericFrictionalContactParams::NL(fc) = fc;
+            fem::nl::SolverBuilder::add_frictional_contact(self, fc, indices);
+        }
     }
     fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error> {
         Ok(Arc::new(Mutex::new(fem::nl::SolverBuilder::build(self)?)))
@@ -632,7 +712,13 @@ pub(crate) fn register_new_solver(
         solver_builder.set_mesh(mesh, &params)?;
     }
 
-    for (frictional_contact, indices) in get_frictional_contacts(&params) {
+    let frictional_contact_params = match params.solver_type {
+        #[cfg(feature = "optsolver")]
+        SolverType::Ipopt => get_frictional_contacts_ipopt(&params),
+        _ => get_frictional_contacts(&params),
+    };
+
+    for (frictional_contact, indices) in frictional_contact_params.into_iter() {
         for &collider_index in indices.1.iter() {
             solver_builder
                 .add_frictional_contact(frictional_contact, (indices.0, collider_index as usize));

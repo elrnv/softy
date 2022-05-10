@@ -8,7 +8,6 @@ pub mod proj_solver;
 #[cfg(feature = "optsolver")]
 pub mod solver;
 
-use crate::constraints::FrictionProfile;
 use serde::{Deserialize, Serialize};
 use tensr::{Chunked3, Sparse};
 
@@ -36,7 +35,19 @@ pub struct FrictionParams {
     pub inner_iterations: usize,
     pub tolerance: f64,
     pub print_level: u8,
-    pub friction_profile: FrictionProfile,
+}
+
+impl From<crate::constraints::penalty_point_contact::FrictionParams> for FrictionParams {
+    fn from(fp: crate::constraints::FrictionParams) -> Self {
+        FrictionParams {
+            smoothing_weight: 0.0,
+            friction_forwarding: 0.0,
+            dynamic_friction: fp.dynamic_friction,
+            inner_iterations: 0,
+            tolerance: 0.0,
+            print_level: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

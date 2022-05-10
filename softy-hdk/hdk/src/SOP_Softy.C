@@ -603,6 +603,13 @@ static const char *theDsFile = R"THEDSFILE(
                 "quadratic" "Quadratic"
             }
         }
+        parm {
+            name "laggedfriction"
+            cppname "LaggedFriction"
+            label "Lagged Friction"
+            type toggle
+            default { "off" }
+        }
 
         groupcollapsible {
             name    "ipoptoptions"
@@ -925,6 +932,7 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
                     fc_params.friction_profile = softy::FrictionProfile::Quadratic;
                     break;
             }
+            fc_params.lagged_friction = sopparms.getLaggedFriction();
         }
         else
         {

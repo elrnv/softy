@@ -503,6 +503,13 @@ static const char *theDsFile = R"THEDSFILE(
                 "quadratic" "Quadratic"
             }
         }
+        parm {
+            name "laggedfriction"
+            cppname "LaggedFriction"
+            label "Lagged Friction"
+            type toggle
+            default { "off" }
+        }
     }
 
 }
@@ -730,6 +737,7 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftySceneParms &so
         fc_params.contact_offset = sop_fc.contactoffset;
         fc_params.use_fixed = sop_fc.usefixed;
         fc_params.dynamic_cof = sop_fc.dynamiccof;
+        fc_params.lagged_friction = sopparms.getLaggedFriction();
         switch (static_cast<SOP_SoftySceneEnums::FrictionProfile>(sopparms.getFrictionProfile()))
         {
             case SOP_SoftySceneEnums::FrictionProfile::STABILIZED:

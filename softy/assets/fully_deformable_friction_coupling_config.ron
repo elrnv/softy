@@ -99,6 +99,7 @@
                     tolerance: 0.0,
                     print_level: 0,
                     friction_profile: Quadratic,
+                    lagged: false
                 )),
             ), (0, 1)),
         ],

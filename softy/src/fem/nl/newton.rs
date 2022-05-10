@@ -518,6 +518,7 @@ pub struct NewtonWorkspace<T: Real> {
     r_cur: Vec<T>,
     r_next: Vec<T>,
     r_next_unscaled: Vec<T>,
+    r_lagged: Vec<T>,
     precond: Vec<T>,
 }
 
@@ -597,6 +598,7 @@ where
         let jp = r.clone();
         let r_next = r.clone();
         let r_next_unscaled = r.clone();
+        let r_lagged = r.clone();
         let r_cur = r.clone();
         let p = r.clone();
 
@@ -645,6 +647,7 @@ where
                 r_cur,
                 r_next,
                 r_next_unscaled,
+                r_lagged,
                 precond,
             }),
         }
@@ -790,6 +793,10 @@ where
     fn solve_with(&mut self, x: &mut [T], update_jacobian_indices: bool) -> SolveResult {
         let mut stats = Vec::new();
         let mut timings = Timings::default();
+        let is_iterative = matches!(
+            self.workspace.borrow().linsolve,
+            LinearSolverWorkspace::Iterative(_)
+        );
 
         if x.is_empty() {
             return SolveResult {
@@ -807,6 +814,46 @@ where
             self.update_jacobian_indices();
         }
 
+        // let mut merit = |problem: &P, _: &[T], residual: &[T], init_sparse_solver: &mut SparseDirectSolver| {
+        //     init_sparse_solver.update_rhs(residual);
+        //     let result = init_sparse_solver.solve();
+        //     let r64 = result.expect("Initial Jacobian is singular.");
+        //     0.5 * r64.as_tensor().norm_squared()
+        // };
+        let merit = |_: &P, _: &[T], r: &[T]| 0.5 * r.as_tensor().norm_squared().to_f64().unwrap();
+        let merit_obj = |problem: &P, x: &[T]| problem.objective(x).to_f64().unwrap();
+
+        // Computes the product of merit function with the search direction.
+        // In this version, we leverage that Jp is already computed.
+        // let mut merit_jac_prod =
+        //     |problem: &P, jp: &[T], r: &[T], init_sparse_solver: &mut SparseDirectSolver| {
+        //         init_sparse_solver.update_rhs(jp);
+        //         let result = init_sparse_solver.solve();
+        //         let jinv_jp = result.expect("Initial Jacobian is singular.").to_vec();
+        //         // TODO: don't need to compute this again in general.
+        //         init_sparse_solver.update_rhs(r);
+        //         let result = init_sparse_solver.solve();
+        //         let jinv_r = result.expect("Initial Jacobian is singular.");
+        //         jinv_jp
+        //             .iter()
+        //             .zip(jinv_r.iter())
+        //             .fold(0.0, |acc, (&jinv_jp, &jinv_r)| acc + jinv_jp * jinv_r)
+        //     };
+        let merit_jac_prod = |_: &P, jp: &[T], r: &[T]| {
+            //r.as_tensor().norm_squared().to_f64().unwrap()
+            jp.iter()
+                .zip(r.iter())
+                .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap())
+        };
+        let merit_obj_jac_prod = |_: &P, _: &[T], p: &[T], r_lagged: &mut [T]| {
+            // problem.residual_symmetric(x, r_lagged);
+            r_lagged
+                .iter()
+                .zip(p.iter())
+                .map(|(&r, &p)| (r * p).to_f64().unwrap())
+                .sum::<f64>()
+        };
+
         {
             let Self {
                 problem, workspace, ..
@@ -814,12 +861,15 @@ where
 
             let NewtonWorkspace { r, precond, .. } = &mut *workspace.borrow_mut();
 
+            // Update all state to correspond to x being the next velocity.
+            problem.update_state(x, true, !is_iterative);
+
             // Compute preconditioner.
             // TODO: determine if it's any better doing this for every step or just once at the beginning is enough.
             problem.diagonal_preconditioner(x, precond);
 
             // Initialize the residual.
-            problem.residual(x, r.as_mut_slice());
+            problem.residual(x, r.as_mut_slice(), false);
         }
 
         let Self {
@@ -844,6 +894,7 @@ where
             r_cur,
             r_next,
             r_next_unscaled,
+            r_lagged,
             precond,
             ..
         } = &mut *workspace.borrow_mut();
@@ -912,78 +963,13 @@ where
         // We do this late, so that the first IterationInfo gets an unscaled value.
         rescale_vector(precond, r.as_mut_slice());
 
-        // Prepare initial Jacobian used in the merit function.
-        // problem.jacobian_values(
-        //     x,
-        //     r,
-        //     &sparse_jacobian.j_rows,
-        //     &sparse_jacobian.j_cols,
-        //     sparse_jacobian.j_vals.as_mut_slice(),
-        // );
-        //
-        // init_sparse_jacobian_vals
-        //     .iter_mut()
-        //     .for_each(|x| *x = T::zero());
-        // for (&pos, &j_val) in init_j_mapping.iter().zip(sparse_jacobian.j_vals.iter()) {
-        //     if let Some(pos) = pos.into_option() {
-        //         init_sparse_jacobian_vals[pos] += j_val;
-        //     }
-        // }
-
-        // let init_sparse_solver = init_sparse_solver
-        //     .borrow_mut()
-        //     .expect("Uninitialized iterative sparse solver.");
-        //
-        // #[cfg(target_os = "macos")]
-        // if false {
-        //     init_sparse_solver.update_values(init_sparse_jacobian_vals);
-        //     if let Err(err) = init_sparse_solver.refactor() {
-        //         return SolveResult {
-        //             iterations,
-        //             status: Status::LinearSolveError(err.into()),
-        //             timings,
-        //             stats,
-        //         };
-        //     }
-        // }
-
-        // let mut merit = |problem: &P, _: &[T], residual: &[T], init_sparse_solver: &mut SparseDirectSolver| {
-        //     init_sparse_solver.update_rhs(residual);
-        //     let result = init_sparse_solver.solve();
-        //     let r64 = result.expect("Initial Jacobian is singular.");
-        //     0.5 * r64.as_tensor().norm_squared()
-        // };
-        let merit = |_: &P, _: &[T], r: &[T]| 0.5 * r.as_tensor().norm_squared().to_f64().unwrap();
-        // let merit = |problem: &P, x: &[T], _: &[T], _: &SparseDirectSolver| {
-        //     problem.objective(x).to_f64().unwrap()
-        // };
-
-        // Computes the product of merit function with the search direction.
-        // In this version, we leverage that Jp is already computed.
-        // let mut merit_jac_prod = |problem: &P, jp: &[T], r: &[T], init_sparse_solver: &mut SparseDirectSolver| {
-        //     init_sparse_solver.update_rhs(jp);
-        //     let result = init_sparse_solver.solve();
-        //     let jinv_jp = result.expect("Initial Jacobian is singular.").to_vec();
-        //     // TODO: don't need to compute this again in general.
-        //     init_sparse_solver.update_rhs(r);
-        //     let result = init_sparse_solver.solve();
-        //     let jinv_r = result.expect("Initial Jacobian is singular.");
-        //     jinv_jp
-        //         .iter()
-        //         .zip(jinv_r.iter())
-        //         .fold(0.0, |acc, (&jinv_jp, &jinv_r)| acc + jinv_jp * jinv_r)
-        // };
-        let merit_jac_prod = |_: &P, jp: &[T], r: &[T]| {
-            //r.as_tensor().norm_squared().to_f64().unwrap()
-            jp.iter()
-                .zip(r.iter())
-                .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap())
-        };
-
-        // Keep track of merit function to avoid having to recompute it
+        // Keep track of merit function to avoid having to recompute it. This must be after rescale.
         let mut merit_cur = merit(problem, x, r);
+        // let mut merit_cur = merit_obj(&self.problem, x);
         let mut merit_prev = merit_cur;
         let mut merit_next;
+
+        log::trace!("ls: initial merit = {merit_cur:?}");
 
         let mut j_dense_ad = LazyCell::new();
         let mut j_dense = LazyCell::new();
@@ -1018,6 +1004,7 @@ where
                     let power = 0.5 * (1.0 + 0.5_f32.sqrt()); // Golden ratio
                     let mut eta =
                         f32::EPSILON.max((merit_cur / merit_prev).powf(0.5 * power as f64) as f32);
+                    log::trace!("proposed eta = {:?}", eta);
                     // Safeguard to prevent oversolving (see paper)
                     if eta_prev2 > 0.1 {
                         eta = eta.max(eta_prev2);
@@ -1120,6 +1107,26 @@ where
                     //     },
                     //     x.len(),
                     // );
+
+                    // Compute gradient for reporting and debugging
+                    // let mut jtr = vec![T::zero(); r.len()];
+                    // for ((&row, &col), &val) in sparse_jacobian
+                    //     .j_rows
+                    //     .iter()
+                    //     .zip(sparse_jacobian.j_cols.iter())
+                    //     .zip(sparse_jacobian.j_vals.iter())
+                    // {
+                    //     if row < r.len() && col < x.len() {
+                    //         jtr[col] += r_cur[row] * val;
+                    //     }
+                    // }
+
+                    // let jtr_norm_inf = jtr.as_tensor().lp_norm(LpNorm::Inf).to_f64().unwrap();
+                    // let jtr_norm_2 = jtr.as_tensor().lp_norm(LpNorm::P(2)).to_f64().unwrap();
+                    // let r_norm_inf = r_cur.as_tensor().lp_norm(LpNorm::Inf).to_f64().unwrap();
+                    // let r_norm_2 = r_cur.as_tensor().lp_norm(LpNorm::P(2)).to_f64().unwrap();
+                    // eprintln!("  jtr_inf   |   jtr_2    |   r_inf    |    r_2     |     rTp    |");
+                    // eprint!("{jtr_norm_inf:10.3e} | {jtr_norm_2:10.3e} | {r_norm_inf:10.3e} | {r_norm_2:10.3e} |");
 
                     let t_jacobian_values = Instant::now();
                     if params.derivative_check {
@@ -1260,8 +1267,6 @@ where
             // Negate
             p.iter_mut().for_each(|p| *p = -*p);
 
-            //log::trace!("p = {:?}", &r);
-
             timings.linear_solve += Instant::now() - t_begin_linsolve;
 
             // The solve converts the rhs r into the unknown negative search direction p.
@@ -1275,6 +1280,17 @@ where
 
             let rho = params.line_search.step_factor();
 
+            // Compute Jacobian product to be used to check armijo condition.
+            // We do this before incrementing x to avoid updating state back and forth.
+            let merit_jac_p = if rho <= 1.0 {
+                problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
+                rescale_vector(precond, jp.as_mut_slice());
+                merit_jac_prod(problem, jp.as_slice(), r_cur)
+                // merit_obj_jac_prod(problem, x_prev, p, r_lagged)
+            } else {
+                0.0
+            };
+
             // Take the full step
             *x.as_mut_tensor() += p.as_tensor();
 
@@ -1282,8 +1298,11 @@ where
             // are recomputed for a fresh x.
             problem.invalidate_cached_jacobian_product_values();
 
+            // Update all state corresponding to the full new velocity x + p
+            problem.update_state(x, true, !is_iterative);
+
             // Compute the residual for the full step.
-            problem.residual(x, r_next.as_mut_slice());
+            problem.residual(x, r_next.as_mut_slice(), false);
             rescale_vector(precond, r_next.as_mut_slice());
             // dbg!(r_next.as_slice());
 
@@ -1291,6 +1310,7 @@ where
                 timings.line_search;
                 if rho >= 1.0 {
                     merit_next = merit(problem, x, r_next);//, init_sparse_solver);
+                    // merit_next = merit_obj(problem, x);
                     (1, 1.0)
                 } else {
                     // Line search.
@@ -1300,20 +1320,11 @@ where
                     //dbg!(merit_jac_p);
                     //dbg!(r_cur.as_tensor().norm_squared().to_f64().unwrap());
 
-                    // Compute Jacobian product to be used to check armijo condition.
-                    // This is not done for the inexact newton algorithm.
-                    let merit_jac_p = if matches!(linsolve, LinearSolverWorkspace::Direct(_)) {
-                        problem.jacobian_product(x_prev, p, r_cur, jp.as_mut_slice());
-                        rescale_vector(precond, jp.as_mut_slice());
-                        merit_jac_prod(problem, jp.as_slice(), r_cur) //, init_sparse_solver)
-                    } else {
-                        0.0
-                    };
-
-                    // if merit_jac_p > 0.0 {
-                    //     // Reverse direction if it's not a descent direction.
-                    //     *p.as_mut_tensor() *= -T::one();
-                    // }
+                    if matches!(linsolve, LinearSolverWorkspace::Iterative(_)) && merit_jac_p > 0.0 {
+                        log::trace!("positive search direction reversed: {merit_jac_p:10.3e}");
+                        // Reverse direction if it's not a descent direction.
+                        *p.as_mut_tensor() *= -T::one();
+                    }
 
                     if params.line_search.is_assisted() {
                         let new_alpha;
@@ -1325,7 +1336,7 @@ where
                                 .unwrap()
                         );
 
-                        // Avoid recomputing residual needlessly.
+                        // Avoid recomputing residual and updating state needlessly.
                         // IMPORTANT: This works because if alpha is unchanged, then the friction
                         // assist step would have have used alpha = 1.0 when updating contact state,
                         // which doesn't break the next call to jacobian since we avoid
@@ -1337,12 +1348,15 @@ where
                             });
 
                             // Compute the candidate residual.
-                            problem.residual(x, r_next.as_mut_slice());
+                            problem.update_state(x, true, !is_iterative);
+                            problem.residual(x, r_next.as_mut_slice(), false);
                             rescale_vector(precond, r_next.as_mut_slice());
 
                             alpha = new_alpha;
                         }
                     }
+
+                    log::trace!("ls: starting alpha = {alpha:?}");
 
                     loop {
                         // Compute gradient of the merit function 0.5 r'r  multiplied by p, which is r' dr/dx p.
@@ -1354,6 +1368,8 @@ where
 
                         // Compute the merit function
                         merit_next = merit(problem, x, r_next);//, init_sparse_solver);
+                        // log::trace!("ls: merit = {:?}", merit_next);
+                        // merit_next = merit_obj(problem, x);//, init_sparse_solver);
 
                         match linsolve {
                             LinearSolverWorkspace::Iterative(linsolve) => {
@@ -1368,17 +1384,20 @@ where
                             }
                             LinearSolverWorkspace::Direct(_) => {
                                 // TRADITIONAL BACKTRACKING:
-                                if merit_next
-                                    <= merit_cur + params.line_search.armijo_coeff() * alpha * merit_jac_p
+                                let increment = params.line_search.armijo_coeff() * alpha * merit_jac_p;
+                                if merit_next <= merit_cur + increment
                                 {
+                                    log::trace!("ls: backtracking success: {merit_next:?} <= {merit_cur:?} + {increment:?}");
                                     break;
                                 }
                                 alpha *= rho;
                             }
                         }
+                        // log::trace!("ls: alpha = {alpha:?}");
 
                         // Break if alpha becomes too small. This is usually a bad sign.
-                        if alpha < 1e-5 {
+                        if alpha < 1e-5 && ls_count > 2 {
+                            log::trace!("ls: backtracking fail: alpha too small: {alpha:?}");
                             break;
                         }
 
@@ -1387,157 +1406,196 @@ where
                             *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
                         });
 
-                        // Compute the candidate residual.
-                        problem.residual(x, r_next.as_mut_slice());
+                        // Update state and compute the candidate residual for the next line search iteration.
+                        problem.update_state(x, true, !is_iterative);
+                        problem.residual(x, r_next.as_mut_slice(), false);
                         rescale_vector(precond, r_next.as_mut_slice());
 
                         ls_count += 1;
                     }
 
-                    // This ensures that next time jacobian_product is requested, the full jacobian values
+                    // This ensures that next time jacobian_product is requested, the full Jacobian values
                     // are recomputed for a fresh x.
                     problem.invalidate_cached_jacobian_product_values();
-
-                    // Update preconditioner for next step. Which means we need to update r_next accordingly
-                    //problem.diagonal_preconditioner(x, precond);
-                    //problem.residual(x, r_next.as_mut_slice());
-                    //rescale_vector(precond, r_next.as_mut_slice());
 
                     // Increment linear solve tolerance.
                     if let LinearSolverWorkspace::Iterative(linsolve) = linsolve {
                         linsolve.tol = 1.0 - alpha as f32 * (1.0 - linsolve.tol);
+                        log::trace!("incremented eta: {:?}", linsolve.tol);
                     }
 
-                    // if ls_count > 100 {
-                    //     problem.invalidate_cached_jacobian_product_values();
-                    //     dbg!(alpha);
-                    //     let max_alpha = alpha;
-                    //     let mut merit_data = vec![];
-                    //     let mut r0 = vec![];
-                    //     let mut f = vec![];
-                    //     let mut xs = vec![];
-                    //     let mut probe_r = vec![T::zero(); r_next.len()];
-                    //     let mut probe_x = vec![T::zero(); x.len()];
-                    //     use std::io::Write;
-                    //     let mut file = std::fs::File::create(&format!("./out/debug_data_{iterations}.jl")).unwrap();
-                    //     let last_index = 2000;
-                    //     for i in 0..=last_index {
-                    //         let alpha: f64 = /*(4.0*max_alpha).min*/(1.2)*0.0005 * i as f64 - 0.2;
-                    //         zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
-                    //             |(x, &x0, &p)| {
-                    //                 *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
-                    //             },
-                    //         );
-                    //         problem.residual(&probe_x, probe_r.as_mut_slice());
-                    //         rescale_vector(precond, probe_r.as_mut_slice());
-                    //         if i == 0  {
-                    //             writeln!(file, "r_begin = {:?}", &probe_r).unwrap();
-                    //         } else if i == last_index  {
-                    //             writeln!(file, "r_end = {:?}", &probe_r).unwrap();
-                    //         }
-                    //         geo::io::save_mesh(&problem.mesh(), &format!("./out/dbg_mesh_{}.vtk", i)).unwrap();
-                    //         let probe_f = problem.debug_friction();
-                    //         let probe = merit(problem, &probe_x, &probe_r);
-                    //         xs.push(alpha);
-                    //         f.push(probe_f.view().into_tensor().norm_squared());
-                    //         merit_data.push(probe);
-                    //         problem.jacobian_product(&x_prev, p, &probe_r, jp.as_mut_slice());
-                    //         rescale_vector(precond, jp.as_mut_slice());
-                    //         r0.push(merit_jac_prod(problem, &jp, &probe_r));
-                    //     }
-                    //     writeln!(file, "merit_cur = {:?}", merit_cur).unwrap();
-                    //     writeln!(file, "merit_next = {:?}", merit_next).unwrap();
-                    //     writeln!(file, "xs = {:?}", &xs).unwrap();
-                    //     writeln!(file, "merit_data = {:?}", &merit_data).unwrap();
-                    //     writeln!(file, "r0 = {:?}", &r0).unwrap();
-                    //     writeln!(file, "f = {:?}", &f).unwrap();
-                    //     writeln!(file, "xs_length = {:?}", xs.len()).unwrap();
-                    //
-                    //     // Also compute the gradient and output that.
-                    //     let mut zero_col = vec![T::zero(); x.len()];
-                    //     let mut jcol = vec![T::zero(); x.len()];
-                    //     let mut grad = vec![T::zero(); x.len()];
-                    //     for i in 0..x.len() {
-                    //         zero_col[i] = T::one();
-                    //         problem.jacobian_product(&x_prev, &zero_col, &r_cur, jcol.as_mut_slice());
-                    //         rescale_vector(precond, jcol.as_mut_slice());
-                    //         for j in 0..jcol.len() {
-                    //             grad[i] -= r_cur[j] * jcol[j];
-                    //         }
-                    //         zero_col[i] = T::zero();
-                    //     }
-                    //
-                    //     merit_data.clear();
-                    //     for i in 0..=last_index {
-                    //         let alpha: f64 = /*(4.0*max_alpha).min*/(1.5)*0.0005 * i as f64 - 0.5;
-                    //         zip!(probe_x.iter_mut(), x_prev.iter(), grad.iter()).for_each(
-                    //             |(x, &x0, &p)| {
-                    //                 *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
-                    //             },
-                    //         );
-                    //         problem.residual(&probe_x, probe_r.as_mut_slice());
-                    //         rescale_vector(precond, probe_r.as_mut_slice());
-                    //         if i == 0  {
-                    //             writeln!(file, "r_begin_g = {:?}", &probe_r).unwrap();
-                    //         } else if i == last_index  {
-                    //             writeln!(file, "r_end_g = {:?}", &probe_r).unwrap();
-                    //         }
-                    //         let probe = merit(problem, &probe_x, &probe_r);
-                    //         merit_data.push(probe);
-                    //     }
-                    //     writeln!(file, "merit_data_g = {:?}", &merit_data).unwrap();
-                    //     writeln!(file, "pgrad = {:?}", &grad).unwrap();
-                    //
-                    //     if sparse_jacobian.j_rows.len() < 100_000 {
-                    //         // Print the jacobian if it's small enough
-                    //         let j_dense = j_dense.borrow_mut_with(|| {
-                    //             ChunkedN::from_flat_with_stride(
-                    //                 x.len(),
-                    //                 vec![T::zero(); x.len() * r.len()],
-                    //             )
-                    //         });
-                    //         build_dense(
-                    //             j_dense.view_mut(),
-                    //             &sparse_jacobian.j_rows,
-                    //             &sparse_jacobian.j_cols,
-                    //             &sparse_jacobian.j_vals,
-                    //             x.len(),
-                    //         );
-                    //         writeln!(file, "Jrows = [").unwrap();
-                    //         for (&row,&col) in sparse_jacobian.j_rows.iter().zip(sparse_jacobian.j_cols.iter()) {
-                    //             if row < r_cur.len() && col < x.len() {
-                    //                 write!(file, "{:?}, ", row+1).unwrap();
-                    //             }
-                    //         }
-                    //         writeln!(file, "]").unwrap();
-                    //         writeln!(file, "Jcols = [").unwrap();
-                    //         for (&row,&col) in sparse_jacobian.j_rows.iter().zip(sparse_jacobian.j_cols.iter()) {
-                    //             if row < r_cur.len() && col < x.len() {
-                    //                 write!(file, "{:?}, ", col+1).unwrap();
-                    //             }
-                    //         }
-                    //         writeln!(file, "]").unwrap();
-                    //         writeln!(file, "Jvals = [").unwrap();
-                    //         for ((&row,&col), val) in sparse_jacobian.j_rows.iter().zip(sparse_jacobian.j_cols.iter()).zip(sparse_jacobian.j_vals.iter()) {
-                    //             if row < r_cur.len() && col < x.len() {
-                    //                 write!(file, "{:?}, ", val).unwrap();
-                    //             }
-                    //         }
-                    //         writeln!(file, "]").unwrap();
-                    //         writeln!(file, "J = sparse(Jrows, Jcols, Jvals, {:?}, {:?})", r_cur.len(), x.len()).unwrap();
-                    //     }
-                    //     writeln!(file, "lumped_mass_inv = {:?}", &problem.lumped_mass_inv()).unwrap();
-                    //     writeln!(file, "lumped_stiffness = {:?}", &problem.lumped_stiffness()).unwrap();
-                    //
-                    //     let mut jp = vec![T::zero(); r.len()];
-                    //     problem.invalidate_cached_jacobian_product_values();
-                    //     problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
-                    //     rescale_vector(precond, jp.as_mut_slice());
-                    //     writeln!(file, "p = {:?}", &p).unwrap();
-                    //     writeln!(file, "r = {:?}", &r_cur).unwrap();
-                    //     writeln!(file, "jp_check = {:?}", &jp).unwrap();
-                    //     panic!("STOP");
-                    // }
+                    if alpha < 1e-5 && ls_count > 80 {
+                        problem.invalidate_cached_jacobian_product_values();
+                        dbg!(alpha);
+                        let max_alpha = alpha;
+                        let mut merit_data = vec![];
+                        let mut r0 = vec![];
+                        let mut f = vec![];
+                        let mut xs = vec![];
+                        let mut probe_r = vec![T::zero(); r_next.len()];
+                        let mut probe_x = vec![T::zero(); x.len()];
+                        use std::io::Write;
+                        let mut file = std::fs::File::create(&format!("./out/debug_data_{iterations}.jl")).unwrap();
+                        let last_index = 2000;
+                        for i in 0..=last_index {
+                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.2 * 0.0005 * i as f64 - 0.2);
+                            zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
+                                |(x, &x0, &p)| {
+                                    *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
+                                },
+                            );
+                            problem.update_state(&probe_x, true, false);
+                            problem.residual(&probe_x, probe_r.as_mut_slice(), false);
+                            rescale_vector(precond, probe_r.as_mut_slice());
+                            if i == 0  {
+                                writeln!(file, "r_begin = {:?}", &probe_r).unwrap();
+                            } else if i == last_index  {
+                                writeln!(file, "r_end = {:?}", &probe_r).unwrap();
+                            }
+                            //geo::io::save_mesh(&problem.mesh(), &format!("./out/dbg_mesh_{}.vtk", i)).unwrap();
+                            let probe_f = problem.debug_friction();
+                            let probe = merit(problem, &probe_x, &probe_r);
+                            xs.push(alpha);
+                            f.push(probe_f.view().into_tensor().norm_squared());
+                            merit_data.push(probe);
+                            problem.update_state(&x_prev, true, false);
+                            problem.jacobian_product(&x_prev, p, &probe_r, jp.as_mut_slice());
+                            rescale_vector(precond, jp.as_mut_slice());
+                            r0.push(merit_jac_prod(problem, &jp, &probe_r));
+                        }
+                        writeln!(file, "merit_cur = {:?}", merit_cur).unwrap();
+                        writeln!(file, "merit_next = {:?}", merit_next).unwrap();
+                        writeln!(file, "xs = {:?}", &xs).unwrap();
+                        writeln!(file, "merit_data = {:?}", &merit_data).unwrap();
+                        writeln!(file, "r0 = {:?}", &r0).unwrap();
+                        writeln!(file, "f = {:?}", &f).unwrap();
+                        writeln!(file, "xs_length = {:?}", xs.len()).unwrap();
+
+                        merit_data.clear();
+                        for i in 0..=last_index {
+                            // let alpha: f64 = /*(4.0*max_alpha).min*/(1.2)*0.0005 * i as f64 - 0.2;
+                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.2 * 0.0005 * i as f64 - 0.2);
+                            zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
+                                |(x, &x0, &p)| {
+                                    *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
+                                },
+                            );
+                            problem.update_state(&probe_x, true, false);
+                            problem.residual(&probe_x, probe_r.as_mut_slice(), false);
+                            let probe = merit(problem, &probe_x, &probe_r);
+                            merit_data.push(probe);
+                        }
+                        writeln!(file, "merit_data_u = {:?}", &merit_data).unwrap();
+
+                        merit_data.clear();
+                        let mut merit_data_alt = merit_data.clone();
+                        for i in 0..=last_index {
+                            // let alpha: f64 = /*(4.0*max_alpha).min*/(1.2)*0.0005 * i as f64 - 0.2;
+                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.2 * 0.0005 * i as f64 - 0.2);
+                            zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
+                                |(x, &x0, &p)| {
+                                    *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
+                                },
+                            );
+                            let probe = merit_obj(problem, &probe_x);
+                            merit_data.push(probe);
+                            problem.update_state(&probe_x, true, false);
+                            problem.residual(&probe_x, probe_r.as_mut_slice(), true);
+                            let probe = merit(problem, &probe_x, &probe_r);
+                            merit_data_alt.push(probe);
+                        }
+                        writeln!(file, "merit_data_obj = {:?}", &merit_data).unwrap();
+                        writeln!(file, "merit_data_alt = {:?}", &merit_data_alt).unwrap();
+
+                        // Also compute the gradient and output that.
+                        let mut zero_col = vec![T::zero(); x.len()];
+                        let mut jcol = vec![T::zero(); x.len()];
+                        let mut grad = vec![T::zero(); x.len()];
+                        problem.update_state(&x_prev, true, false);
+                        for i in 0..x.len() {
+                            zero_col[i] = T::one();
+                            problem.jacobian_product(&x_prev, &zero_col, &r_cur, jcol.as_mut_slice());
+                            rescale_vector(precond, jcol.as_mut_slice());
+                            for j in 0..jcol.len() {
+                                grad[i] -= r_cur[j] * jcol[j];
+                            }
+                            zero_col[i] = T::zero();
+                        }
+
+                        merit_data.clear();
+                        for i in 0..=last_index {
+                            // let alpha: f64 = /*(4.0*max_alpha).min*/(1.5)*0.0005 * i as f64 - 0.5;
+                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.2 * 0.0005 * i as f64 - 0.2);
+                            zip!(probe_x.iter_mut(), x_prev.iter(), grad.iter()).for_each(
+                                |(x, &x0, &p)| {
+                                    *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
+                                },
+                            );
+                            problem.update_state(&probe_x, true, false);
+                            problem.residual(&probe_x, probe_r.as_mut_slice(), false);
+                            rescale_vector(precond, probe_r.as_mut_slice());
+                            if i == 0  {
+                                writeln!(file, "r_begin_g = {:?}", &probe_r).unwrap();
+                            } else if i == last_index  {
+                                writeln!(file, "r_end_g = {:?}", &probe_r).unwrap();
+                            }
+                            let probe = merit(problem, &probe_x, &probe_r);
+                            merit_data.push(probe);
+                        }
+                        writeln!(file, "merit_data_g = {:?}", &merit_data).unwrap();
+                        writeln!(file, "pgrad = {:?}", &grad).unwrap();
+
+                        if sparse_jacobian.j_rows.len() < 100_000 {
+                            // Print the jacobian if it's small enough
+                            let j_dense = j_dense.borrow_mut_with(|| {
+                                ChunkedN::from_flat_with_stride(
+                                    x.len(),
+                                    vec![T::zero(); x.len() * r.len()],
+                                )
+                            });
+                            build_dense(
+                                j_dense.view_mut(),
+                                &sparse_jacobian.j_rows,
+                                &sparse_jacobian.j_cols,
+                                &sparse_jacobian.j_vals,
+                                x.len(),
+                            );
+                            writeln!(file, "Jrows = [").unwrap();
+                            for (&row,&col) in sparse_jacobian.j_rows.iter().zip(sparse_jacobian.j_cols.iter()) {
+                                if row < r_cur.len() && col < x.len() {
+                                    write!(file, "{:?}, ", row+1).unwrap();
+                                }
+                            }
+                            writeln!(file, "]").unwrap();
+                            writeln!(file, "Jcols = [").unwrap();
+                            for (&row,&col) in sparse_jacobian.j_rows.iter().zip(sparse_jacobian.j_cols.iter()) {
+                                if row < r_cur.len() && col < x.len() {
+                                    write!(file, "{:?}, ", col+1).unwrap();
+                                }
+                            }
+                            writeln!(file, "]").unwrap();
+                            writeln!(file, "Jvals = [").unwrap();
+                            for ((&row,&col), val) in sparse_jacobian.j_rows.iter().zip(sparse_jacobian.j_cols.iter()).zip(sparse_jacobian.j_vals.iter()) {
+                                if row < r_cur.len() && col < x.len() {
+                                    write!(file, "{:?}, ", val).unwrap();
+                                }
+                            }
+                            writeln!(file, "]").unwrap();
+                            writeln!(file, "J = sparse(Jrows, Jcols, Jvals, {:?}, {:?})", r_cur.len(), x.len()).unwrap();
+                        }
+                        writeln!(file, "lumped_mass_inv = {:?}", &problem.lumped_mass_inv()).unwrap();
+                        writeln!(file, "lumped_stiffness = {:?}", &problem.lumped_stiffness()).unwrap();
+
+                        let mut jp = vec![T::zero(); r.len()];
+                        problem.invalidate_cached_jacobian_product_values();
+                        problem.update_state(x, true, false);
+                        problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
+                        rescale_vector(precond, jp.as_mut_slice());
+                        writeln!(file, "p = {:?}", &p).unwrap();
+                        writeln!(file, "r = {:?}", &r_cur).unwrap();
+                        writeln!(file, "jp_check = {:?}", &jp).unwrap();
+                        panic!("STOP");
+                    }
                     (ls_count, alpha)
                 }
             };

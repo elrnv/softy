@@ -1296,7 +1296,6 @@ where
                     // Compute the residual for the full step.
                     problem.residual(x, r_next.as_mut_slice(), false);
                     rescale_vector(precond, r_next.as_mut_slice());
-                    // dbg!(r_next.as_slice());
 
                     merit_next = merit(problem, x, r_next);//, init_sparse_solver);
                     // merit_next = merit_obj(problem, x);
@@ -1320,7 +1319,7 @@ where
                         *p.as_mut_tensor() *= -T::one();
                     }
 
-                    let mut presliding_alpha = T::zero();
+                    let mut presliding_alpha = T::from(2.0).unwrap(); // This makes the else case work as expected.
                     let mut alpha = if params.line_search.is_assisted() {
                         add_time!(
                             timings.line_search_assist;

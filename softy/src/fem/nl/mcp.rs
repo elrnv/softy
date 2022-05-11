@@ -92,9 +92,22 @@ where
         self.problem.objective(x)
     }
     #[inline]
-    fn assist_line_search(&self, alpha: T, p: &[T], x: &[T], r_cur: &[T], r_next: &[T]) -> T {
-        self.problem.assist_line_search(alpha, p, x, r_cur, r_next)
+    fn assist_line_search_for_contact(&self, alpha: T, x: &[T]) -> T {
+        self.problem.assist_line_search_for_contact(alpha, x)
     }
+    #[inline]
+    fn assist_line_search_for_friction(
+        &self,
+        alpha: T,
+        x: &[T],
+        p: &[T],
+        r_cur: &[T],
+        r_next: &[T],
+    ) -> T {
+        self.problem
+            .assist_line_search_for_friction(alpha, x, p, r_cur, r_next)
+    }
+
     #[inline]
     fn converged(
         &self,
@@ -114,9 +127,15 @@ where
         self.problem.compute_warm_start(x);
     }
     #[inline]
-    fn update_state(&self, x: &[T], rebuild_tree: bool, explicit_jacobian: bool) {
+    fn update_state(
+        &self,
+        x: &[T],
+        rebuild_tree: bool,
+        explicit_jacobian: bool,
+        stash_sliding_basis: bool,
+    ) {
         self.problem
-            .update_state(x, rebuild_tree, explicit_jacobian);
+            .update_state(x, rebuild_tree, explicit_jacobian, stash_sliding_basis);
     }
     #[inline]
     fn residual(&self, x: &[T], r: &mut [T], symmetric: bool) {

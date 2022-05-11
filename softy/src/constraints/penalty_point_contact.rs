@@ -704,6 +704,46 @@ impl FrictionJacobianTimings {
     }
 }
 
+// Stashed data used for linesearch assist.
+#[derive(Clone, Debug)]
+pub struct LineSearchAssistStash<T = f64>
+where
+    T: Scalar,
+{
+    pub contact_basis: ContactBasis<T>,
+    pub contact_jacobian: Option<MappedContactJacobian<T>>,
+    pub distance_potential: Vec<T>,
+}
+
+impl<T: Real> LineSearchAssistStash<T> {
+    pub fn clone_cast<S: Real>(&self) -> LineSearchAssistStash<S> {
+        let mut contact_jacobian = None;
+        if let Some(self_contact_jacobian) = self.contact_jacobian.as_ref() {
+            contact_jacobian.replace(MappedContactJacobian {
+                mapping: self_contact_jacobian.mapping.clone(),
+                matrix: clone_cast_ssblock_mtx::<T, S>(&self_contact_jacobian.matrix),
+            });
+        }
+        LineSearchAssistStash {
+            contact_basis: self.contact_basis.clone_cast(),
+            contact_jacobian,
+            distance_potential: self
+                .distance_potential
+                .iter()
+                .map(|&x| S::from(x).unwrap())
+                .collect(),
+        }
+    }
+
+    pub fn new() -> Self {
+        LineSearchAssistStash {
+            contact_basis: ContactBasis::new(),
+            contact_jacobian: None,
+            distance_potential: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ContactState<T = f64>
 where
@@ -1106,6 +1146,9 @@ where
     pub(crate) contact_state: ContactState<T>,
     pub(crate) contact_state_prev: ContactState<T>,
 
+    // Used by linesearch assist.
+    pub(crate) assist_stash: LineSearchAssistStash<T>,
+
     force_workspace: std::cell::RefCell<Vec<Vec<T>>>,
 
     jac_contact_jacobian: Option<MappedSSBlockMatrix3<T>>,
@@ -1132,6 +1175,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     pub fn clone_cast<S: Real>(&self) -> PenaltyPointContactConstraint<S> {
         let contact_state = self.contact_state.clone_cast();
         let contact_state_prev = self.contact_state_prev.clone_cast();
+        let assist_stash = self.assist_stash.clone_cast();
 
         // let mut contact_jacobian = None;
         // if let Some(self_contact_jacobian) = self.contact_jacobian.as_ref() {
@@ -1176,6 +1220,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             friction_params: self.friction_params,
             contact_state,
             contact_state_prev,
+            assist_stash,
             jac_contact_jacobian,
             jac_contact_gradient,
             friction_jacobian_workspace: FrictionJacobianWorkspace::default(),
@@ -1214,6 +1259,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let mut penalty_constraint = PenaltyPointContactConstraint {
             contact_state_prev: contact_state.clone(),
             contact_state,
+            assist_stash: LineSearchAssistStash::new(),
             implicit_surface_vertex_indices,
             collider_vertex_indices,
             jac_contact_jacobian: None,
@@ -1617,10 +1663,10 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     }
 
     pub(crate) fn assist_line_search_for_contact(
-        &self,
+        &mut self,
         mut alpha: T,
         // pos_cur: Chunked3<&[T]>,
-        // pos_next: Chunked3<&[T]>,
+        pos_next: Chunked3<&[T]>,
         delta: f32,
     ) -> T {
         let delta = T::from(delta).unwrap();
@@ -1632,10 +1678,15 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         //     d1.copy_from_slice(&self.distance_potential);
         // }
 
-        // self.update_state(pos_next);
-        // self.update_distance_potential();
-        let d1 = &self.contact_state_prev.distance_potential;
+        self.assist_stash
+            .distance_potential
+            .clone_from(&self.contact_state.distance_potential);
+        self.update_state(pos_next);
+        self.update_distance_potential();
+        let d1 = &self.assist_stash.distance_potential;
         let d2 = &self.contact_state.distance_potential;
+        // eprintln!("d1 = {:?}", d1);
+        // eprintln!("d2 = {:?}", d2);
 
         let alpha_min = T::from(1e-4).unwrap();
 
@@ -1688,8 +1739,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let constrained_collider_vertices = self.constrained_collider_vertices.as_slice();
 
         // Contact jacobian and contact basis from previous step.
-        let jac = self.contact_state_prev.contact_jacobian.as_ref().unwrap();
-        let contact_basis = &self.contact_state_prev.contact_basis;
+        let jac = self.assist_stash.contact_jacobian.as_ref().unwrap();
+        let contact_basis = &self.assist_stash.contact_basis;
+        //eprintln!("contact_basis = {:?}", &contact_basis);
 
         // Compute relative velocity at the point of contact: `vc = J(x)v`
         // assert_eq!(jac.view().into_tensor().num_cols(), vel.len());
@@ -1712,6 +1764,9 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         // let d1 = &self.distance_potential_alt;
         let d2 = &self.contact_state.distance_potential;
         // eprintln!("alpha before: {alpha}");
+        // eprintln!("vc = {:?}", &vc);
+        // eprintln!("pc = {:?}", &pc);
+        // eprintln!("d2 = {:?}", d2);
 
         for (i, (&d2, (p, v))) in d2.iter().zip(pc.iter().zip(vc.iter())).enumerate() {
             if d2 <= delta {
@@ -1724,7 +1779,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                     // eprintln!("armijo violated");
                     let [_v0, v1, v2] = contact_basis.to_contact_coordinates(*v, i);
                     let [_p0, p1, p2] = contact_basis.to_contact_coordinates(*p, i);
-                    // eprintln!("p = {:?}; v = {:?}", [p1,p2], [v1,v2]);
+                    // eprintln!("p = {:?}; v = {:?}", [p1, p2], [v1, v2]);
                     let v = Vector2::from([v1, v2]);
                     let p = Vector2::from([p1, p2]);
                     let p_dot_v = p.dot(v);
@@ -1942,8 +1997,16 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
     /// Contact gradient is used for computing explicit friction derivatives.
     #[inline]
-    pub fn update_sliding_basis(&mut self, and_gradient: bool, num_vertices: usize) {
+    pub fn update_sliding_basis(&mut self, and_gradient: bool, stash: bool, num_vertices: usize) {
         if self.friction_params.is_some() {
+            if stash {
+                self.assist_stash
+                    .contact_jacobian
+                    .clone_from(&self.contact_state.contact_jacobian);
+                self.assist_stash
+                    .contact_basis
+                    .clone_from(&self.contact_state.contact_basis);
+            }
             self.contact_state
                 .update_contact_jacobian(&self.constrained_collider_vertices);
             self.contact_state.update_contact_basis();
@@ -3583,7 +3646,7 @@ mod tests {
                     fc.update_distance_potential();
                     fc.update_constraint_gradient();
                     fc.update_multipliers(delta, kappa);
-                    fc.update_sliding_basis(true, num_vertices);
+                    fc.update_sliding_basis(true, false, num_vertices);
                     fc.advance_state();
                 }
                 for fc in fc.iter() {
@@ -3592,7 +3655,7 @@ mod tests {
                     fc.update_distance_potential();
                     fc.update_constraint_gradient();
                     fc.update_multipliers(delta, kappa);
-                    fc.update_sliding_basis(true, num_vertices);
+                    fc.update_sliding_basis(true, false, num_vertices);
                     fc.advance_state();
                 }
             }
@@ -3608,7 +3671,7 @@ mod tests {
                     fc.update_distance_potential();
                     fc.update_constraint_gradient();
                     fc.update_multipliers(delta, kappa);
-                    fc.update_sliding_basis(true, num_vertices);
+                    fc.update_sliding_basis(true, false, num_vertices);
                 }
 
                 for fc in fc.iter() {
@@ -3657,7 +3720,7 @@ mod tests {
                     fc.update_distance_potential();
                     fc.update_constraint_gradient();
                     fc.update_multipliers(delta, kappa);
-                    fc.update_sliding_basis(true, num_vertices);
+                    fc.update_sliding_basis(true, false, num_vertices);
                     fc.subtract_friction_force(
                         Chunked3::from_flat(r),
                         Chunked3::from_flat(&vel),

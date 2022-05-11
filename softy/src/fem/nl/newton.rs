@@ -451,8 +451,8 @@ pub struct DirectSolver<T: Real> {
     sparse_solver: LazyCell<SparseDirectSolver>,
     //#[cfg(target_os = "macos")]
     //sparse_iterative_solver: LazyCell<SparseIterativeSolver>,
-    p64: Vec<f64>,
-    out64: Vec<f64>,
+    // p64: Vec<f64>,
+    // out64: Vec<f64>,
 }
 
 pub struct SparseJacobian<T> {
@@ -623,8 +623,8 @@ where
                     sparse_solver: LazyCell::new(),
                     //#[cfg(target_os = "macos")]
                     //sparse_iterative_solver: LazyCell::new(),
-                    p64: Vec::new(),
-                    out64: Vec::new(),
+                    // p64: Vec::new(),
+                    // out64: Vec::new(),
                 })
             }
         };
@@ -707,8 +707,8 @@ where
             //#[cfg(target_os = "macos")]
             //ds.sparse_iterative_solver
             //    .replace(SparseIterativeSolver::new(ds.j_t.view()));
-            ds.p64.resize(n, 0.0);
-            ds.out64.resize(n, 0.0);
+            // ds.p64.resize(n, 0.0);
+            // ds.out64.resize(n, 0.0);
         }
     }
 }
@@ -862,7 +862,7 @@ where
             let NewtonWorkspace { r, precond, .. } = &mut *workspace.borrow_mut();
 
             // Update all state to correspond to x being the next velocity.
-            problem.update_state(x, true, !is_iterative);
+            problem.update_state(x, true, !is_iterative, false);
 
             // Compute preconditioner.
             // TODO: determine if it's any better doing this for every step or just once at the beginning is enough.
@@ -1280,45 +1280,39 @@ where
 
             let rho = params.line_search.step_factor();
 
-            // Compute Jacobian product to be used to check armijo condition.
-            // We do this before incrementing x to avoid updating state back and forth.
-            let merit_jac_p = if rho <= 1.0 {
-                problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
-                rescale_vector(precond, jp.as_mut_slice());
-                merit_jac_prod(problem, jp.as_slice(), r_cur)
-                // merit_obj_jac_prod(problem, x_prev, p, r_lagged)
-            } else {
-                0.0
-            };
-
-            // Take the full step
-            *x.as_mut_tensor() += p.as_tensor();
-
-            // This ensures that next time jacobian_product is requested, the full jacobian values
-            // are recomputed for a fresh x.
-            problem.invalidate_cached_jacobian_product_values();
-
-            // Update all state corresponding to the full new velocity x + p
-            problem.update_state(x, true, !is_iterative);
-
-            // Compute the residual for the full step.
-            problem.residual(x, r_next.as_mut_slice(), false);
-            rescale_vector(precond, r_next.as_mut_slice());
-            // dbg!(r_next.as_slice());
-
             let (ls_count, alpha) = add_time! {
                 timings.line_search;
                 if rho >= 1.0 {
+                    // Take the full step
+                    *x.as_mut_tensor() += p.as_tensor();
+
+                    // This ensures that next time jacobian_product is requested, the full jacobian values
+                    // are recomputed for a fresh x.
+                    problem.invalidate_cached_jacobian_product_values();
+
+                    // Update all state corresponding to the full new velocity x + p
+                    problem.update_state(x, true, !is_iterative, false);
+
+                    // Compute the residual for the full step.
+                    problem.residual(x, r_next.as_mut_slice(), false);
+                    rescale_vector(precond, r_next.as_mut_slice());
+                    // dbg!(r_next.as_slice());
+
                     merit_next = merit(problem, x, r_next);//, init_sparse_solver);
                     // merit_next = merit_obj(problem, x);
                     (1, 1.0)
                 } else {
                     // Line search.
-                    let mut alpha = 1.0;
                     let mut ls_count = 1;
 
-                    //dbg!(merit_jac_p);
-                    //dbg!(r_cur.as_tensor().norm_squared().to_f64().unwrap());
+                    // Compute Jacobian product to be used to check armijo condition.
+                    // We do this before incrementing x to avoid updating state back and forth.
+                    let merit_jac_p = {
+                        problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
+                        rescale_vector(precond, jp.as_mut_slice());
+                        merit_jac_prod(problem, jp.as_slice(), r_cur)
+                        // merit_obj_jac_prod(problem, x_prev, p, r_lagged)
+                    };
 
                     if matches!(linsolve, LinearSolverWorkspace::Iterative(_)) && merit_jac_p > 0.0 {
                         log::trace!("positive search direction reversed: {merit_jac_p:10.3e}");
@@ -1326,35 +1320,54 @@ where
                         *p.as_mut_tensor() *= -T::one();
                     }
 
-                    if params.line_search.is_assisted() {
-                        let new_alpha;
+                    let mut presliding_alpha = T::zero();
+                    let mut alpha = if params.line_search.is_assisted() {
                         add_time!(
                             timings.line_search_assist;
-                            new_alpha = problem
-                                .assist_line_search(T::from(alpha).unwrap(), p, x_prev, r_cur, r_next)
-                                .to_f64()
-                                .unwrap()
-                        );
+                            {
+                                *x.as_mut_tensor() += p.as_tensor();
 
-                        // Avoid recomputing residual and updating state needlessly.
-                        // IMPORTANT: This works because if alpha is unchanged, then the friction
-                        // assist step would have have used alpha = 1.0 when updating contact state,
-                        // which doesn't break the next call to jacobian since we avoid
-                        // rebuilding the rtree there for efficiency.
-                        if new_alpha < alpha {
-                            // Take a fractional step.
-                            zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
-                                *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
-                            });
+                                presliding_alpha = problem
+                                    .assist_line_search_for_contact(T::one(), x);
 
-                            // Compute the candidate residual.
-                            problem.update_state(x, true, !is_iterative);
-                            problem.residual(x, r_next.as_mut_slice(), false);
-                            rescale_vector(precond, r_next.as_mut_slice());
+                                if presliding_alpha < T::one() {
+                                    zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
+                                        *x = num_traits::Float::mul_add(p, presliding_alpha, x0);
+                                    });
+                                }
 
-                            alpha = new_alpha;
-                        }
+                                problem.update_state(x, true, !is_iterative, true);
+                                problem.residual(x, r_next.as_mut_slice(), false);
+                                rescale_vector(precond, r_next.as_mut_slice());
+
+                                problem
+                                    .assist_line_search_for_friction(presliding_alpha, x_prev, p, r_cur, r_next)
+                                    .to_f64()
+                                    .unwrap()
+                            }
+                        )
+                    } else {
+                        1.0
+                    };
+
+                    if alpha < presliding_alpha.to_f64().unwrap() {
+                        zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
+                            *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
+                        });
+
+                        // Dont need to recompute if alpha wasn't decreased after last update.
+                        // Compute the candidate residual for the new velocity.
+                        problem.update_state(x, true, !is_iterative, false);
+                        problem.residual(x, r_next.as_mut_slice(), false);
+                        rescale_vector(precond, r_next.as_mut_slice());
                     }
+
+                    // This ensures that next time jacobian_product is requested, the full jacobian values
+                    // are recomputed for a fresh x.
+                    problem.invalidate_cached_jacobian_product_values();
+
+                    //dbg!(merit_jac_p);
+                    //dbg!(r_cur.as_tensor().norm_squared().to_f64().unwrap());
 
                     log::trace!("ls: starting alpha = {alpha:?}");
 
@@ -1407,7 +1420,7 @@ where
                         });
 
                         // Update state and compute the candidate residual for the next line search iteration.
-                        problem.update_state(x, true, !is_iterative);
+                        problem.update_state(x, true, !is_iterative, false);
                         problem.residual(x, r_next.as_mut_slice(), false);
                         rescale_vector(precond, r_next.as_mut_slice());
 
@@ -1444,7 +1457,7 @@ where
                                     *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
                                 },
                             );
-                            problem.update_state(&probe_x, true, false);
+                            problem.update_state(&probe_x, true, false, false);
                             problem.residual(&probe_x, probe_r.as_mut_slice(), false);
                             rescale_vector(precond, probe_r.as_mut_slice());
                             if i == 0  {
@@ -1458,7 +1471,7 @@ where
                             xs.push(alpha);
                             f.push(probe_f.view().into_tensor().norm_squared());
                             merit_data.push(probe);
-                            problem.update_state(&x_prev, true, false);
+                            problem.update_state(&x_prev, true, false, false);
                             problem.jacobian_product(&x_prev, p, &probe_r, jp.as_mut_slice());
                             rescale_vector(precond, jp.as_mut_slice());
                             r0.push(merit_jac_prod(problem, &jp, &probe_r));
@@ -1480,7 +1493,7 @@ where
                                     *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
                                 },
                             );
-                            problem.update_state(&probe_x, true, false);
+                            problem.update_state(&probe_x, true, false, false);
                             problem.residual(&probe_x, probe_r.as_mut_slice(), false);
                             let probe = merit(problem, &probe_x, &probe_r);
                             merit_data.push(probe);
@@ -1499,7 +1512,7 @@ where
                             );
                             let probe = merit_obj(problem, &probe_x);
                             merit_data.push(probe);
-                            problem.update_state(&probe_x, true, false);
+                            problem.update_state(&probe_x, true, false, false);
                             problem.residual(&probe_x, probe_r.as_mut_slice(), true);
                             let probe = merit(problem, &probe_x, &probe_r);
                             merit_data_alt.push(probe);
@@ -1511,7 +1524,7 @@ where
                         let mut zero_col = vec![T::zero(); x.len()];
                         let mut jcol = vec![T::zero(); x.len()];
                         let mut grad = vec![T::zero(); x.len()];
-                        problem.update_state(&x_prev, true, false);
+                        problem.update_state(&x_prev, true, false, false);
                         for i in 0..x.len() {
                             zero_col[i] = T::one();
                             problem.jacobian_product(&x_prev, &zero_col, &r_cur, jcol.as_mut_slice());
@@ -1531,7 +1544,7 @@ where
                                     *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
                                 },
                             );
-                            problem.update_state(&probe_x, true, false);
+                            problem.update_state(&probe_x, true, false, false);
                             problem.residual(&probe_x, probe_r.as_mut_slice(), false);
                             rescale_vector(precond, probe_r.as_mut_slice());
                             if i == 0  {
@@ -1588,7 +1601,7 @@ where
 
                         let mut jp = vec![T::zero(); r.len()];
                         problem.invalidate_cached_jacobian_product_values();
-                        problem.update_state(x, true, false);
+                        problem.update_state(x, true, false, false);
                         problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
                         rescale_vector(precond, jp.as_mut_slice());
                         writeln!(file, "p = {:?}", &p).unwrap();

@@ -92,8 +92,18 @@ static const char *theDsFile = R"THEDSFILE(
             "newton" "Newton"
             "newtonbt" "Newton with Backtracking"
             "newtonassistbt" "Newton with Assisted Backtracking"
+            "newtoncontactassistbt" "Newton with Contact Assisted Backtracking"
             "trustregion" "Trust Region"
         }
+    }
+    parm {
+        name "backtrackingcoeff"
+        cppname "BacktrackingCoeff"
+        label "Backtracking Coefficient"
+        type float
+        default { "0.9" }
+        range { 0 1 }
+        hidewhen "{ solvertype == newton } { solvertype == trustregion }"
     }
 
     group {
@@ -510,6 +520,13 @@ static const char *theDsFile = R"THEDSFILE(
             type toggle
             default { "off" }
         }
+        parm {
+            name "projecthessians"
+            cppname "ProjectHessians"
+            label "Project Element Hessians"
+            type toggle
+            default { "off" }
+        }
     }
 
 }
@@ -617,6 +634,16 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftySceneParms &so
         sim_params.materials.push_back(mtl_props);
     }
 
+    switch (static_cast<SOP_SoftySceneEnums::SolverType>(sopparms.getSolverType())) {
+        case SOP_SoftySceneEnums::SolverType::NEWTONBT:
+        case SOP_SoftySceneEnums::SolverType::NEWTONASSISTBT:
+        case SOP_SoftySceneEnums::SolverType::NEWTONCONTACTASSISTBT:
+            sim_params.backtracking_coeff = sopparms.getBacktrackingCoeff();
+            break;
+        default:
+            sim_params.backtracking_coeff = 0.9;
+    }
+
     switch (static_cast<SOP_SoftySceneEnums::SolverType>(sopparms.getSolverType()))
     {
     case SOP_SoftySceneEnums::SolverType::NEWTON:
@@ -627,6 +654,9 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftySceneParms &so
         break;
     case SOP_SoftySceneEnums::SolverType::NEWTONASSISTBT:
         sim_params.solver_type = softy::SolverType::NewtonAssistedBacktracking;
+        break;
+    case SOP_SoftySceneEnums::SolverType::NEWTONCONTACTASSISTBT:
+        sim_params.solver_type = softy::SolverType::NewtonContactAssistedBacktracking;
         break;
     case SOP_SoftySceneEnums::SolverType::TRUSTREGION:
         sim_params.solver_type = softy::SolverType::TrustRegion;
@@ -750,6 +780,7 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftySceneParms &so
         sim_params.frictional_contacts.push_back(fc_params);
     }
 
+    sim_params.project_element_hessians = sopparms.getProjectHessians();
     sim_params.derivative_test = sopparms.getDerivativeTest();
     sim_params.friction_tolerance = sopparms.getFrictionTolerance();
     sim_params.contact_tolerance = sopparms.getContactTolerance();

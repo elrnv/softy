@@ -18,6 +18,7 @@ mod ffi {
         Newton,
         NewtonBacktracking,
         NewtonAssistedBacktracking,
+        NewtonContactAssistedBacktracking,
         TrustRegion,
     }
 
@@ -123,6 +124,7 @@ mod ffi {
 
         // Solver params
         pub solver_type: SolverType,
+        pub backtracking_coeff: f32,
         pub velocity_clear_frequency: f32,
         pub tolerance: f32,
         pub max_iterations: u32,
@@ -135,6 +137,7 @@ mod ffi {
         pub max_outer_iterations: u32,
         pub time_integration: TimeIntegration,
         pub preconditioner: Preconditioner,
+        pub project_element_hessians: bool,
 
         pub derivative_test: u32,
     }

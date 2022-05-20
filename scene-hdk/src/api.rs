@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use hdkrs::interop::CookResult;
+use softy::constraints::penalty_point_contact as softy_contact;
 use softy::nl_fem::LinearSolver;
 use softy::{self, fem, Mesh, PointCloud};
 
@@ -54,6 +55,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
     fn into(self) -> softy::nl_fem::SimParams {
         let SimParams {
             solver_type,
+            backtracking_coeff,
             time_step,
             gravity,
             velocity_clear_frequency,
@@ -72,15 +74,20 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             contact_iterations,
             time_integration,
             preconditioner,
+            project_element_hessians,
             ..
         } = *self;
         let line_search = match solver_type {
             SolverType::NewtonAssistedBacktracking => {
                 fem::nl::LineSearch::default_assisted_backtracking()
             }
+            SolverType::NewtonContactAssistedBacktracking => {
+                fem::nl::LineSearch::default_contact_assisted_backtracking()
+            }
             SolverType::NewtonBacktracking => fem::nl::LineSearch::default_backtracking(),
             _ => fem::nl::LineSearch::None,
-        };
+        }
+        .with_step_factor(backtracking_coeff);
 
         fem::nl::SimParams {
             time_step: if time_step > 0.0 {
@@ -122,6 +129,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             time_integration: time_integration.into(),
             preconditioner: preconditioner.into(),
             log_file: None,
+            project_element_hessians,
         }
     }
 }
@@ -194,7 +202,7 @@ fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
 
 fn get_frictional_contacts<'a>(
     params: &'a SimParams,
-) -> Vec<(softy::FrictionalContactParams, (usize, &'a [u32]))> {
+) -> Vec<(softy_contact::FrictionalContactParams, (usize, &'a [u32]))> {
     params
         .frictional_contacts
         .as_slice()
@@ -204,7 +212,6 @@ fn get_frictional_contacts<'a>(
                 object_material_id,
                 ref collider_material_ids,
                 kernel,
-                // contact_type,
                 radius_multiplier,
                 smoothness_tolerance,
                 contact_offset,
@@ -216,7 +223,7 @@ fn get_frictional_contacts<'a>(
             let radius_multiplier = f64::from(radius_multiplier);
             let tolerance = f64::from(smoothness_tolerance);
             (
-                softy::FrictionalContactParams {
+                softy_contact::FrictionalContactParams {
                     kernel: match kernel {
                         Kernel::Interpolating => {
                             softy::KernelType::Interpolating { radius_multiplier }
@@ -229,19 +236,13 @@ fn get_frictional_contacts<'a>(
                         Kernel::Global => softy::KernelType::Global { tolerance },
                         i => panic!("Unrecognized kernel: {:?}", i),
                     },
-                    contact_type: softy::ContactType::Point,
                     contact_offset: f64::from(contact_offset),
                     use_fixed,
                     friction_params: if dynamic_cof == 0.0 {
                         None
                     } else {
-                        Some(softy::FrictionParams {
-                            smoothing_weight: 0.0,
-                            friction_forwarding: 1.0,
+                        Some(softy_contact::FrictionParams {
                             dynamic_friction: f64::from(dynamic_cof),
-                            inner_iterations: 0,
-                            tolerance: 0.0,
-                            print_level: 0,
                             friction_profile: match friction_profile {
                                 FrictionProfile::Quadratic => softy::FrictionProfile::Quadratic,
                                 _ => softy::FrictionProfile::Stabilized,

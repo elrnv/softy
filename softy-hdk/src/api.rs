@@ -3,14 +3,10 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use thiserror::Error;
 
-#[cfg(feature = "optsolver")]
-use geo::attrib::*;
-#[cfg(feature = "optsolver")]
-use geo::mesh::topology::*;
-use geo::topology::NumVertices;
+use geo::{attrib::*, topology::*, VertexPositions};
 use hdkrs::interop::CookResult;
 use softy::nl_fem::LinearSolver;
-use softy::{self, fem, Mesh, PointCloud};
+use softy::{self, fem, Mesh, PointCloud, Pos64Type, POSITION64_ATTRIB};
 #[cfg(feature = "optsolver")]
 use softy::{PolyMesh, TetMesh, TetMeshExt};
 
@@ -123,6 +119,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
     fn into(self) -> softy::nl_fem::SimParams {
         let SimParams {
             solver_type,
+            backtracking_coeff,
             time_step,
             gravity,
             velocity_clear_frequency,
@@ -141,6 +138,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             contact_iterations,
             time_integration,
             preconditioner,
+            project_element_hessians,
             ref log_file,
             ..
         } = *self;
@@ -148,9 +146,13 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             SolverType::NewtonAssistedBacktracking => {
                 fem::nl::LineSearch::default_assisted_backtracking()
             }
+            SolverType::NewtonContactAssistedBacktracking => {
+                fem::nl::LineSearch::default_contact_assisted_backtracking()
+            }
             SolverType::NewtonBacktracking => fem::nl::LineSearch::default_backtracking(),
             _ => fem::nl::LineSearch::None,
-        };
+        }
+        .with_step_factor(backtracking_coeff);
         log::debug!("{:#?}", line_search);
 
         fem::nl::SimParams {
@@ -197,6 +199,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             } else {
                 Some(std::path::PathBuf::from(log_file))
             },
+            project_element_hessians,
         }
     }
 }
@@ -708,7 +711,23 @@ pub(crate) fn register_new_solver(
         }
     };
 
-    if let Some(mesh) = mesh {
+    if let Some(mut mesh) = mesh {
+        // Get 64bit positions from the attribute if any, since houdini uses 32bit positions.
+        // This is useful when 64 bit precision is needed for analysis when restarting the solver.
+        if let Ok(pos64) = mesh.remove_attrib::<VertexIndex>(POSITION64_ATTRIB) {
+            if let Ok(pos64_iter) = pos64.direct_iter::<Pos64Type>() {
+                mesh.vertex_positions_mut()
+                    .iter_mut()
+                    .zip(pos64_iter)
+                    .for_each(|(out_pos, &pos64)| {
+                        *out_pos = pos64;
+                    });
+            } else {
+                // Wrong attribute, put it back.
+                // No panic since we just removed that attribute, that space is guaranteed to be vacant.
+                mesh.insert_attrib(POSITION64_ATTRIB, pos64).unwrap();
+            }
+        }
         solver_builder.set_mesh(mesh, &params)?;
     }
 

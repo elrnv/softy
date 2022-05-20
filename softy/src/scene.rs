@@ -35,13 +35,13 @@ pub enum SerializeError {
 
 #[derive(Debug, Error)]
 pub enum SceneError {
-    #[error("IO Error")]
+    #[error("IO Error: {}", .0)]
     IO(#[from] std::io::Error),
     #[error("(De)Serialization error: {}", .0)]
     Serialize(#[from] SerializeError),
-    #[error("Attribute transfer error")]
+    #[error("Attribute transfer error: {}", .0)]
     Attribute(#[from] geo::attrib::Error),
-    #[error("Solver error")]
+    #[error("Solver error: {}", .0)]
     Solver(#[from] Box<crate::Error>),
     #[error("This library was compiled without JSON support.")]
     JSONUnsupported,

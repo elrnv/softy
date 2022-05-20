@@ -200,6 +200,7 @@ pub struct NLProblem<T: Real> {
 
     pub timings: RefCell<ResidualTimings>,
     pub jac_timings: RefCell<FrictionJacobianTimings>,
+    pub project_element_hessians: bool,
 }
 
 impl<T: Real> NLProblem<T> {
@@ -366,6 +367,12 @@ impl<T: Real64> NLProblem<T> {
                     out_mass[i] = 1.0 / mass_inv.to_f64().unwrap();
                 });
         }
+
+        let pos64 = out_pos.to_vec();
+        // Add a position attribute guaranteed to be 64bit
+        mesh.remove_attrib::<VertexIndex>(POSITION64_ATTRIB).ok(); // Removing attrib
+        mesh.insert_attrib_data::<Pos64Type, VertexIndex>(POSITION64_ATTRIB, pos64)
+            .unwrap(); // No panic: removed above.
 
         mesh.remove_attrib::<VertexIndex>(VELOCITY_ATTRIB).ok(); // Removing attrib
         mesh.insert_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, out_vel)
@@ -2836,7 +2843,7 @@ impl<T: Real64> NLProblem<T> {
     fn jacobian_product_ad(&self, v: &[T], p: &[T], jp: &mut [T]) {
         let t_begin = Instant::now();
 
-        self.update_state_ad(v, p, true);
+        self.update_state_ad(v, p, false);
 
         // Compute residual using dual numbers, the result is stored in dof residual.
         self.residual_ad();
@@ -3087,7 +3094,7 @@ impl<T: Real64> NLProblem<T> {
 
         // Compute the contact and friction Jacobians using AD
 
-        self.update_state_ad(v, p, true);
+        self.update_state_ad(v, p, false);
 
         // // Update state
         // self.integrate_step_ad();
@@ -3274,6 +3281,9 @@ pub trait NonLinearProblem<T: Real> {
         r_tol: f32,
         a_tol: f32,
     ) -> bool;
+
+    /// Returns true if we can use the objective as a merit function.
+    fn use_obj_merit(&self) -> bool;
 
     /// Computes a warm start into `x`.
     ///
@@ -3585,6 +3595,16 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         })
     }
 
+    fn use_obj_merit(&self) -> bool {
+        self.frictional_contact_constraints.iter().all(|fc| {
+            fc.constraint
+                .borrow()
+                .friction_params
+                .map(|fp| fp.lagged)
+                .unwrap_or(true)
+        }) && self.project_element_hessians
+    }
+
     // TODO: Figure out a better warm start. FE does not work well.
     fn compute_warm_start(&self, dq: &mut [T]) {
         // Use FE for warm starts.
@@ -3744,6 +3764,7 @@ impl<T: Real64> NLProblem<T> {
             preconditioner_workspace,
             preconditioner,
             time_integration,
+            project_element_hessians,
             ..
         } = self.clone();
 
@@ -3811,6 +3832,7 @@ impl<T: Real64> NLProblem<T> {
             }),
             timings: RefCell::new(ResidualTimings::default()),
             jac_timings: RefCell::new(FrictionJacobianTimings::default()),
+            project_element_hessians,
         }
     }
 
@@ -4126,6 +4148,7 @@ mod tests {
             preconditioner: Preconditioner::default(),
             contact_iterations: 5,
             log_file: None,
+            project_element_hessians: false,
         }
     }
 }

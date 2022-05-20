@@ -518,7 +518,7 @@ pub struct NewtonWorkspace<T: Real> {
     r_cur: Vec<T>,
     r_next: Vec<T>,
     r_next_unscaled: Vec<T>,
-    r_lagged: Vec<T>,
+    // r_lagged: Vec<T>,
     precond: Vec<T>,
 }
 
@@ -598,7 +598,7 @@ where
         let jp = r.clone();
         let r_next = r.clone();
         let r_next_unscaled = r.clone();
-        let r_lagged = r.clone();
+        // let r_lagged = r.clone();
         let r_cur = r.clone();
         let p = r.clone();
 
@@ -647,7 +647,7 @@ where
                 r_cur,
                 r_next,
                 r_next_unscaled,
-                r_lagged,
+                // r_lagged,
                 precond,
             }),
         }
@@ -659,7 +659,7 @@ where
         _init_sparse_solver: &mut LazyCell<SparseDirectSolver>,
         _init_j_mapping: &mut Vec<Index>,
         linsolve: &mut LinearSolverWorkspace<T>,
-    ) {
+    ) -> bool {
         // Construct the sparse Jacobian.
         let n = problem.num_variables();
         let with_constraints = matches!(linsolve, LinearSolverWorkspace::Direct(_));
@@ -667,7 +667,7 @@ where
         assert_eq!(j_rows.len(), j_cols.len());
         let j_nnz = j_rows.len();
         if j_nnz == 0 {
-            return;
+            return true;
         }
         log::debug!("Number of Jacobian non-zeros: {}", j_nnz);
         sparse_jacobian.j_rows = j_rows;
@@ -702,13 +702,21 @@ where
             //ds.j_sparse.replace(new_sparse(j_t.view(), true));
             ds.j = j;
             ds.j_mapping = j_mapping;
-            ds.sparse_solver
-                .replace(SparseDirectSolver::new(ds.j.view()).unwrap());
+            let new_solver = SparseDirectSolver::new(ds.j.view());
+            if let Some(new_solver) = new_solver {
+                ds.sparse_solver.replace(new_solver);
+                true
+            } else {
+                log::warn!("Failed to update Jacobian");
+                false
+            }
             //#[cfg(target_os = "macos")]
             //ds.sparse_iterative_solver
             //    .replace(SparseIterativeSolver::new(ds.j_t.view()));
             // ds.p64.resize(n, 0.0);
             // ds.out64.resize(n, 0.0);
+        } else {
+            true
         }
     }
 }
@@ -758,7 +766,7 @@ where
     fn problem_mut(&mut self) -> &mut P {
         &mut self.problem
     }
-    fn update_jacobian_indices(&mut self) {
+    fn update_jacobian_indices(&mut self) -> bool {
         let NewtonWorkspace {
             sparse_jacobian: sj,
             init_sparse_jacobian_vals,
@@ -774,7 +782,7 @@ where
             init_sparse_solver,
             init_j_mapping,
             linsolve,
-        );
+        )
     }
 
     /// Solves the problem and returns the solution along with the solve result
@@ -810,49 +818,14 @@ where
         self.problem.residual_timings().clear();
         let t_begin_solve = Instant::now();
 
-        if update_jacobian_indices {
-            self.update_jacobian_indices();
+        if update_jacobian_indices && !self.update_jacobian_indices() {
+            return SolveResult {
+                iterations: 0,
+                status: Status::FailedToInitializeJacobian,
+                timings,
+                stats,
+            };
         }
-
-        // let mut merit = |problem: &P, _: &[T], residual: &[T], init_sparse_solver: &mut SparseDirectSolver| {
-        //     init_sparse_solver.update_rhs(residual);
-        //     let result = init_sparse_solver.solve();
-        //     let r64 = result.expect("Initial Jacobian is singular.");
-        //     0.5 * r64.as_tensor().norm_squared()
-        // };
-        let merit = |_: &P, _: &[T], r: &[T]| 0.5 * r.as_tensor().norm_squared().to_f64().unwrap();
-        let merit_obj = |problem: &P, x: &[T]| problem.objective(x).to_f64().unwrap();
-
-        // Computes the product of merit function with the search direction.
-        // In this version, we leverage that Jp is already computed.
-        // let mut merit_jac_prod =
-        //     |problem: &P, jp: &[T], r: &[T], init_sparse_solver: &mut SparseDirectSolver| {
-        //         init_sparse_solver.update_rhs(jp);
-        //         let result = init_sparse_solver.solve();
-        //         let jinv_jp = result.expect("Initial Jacobian is singular.").to_vec();
-        //         // TODO: don't need to compute this again in general.
-        //         init_sparse_solver.update_rhs(r);
-        //         let result = init_sparse_solver.solve();
-        //         let jinv_r = result.expect("Initial Jacobian is singular.");
-        //         jinv_jp
-        //             .iter()
-        //             .zip(jinv_r.iter())
-        //             .fold(0.0, |acc, (&jinv_jp, &jinv_r)| acc + jinv_jp * jinv_r)
-        //     };
-        let merit_jac_prod = |_: &P, jp: &[T], r: &[T]| {
-            //r.as_tensor().norm_squared().to_f64().unwrap()
-            jp.iter()
-                .zip(r.iter())
-                .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap())
-        };
-        let merit_obj_jac_prod = |_: &P, _: &[T], p: &[T], r_lagged: &mut [T]| {
-            // problem.residual_symmetric(x, r_lagged);
-            r_lagged
-                .iter()
-                .zip(p.iter())
-                .map(|(&r, &p)| (r * p).to_f64().unwrap())
-                .sum::<f64>()
-        };
 
         {
             let Self {
@@ -894,10 +867,59 @@ where
             r_cur,
             r_next,
             r_next_unscaled,
-            r_lagged,
             precond,
             ..
         } = &mut *workspace.borrow_mut();
+
+        let use_obj_merit = problem.use_obj_merit();
+
+        // let mut merit = |problem: &P, _: &[T], residual: &[T], init_sparse_solver: &mut SparseDirectSolver| {
+        //     init_sparse_solver.update_rhs(residual);
+        //     let result = init_sparse_solver.solve();
+        //     let r64 = result.expect("Initial Jacobian is singular.");
+        //     0.5 * r64.as_tensor().norm_squared()
+        // };
+        let merit = |problem: &P, x: &[T], r: &[T]| {
+            if use_obj_merit {
+                problem.objective(x).to_f64().unwrap()
+            } else {
+                0.5 * r.as_tensor().norm_squared().to_f64().unwrap()
+            }
+        };
+
+        // Computes the product of merit function with the search direction.
+        // In this version, we leverage that Jp is already computed.
+        // let mut merit_jac_prod =
+        //     |problem: &P, jp: &[T], r: &[T], init_sparse_solver: &mut SparseDirectSolver| {
+        //         init_sparse_solver.update_rhs(jp);
+        //         let result = init_sparse_solver.solve();
+        //         let jinv_jp = result.expect("Initial Jacobian is singular.").to_vec();
+        //         // TODO: don't need to compute this again in general.
+        //         init_sparse_solver.update_rhs(r);
+        //         let result = init_sparse_solver.solve();
+        //         let jinv_r = result.expect("Initial Jacobian is singular.");
+        //         jinv_jp
+        //             .iter()
+        //             .zip(jinv_r.iter())
+        //             .fold(0.0, |acc, (&jinv_jp, &jinv_r)| acc + jinv_jp * jinv_r)
+        //     };
+        let merit_jac_prod =
+            |problem: &P, precond: &[T], x: &[T], p: &[T], jp: &mut [T], r: &[T]| {
+                if use_obj_merit {
+                    // problem.residual_symmetric(x, r_lagged);
+                    r.iter()
+                        .zip(p.iter())
+                        .map(|(&r, &p)| (r * p).to_f64().unwrap())
+                        .sum::<f64>()
+                } else {
+                    problem.jacobian_product(x, p, r, jp);
+                    rescale_vector(precond, jp);
+                    //r.as_tensor().norm_squared().to_f64().unwrap()
+                    jp.iter()
+                        .zip(r.iter())
+                        .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap())
+                }
+            };
 
         // let SparseJacobian {
         //     j_rows,
@@ -1191,32 +1213,6 @@ where
                             };
                         }
                     }
-                    log::trace!("Bound estimate and condition: {:?}", {
-                        let j_dense = j_dense.borrow_mut_with(|| {
-                            ChunkedN::from_flat_with_stride(
-                                x.len(),
-                                vec![T::zero(); x.len() * r.len()],
-                            )
-                        });
-                        build_dense(
-                            j_dense.view_mut(),
-                            &sparse_jacobian.j_rows,
-                            &sparse_jacobian.j_cols,
-                            &sparse_jacobian.j_vals,
-                            x.len(),
-                        );
-                        // log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
-                        //write_jacobian_img(j_dense.view(), iterations);
-                        // print_dense(j_dense.view());
-                        //condition_number(j_dense.view()).to_f64().unwrap()
-                        let (b, c) = bound_estimate_and_condition(
-                            &*problem.lumped_mass_inv(),
-                            j_dense.view(),
-                            T::from(problem.time_step()).unwrap(),
-                        );
-                        (b.to_f64().unwrap(), c.to_f64().unwrap())
-                        // max_sigma(j_dense.view())
-                    });
                     let t_linsolve_debug_info = Instant::now();
 
                     ////log::trace!("j_vals = {:?}", &j_vals);
@@ -1297,7 +1293,7 @@ where
                     problem.residual(x, r_next.as_mut_slice(), false);
                     rescale_vector(precond, r_next.as_mut_slice());
 
-                    merit_next = merit(problem, x, r_next);//, init_sparse_solver);
+                    merit_next = merit(problem, x, r_next);
                     // merit_next = merit_obj(problem, x);
                     (1, 1.0)
                 } else {
@@ -1306,12 +1302,7 @@ where
 
                     // Compute Jacobian product to be used to check armijo condition.
                     // We do this before incrementing x to avoid updating state back and forth.
-                    let merit_jac_p = {
-                        problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
-                        rescale_vector(precond, jp.as_mut_slice());
-                        merit_jac_prod(problem, jp.as_slice(), r_cur)
-                        // merit_obj_jac_prod(problem, x_prev, p, r_lagged)
-                    };
+                    let merit_jac_p = merit_jac_prod(problem, precond, x_prev, p, jp.as_mut_slice(), r_cur);
 
                     if matches!(linsolve, LinearSolverWorkspace::Iterative(_)) && merit_jac_p > 0.0 {
                         log::trace!("positive search direction reversed: {merit_jac_p:10.3e}");
@@ -1339,10 +1330,17 @@ where
                                 problem.residual(x, r_next.as_mut_slice(), false);
                                 rescale_vector(precond, r_next.as_mut_slice());
 
-                                problem
-                                    .assist_line_search_for_friction(presliding_alpha, x_prev, p, r_cur, r_next)
-                                    .to_f64()
-                                    .unwrap()
+                                if params.line_search.is_contact_assisted() {
+                                    // Skip friction assist.
+                                    presliding_alpha
+                                        .to_f64()
+                                        .unwrap()
+                                } else {
+                                    problem
+                                        .assist_line_search_for_friction(presliding_alpha, x_prev, p, r_cur, r_next)
+                                        .to_f64()
+                                        .unwrap()
+                                }
                             }
                         )
                     } else {
@@ -1379,16 +1377,22 @@ where
                         // Test f(x + αp) < f(x) - cα r(x)'J(x)p(x)
 
                         // Compute the merit function
-                        merit_next = merit(problem, x, r_next);//, init_sparse_solver);
+                        merit_next = merit(problem, x, r_next);
                         // log::trace!("ls: merit = {:?}", merit_next);
                         // merit_next = merit_obj(problem, x);//, init_sparse_solver);
 
                         match linsolve {
                             LinearSolverWorkspace::Iterative(linsolve) => {
+                                let mut g_cur = merit_next;
+                                let mut g_prev = merit_cur;
                                 // INEXACT NEWTON:
+                                if use_obj_merit {
+                                    g_cur = r_next.as_tensor().norm_squared().to_f64().unwrap();
+                                    g_prev = r_cur.as_tensor().norm_squared().to_f64().unwrap();
+                                }
                                 let t = params.line_search.armijo_coeff();
                                 let factor = 1.0 - t * alpha * (1.0 - linsolve.tol as f64);
-                                if merit_next <= merit_cur * factor * factor {
+                                if g_cur <= g_prev * factor * factor {
                                     break;
                                 }
                                 // TODO: Use another factor during backtracking.
@@ -1396,10 +1400,10 @@ where
                             }
                             LinearSolverWorkspace::Direct(_) => {
                                 // TRADITIONAL BACKTRACKING:
-                                let increment = params.line_search.armijo_coeff() * alpha * merit_jac_p;
-                                if merit_next <= merit_cur + increment
+                                let increment = params.line_search.armijo_coeff() * alpha;
+                                if merit_next <= merit_cur + increment * merit_jac_p
                                 {
-                                    log::trace!("ls: backtracking success: {merit_next:?} <= {merit_cur:?} + {increment:?}");
+                                    log::trace!("ls: backtracking success: {merit_next:?} <= {merit_cur:?} + {increment:?} * {merit_jac_p:?}");
                                     break;
                                 }
                                 alpha *= rho;
@@ -1408,7 +1412,7 @@ where
                         // log::trace!("ls: alpha = {alpha:?}");
 
                         // Break if alpha becomes too small. This is usually a bad sign.
-                        if alpha < 1e-5 && ls_count > 2 {
+                        if alpha < 1e-20 && ls_count > 2 {
                             log::trace!("ls: backtracking fail: alpha too small: {alpha:?}");
                             break;
                         }
@@ -1436,10 +1440,10 @@ where
                         log::trace!("incremented eta: {:?}", linsolve.tol);
                     }
 
-                    if alpha < 1e-5 && ls_count > 80 {
+                    if alpha < 1e-20 && ls_count > 80 {
                         problem.invalidate_cached_jacobian_product_values();
                         dbg!(alpha);
-                        let max_alpha = alpha;
+                        let max_alpha = 1e-3_f64;//alpha;
                         let mut merit_data = vec![];
                         let mut r0 = vec![];
                         let mut f = vec![];
@@ -1471,9 +1475,7 @@ where
                             f.push(probe_f.view().into_tensor().norm_squared());
                             merit_data.push(probe);
                             problem.update_state(&x_prev, true, false, false);
-                            problem.jacobian_product(&x_prev, p, &probe_r, jp.as_mut_slice());
-                            rescale_vector(precond, jp.as_mut_slice());
-                            r0.push(merit_jac_prod(problem, &jp, &probe_r));
+                            r0.push(merit_jac_prod(problem, precond, &x_prev, &p, jp.as_mut_slice(), &probe_r));
                         }
                         writeln!(file, "merit_cur = {:?}", merit_cur).unwrap();
                         writeln!(file, "merit_next = {:?}", merit_next).unwrap();
@@ -1498,26 +1500,6 @@ where
                             merit_data.push(probe);
                         }
                         writeln!(file, "merit_data_u = {:?}", &merit_data).unwrap();
-
-                        merit_data.clear();
-                        let mut merit_data_alt = merit_data.clone();
-                        for i in 0..=last_index {
-                            // let alpha: f64 = /*(4.0*max_alpha).min*/(1.2)*0.0005 * i as f64 - 0.2;
-                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.2 * 0.0005 * i as f64 - 0.2);
-                            zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
-                                |(x, &x0, &p)| {
-                                    *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
-                                },
-                            );
-                            let probe = merit_obj(problem, &probe_x);
-                            merit_data.push(probe);
-                            problem.update_state(&probe_x, true, false, false);
-                            problem.residual(&probe_x, probe_r.as_mut_slice(), true);
-                            let probe = merit(problem, &probe_x, &probe_r);
-                            merit_data_alt.push(probe);
-                        }
-                        writeln!(file, "merit_data_obj = {:?}", &merit_data).unwrap();
-                        writeln!(file, "merit_data_alt = {:?}", &merit_data_alt).unwrap();
 
                         // Also compute the gradient and output that.
                         let mut zero_col = vec![T::zero(); x.len()];
@@ -1638,7 +1620,7 @@ where
             if problem.converged(
                 x_prev,
                 x,
-                r_next_unscaled,
+                r_next,
                 merit_next,
                 params.x_tol,
                 params.r_tol,
@@ -1656,6 +1638,32 @@ where
             merit_prev = merit_cur;
             merit_cur = merit_next;
         };
+
+        if matches!(linsolve, LinearSolverWorkspace::Direct(DirectSolver { .. })) {
+            log::trace!("Bound estimate and condition: {:?}", {
+                let j_dense = j_dense.borrow_mut_with(|| {
+                    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()])
+                });
+                build_dense(
+                    j_dense.view_mut(),
+                    &sparse_jacobian.j_rows,
+                    &sparse_jacobian.j_cols,
+                    &sparse_jacobian.j_vals,
+                    x.len(),
+                );
+                // log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
+                //write_jacobian_img(j_dense.view(), iterations);
+                // print_dense(j_dense.view());
+                //condition_number(j_dense.view()).to_f64().unwrap()
+                let (b, c) = bound_estimate_and_condition(
+                    &*problem.lumped_mass_inv(),
+                    j_dense.view(),
+                    T::from(problem.time_step()).unwrap(),
+                );
+                (b.to_f64().unwrap(), c.to_f64().unwrap())
+                // max_sigma(j_dense.view())
+            });
+        }
 
         // Restore linsolve tolernace
         if let LinearSolverWorkspace::Iterative(linsolve) = linsolve {
@@ -2045,6 +2053,12 @@ pub enum LineSearch {
         c: f64,
         rho: f64,
     },
+    /// Contact aware line search that truncates `α` as `AssistedBacktracking` but skips the friction
+    /// test. This is intended for debugging and testing purposes.
+    ContactAssistedBackTracking {
+        c: f64,
+        rho: f64,
+    },
     None,
 }
 
@@ -2055,6 +2069,9 @@ impl Default for LineSearch {
 }
 
 impl LineSearch {
+    pub const fn default_contact_assisted_backtracking() -> Self {
+        LineSearch::ContactAssistedBackTracking { c: 1e-4, rho: 0.9 }
+    }
     pub const fn default_assisted_backtracking() -> Self {
         LineSearch::AssistedBackTracking { c: 1e-4, rho: 0.9 }
     }
@@ -2062,14 +2079,30 @@ impl LineSearch {
         LineSearch::BackTracking { c: 1e-4, rho: 0.9 }
     }
     pub fn is_assisted(&self) -> bool {
-        matches!(self, LineSearch::AssistedBackTracking { .. })
+        matches!(self, LineSearch::ContactAssistedBackTracking { .. })
+            || matches!(self, LineSearch::AssistedBackTracking { .. })
+    }
+    pub fn is_contact_assisted(&self) -> bool {
+        matches!(self, LineSearch::ContactAssistedBackTracking { .. })
+    }
+    /// Sets the step factor for backtracking linesearch, and returns an updated `LineSearch` type.
+    ///
+    /// If line search is `None`, this function simply returns `self` unchanged.
+    pub fn with_step_factor(mut self, new_rho: f32) -> Self {
+        match &mut self {
+            LineSearch::BackTracking { rho, .. }
+            | LineSearch::AssistedBackTracking { rho, .. }
+            | LineSearch::ContactAssistedBackTracking { rho, .. } => *rho = new_rho as f64,
+            _ => {}
+        }
+        self
     }
     /// Gets the factor by which the step size should be decreased.
     pub fn step_factor(&self) -> f64 {
         match self {
-            LineSearch::BackTracking { rho, .. } | LineSearch::AssistedBackTracking { rho, .. } => {
-                *rho
-            }
+            LineSearch::BackTracking { rho, .. }
+            | LineSearch::AssistedBackTracking { rho, .. }
+            | LineSearch::ContactAssistedBackTracking { rho, .. } => *rho,
             LineSearch::None => 1.0,
         }
     }
@@ -2077,7 +2110,9 @@ impl LineSearch {
     // Gets the coefficient for the Armijo condition.
     pub fn armijo_coeff(&self) -> f64 {
         match self {
-            LineSearch::BackTracking { c, .. } | LineSearch::AssistedBackTracking { c, .. } => *c,
+            LineSearch::BackTracking { c, .. }
+            | LineSearch::AssistedBackTracking { c, .. }
+            | LineSearch::ContactAssistedBackTracking { c, .. } => *c,
             LineSearch::None => 1.0,
         }
     }

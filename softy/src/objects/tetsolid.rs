@@ -41,6 +41,8 @@ pub struct TetElements {
     pub damping: Vec<f32>,
     pub lambda: Vec<f32>,
     pub mu: Vec<f32>,
+    /// A flag indicating if the tet element hessians should be projected to be positive semi-definite.
+    pub projected_hessian: bool,
 }
 
 impl TetElements {
@@ -49,6 +51,7 @@ impl TetElements {
         mesh: &Mesh,
         materials: &[Material],
         vertex_type: &[VertexType],
+        projected_hessian: bool,
     ) -> Result<TetElements, Error> {
         // Initialize tet topology.
         let mtl_id_iter = mesh.attrib_iter::<MaterialIdType, CellIndex>(MATERIAL_ID_ATTRIB)?;
@@ -150,6 +153,7 @@ impl TetElements {
             damping,
             lambda,
             mu,
+            projected_hessian,
         })
     }
 
@@ -356,18 +360,21 @@ impl TetSolid {
         mesh: &Mesh,
         materials: &[Material],
         vertex_type: &[VertexType],
+        projected_hessian: bool,
     ) -> Result<TetSolid, Error> {
         let nh_tet_elements = TetElements::try_from_mesh_and_materials(
             ElasticityModel::NeoHookean,
             mesh,
             materials,
             vertex_type,
+            projected_hessian,
         )?;
         let snh_tet_elements = TetElements::try_from_mesh_and_materials(
             ElasticityModel::StableNeoHookean,
             mesh,
             materials,
             vertex_type,
+            projected_hessian,
         )?;
 
         Ok(TetSolid {

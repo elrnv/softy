@@ -536,6 +536,7 @@ impl<T: Real> State<T, ad::FT<T>> {
         mesh: &Mesh,
         materials: &[Material],
         vertex_type: &[VertexType],
+        projected_tet_element_hessians: bool,
     ) -> Result<State<T, ad::FT<T>>, Error> {
         let num_verts = mesh.num_vertices();
         let num_free_verts = vertex_type
@@ -543,7 +544,12 @@ impl<T: Real> State<T, ad::FT<T>> {
             .filter(|&x| *x == VertexType::Free)
             .count();
 
-        let solid = TetSolid::try_from_mesh_and_materials(mesh, materials, vertex_type)?;
+        let solid = TetSolid::try_from_mesh_and_materials(
+            mesh,
+            materials,
+            vertex_type,
+            projected_tet_element_hessians,
+        )?;
         let shell = TriShell::try_from_mesh_and_materials(mesh, materials, vertex_type)?;
         //let rigid = RigidBody::try_from_mesh_and_materials(&mesh, materials)?;
 

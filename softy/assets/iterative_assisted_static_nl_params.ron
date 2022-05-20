@@ -17,5 +17,6 @@ SimParams(
     contact_tolerance: 1e-5,
     contact_iterations: 5,
     time_integration: BE,
-    preconditioner: ApproximateJacobi
+    preconditioner: ApproximateJacobi,
+    project_element_hessians: false,
 )

@@ -1380,6 +1380,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             return false;
         }
         let jac = self.contact_state.contact_jacobian.as_ref().unwrap();
+        let contact_basis = &self.contact_state.contact_basis;
+
         let vc = jac.mul(
             vel,
             &self.constrained_collider_vertices,
@@ -1388,7 +1390,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         );
         let max_vel = vc
             .iter()
-            .map(|v| v.as_tensor().norm())
+            .enumerate()
+            .map(|(i, &v)| {
+                let [vn, _, _] = contact_basis.to_contact_coordinates(v, i);
+                vn
+            })
             .max_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Less))
             .unwrap_or_else(T::zero)
             .to_f64()

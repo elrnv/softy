@@ -123,6 +123,10 @@ where
             .converged(x_prev, x, r, merit, x_tol, r_tol, a_tol)
     }
     #[inline]
+    fn use_obj_merit(&self) -> bool {
+        self.problem.use_obj_merit()
+    }
+    #[inline]
     fn compute_warm_start(&self, x: &mut [T]) {
         self.problem.compute_warm_start(x);
     }
@@ -234,8 +238,8 @@ where
     fn problem_mut(&mut self) -> &mut P {
         &mut self.solver.problem_mut().problem
     }
-    fn update_jacobian_indices(&mut self) {
-        self.solver.update_jacobian_indices();
+    fn update_jacobian_indices(&mut self) -> bool {
+        self.solver.update_jacobian_indices()
     }
     /// Solves the problem and returns the solution along with the solve result
     /// info.

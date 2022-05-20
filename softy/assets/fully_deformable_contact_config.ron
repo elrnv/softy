@@ -24,6 +24,7 @@
             time_integration: BE,
             preconditioner: None,
             log_file: None,
+            project_element_hessians: false,
         ),
         materials: [
             Fixed((

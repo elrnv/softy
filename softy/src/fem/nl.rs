@@ -189,6 +189,8 @@ pub struct SimParams {
     pub preconditioner: Preconditioner,
     /// Path to a file where to store logs.
     pub log_file: Option<PathBuf>,
+    /// If true the per element FEM Hessians will be projected to be positive semi-definite.
+    pub project_element_hessians: bool,
 }
 
 impl SimParams {
@@ -232,6 +234,7 @@ pub enum Status {
     Diverged,
     StepTooLarge,
     NothingToSolve,
+    FailedToInitializeJacobian,
     Interrupted,
     FailedJacobianCheck,
 }
@@ -651,7 +654,7 @@ pub trait NLSolver<P, T> {
     /// Gets a mutable reference the underlying problem instance.
     fn problem_mut(&mut self) -> &mut P;
     /// Updates the constraint set which may change the jacobian sparsity.
-    fn update_jacobian_indices(&mut self);
+    fn update_jacobian_indices(&mut self) -> bool;
     /// Solves the problem and returns the solution along with the solve result
     /// info.
     fn solve(&mut self) -> (Vec<T>, SolveResult);

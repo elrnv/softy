@@ -71,7 +71,7 @@ fn simple_quasi_static_two_tri() -> Result<(), Error> {
             solver.step()?;
         }
 
-        geo::io::save_mesh(&solver.mesh(), "./out/two_tri.vtk").unwrap();
+        // geo::io::save_mesh(&solver.mesh(), "./out/two_tri.vtk").unwrap();
 
         let verts = solver.vertex_positions();
 

@@ -705,6 +705,7 @@ impl SolverBuilder {
             &mesh,
             &materials,
             &vertex_type,
+            params.project_element_hessians,
         )?;
 
         if state.dof.storage().len() == 0 {
@@ -865,6 +866,7 @@ impl SolverBuilder {
             debug_friction: RefCell::new(Vec::new()),
             timings: RefCell::new(crate::fem::nl::ResidualTimings::default()),
             jac_timings: RefCell::new(FrictionJacobianTimings::default()),
+            project_element_hessians: params.project_element_hessians,
         })
     }
 
@@ -900,6 +902,8 @@ impl SolverBuilder {
         log::info!("x_tol: {:?}", x_tol);
         log::debug!("r-scale: {:?}", r_scale);
 
+        let initial_point = problem.state.borrow().dof.storage().cur.dq.clone();
+
         // Construct the non-linear equation solver.
         let solver = MCPSolver::newton(
             problem,
@@ -933,6 +937,7 @@ impl SolverBuilder {
             sim_params: params,
             max_step: 0.0,
             solution: vec![T::zero(); num_variables],
+            initial_point,
             iteration_count: 0,
         })
     }
@@ -983,6 +988,8 @@ pub struct Solver<S, T> {
     ///
     /// This is also used as warm start for subsequent steps.
     solution: Vec<T>,
+    /// Step workspace vector to remember what the initial condition was.
+    initial_point: Vec<T>,
     /// Counts the number of times `step` is called.
     iteration_count: u32,
 }
@@ -1063,6 +1070,8 @@ where
 
     /// Update the `mesh` and `prev_pos` with the current solution.
     fn commit_solution(&mut self, relax_max_step: bool) {
+        // Save as warm start for next step.
+        self.initial_point.copy_from_slice(&self.solution);
         {
             let Self {
                 solver,
@@ -1200,6 +1209,9 @@ where
             // Loop to resolve all contacts.
             let mut update_jacobian_indices = true;
             loop {
+                // Start from initial point inside this loop explicitly. initial_point is not
+                // updated when a bad step is taken (contact violation or max step violation).
+                self.solution.copy_from_slice(&self.initial_point);
                 /****    Main solve step    ****/
                 let solve_result = self
                     .solver
@@ -1270,6 +1282,7 @@ where
                         let max_step_violation = self.solver.problem().max_step_violation();
                         if max_step_violation {
                             stage_result.max_step_violations += 1;
+                            //log::warn!("Max is step violated. Increase kernel radius to ensure all Jacobians are accurate.")
                             self.solver.problem_mut().update_constraint_set(
                                 self.sim_params.should_compute_jacobian_matrix(),
                             );
@@ -1280,7 +1293,7 @@ where
                             .solve_results
                             .push((problem_info, solve_result));
 
-                        if contact_violation > 0.0 || max_step_violation {
+                        if contact_violation > 0.0 {
                             continue;
                         } else {
                             // Relax kappa

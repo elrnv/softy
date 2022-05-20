@@ -284,6 +284,8 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
         // Break up the hessian triplets into chunks of elements for each tet.
         let hess_chunks: &mut [[T; 78]] = unsafe { reinterpret_mut_slice(values) };
 
+        let project_local_hessians = self.0.projected_hessian;
+
         zip!(
             hess_chunks.par_iter_mut(),
             self.0.damping.par_iter().map(|&x| f64::from(x)),
@@ -311,7 +313,32 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
             //let factor = T::from(1.0 + damping).unwrap() * scale;
             let factor = scale;
 
-            let local_hessians = tet_energy.energy_hessian();
+            let mut local_hessians = tet_energy.energy_hessian();
+
+            // Project local hessians to be positive semi-definite.
+            if project_local_hessians {
+                let mut local_hess_mtx =
+                    na::Matrix::<T, na::U12, na::U12, na::ArrayStorage<T, 12, 12>>::from_fn(
+                        |r, c| local_hessians[r / 3][c / 3][r % 3][c % 3],
+                    );
+
+                let mut eigen = local_hess_mtx.symmetric_eigen();
+                for eigenval in &mut eigen.eigenvalues {
+                    if *eigenval < T::zero() {
+                        *eigenval = T::zero();
+                    }
+                }
+                local_hess_mtx.copy_from(&eigen.recompose());
+                for n in 0..4 {
+                    for k in 0..4 {
+                        for r in 0..3 {
+                            for c in 0..3 {
+                                local_hessians[n][k][r][c] = local_hess_mtx[(3 * n + r, 3 * k + c)];
+                            }
+                        }
+                    }
+                }
+            }
 
             // Damping
             let damping = T::from(damping).unwrap();
@@ -457,6 +484,7 @@ mod tests {
                         &mesh,
                         &materials,
                         vertex_types.as_slice(),
+                        false,
                     )
                     .unwrap(),
                     mesh.vertex_positions().to_vec(),
@@ -468,6 +496,7 @@ mod tests {
                         &mesh,
                         &materials,
                         vertex_types.as_slice(),
+                        false,
                     )
                     .unwrap(),
                     mesh.vertex_positions().to_vec(),

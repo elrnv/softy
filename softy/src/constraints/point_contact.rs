@@ -1769,10 +1769,14 @@ impl<T: Real> PointContactConstraint<T> {
     ///
     /// This function uses the current state. So to get an up-to-date value, call update_state first.
     pub(crate) fn compute_nonlinear_constraint(&self, value: &mut [T]) {
-        // let radius = T::from(self.contact_radius()).unwrap();
+        let radius = T::from(self.contact_radius()).unwrap();
 
         let surf = &self.implicit_surface;
         let mut constraint_value_buf = self.constraint_value.borrow_mut();
+        // Initialize to positive (outside) value.
+        constraint_value_buf.par_iter_mut().for_each(|val| {
+            *val = radius;
+        });
         // constraint_value_buf
         //     .par_iter_mut()
         //     .zip(self.collider_vertex_positions.view().into_par_iter())

@@ -200,7 +200,6 @@ fn friction_experiment(
 
 /// A regular tetrahedron sliding on a flat surface.
 #[test]
-#[ignore]
 fn sliding_tet_on_points_lagged() -> Result<(), Error> {
     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
     let fc_params = FrictionalContactParams {
@@ -295,7 +294,6 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
 
 /// A regular tetrahedron sliding on a flat surface.
 #[test]
-#[ignore]
 fn sliding_tet_on_implicit_lagged() -> Result<(), Error> {
     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e5, 0.4));
 

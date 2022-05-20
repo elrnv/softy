@@ -3276,6 +3276,7 @@ pub trait NonLinearProblem<T: Real> {
         x_prev: &[T],
         x: &[T],
         r: &[T],
+        r_unscaled: &[T],
         merit: f64,
         x_tol: f32,
         r_tol: f32,
@@ -3546,6 +3547,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         x_prev: &[T],
         x: &[T],
         r: &[T],
+        r_unscaled: &[T],
         _merit: f64,
         x_tol: f32,
         r_tol: f32,
@@ -3575,7 +3577,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             let h_inv =
                 1.0 / (NLProblem::time_step(self) * self.time_integration.implicit_factor() as f64);
             let a_tol = T::from(a_tol).unwrap();
-            Chunked3::from_flat(&*r)
+            Chunked3::from_flat(&*r_unscaled)
                 .iter()
                 .zip(mass_inv.iter())
                 .zip(rel_mesh_size.iter())

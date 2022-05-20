@@ -1621,6 +1621,7 @@ where
                 x_prev,
                 x,
                 r_next,
+                r_next_unscaled,
                 merit_next,
                 params.x_tol,
                 params.r_tol,

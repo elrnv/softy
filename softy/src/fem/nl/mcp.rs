@@ -114,13 +114,14 @@ where
         x_prev: &[T],
         x: &[T],
         r: &[T],
+        r_unscaled: &[T],
         merit: f64,
         x_tol: f32,
         r_tol: f32,
         a_tol: f32,
     ) -> bool {
         self.problem
-            .converged(x_prev, x, r, merit, x_tol, r_tol, a_tol)
+            .converged(x_prev, x, r, r_unscaled, merit, x_tol, r_tol, a_tol)
     }
     #[inline]
     fn use_obj_merit(&self) -> bool {

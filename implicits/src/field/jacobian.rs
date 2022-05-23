@@ -753,11 +753,23 @@ impl<T: Real> QueryTopo<T> {
     ///
     /// The returned 2D arrays are column major 3x3 matrices.
     pub fn contact_jacobian_matrices(&self, query_points: &[[T; 3]], matrices: &mut [[[T; 3]; 3]]) {
-        apply_kernel_query_fn!(self, |kernel| self.contact_jacobian_matrices_impl(
-            query_points,
-            kernel,
-            matrices
-        ))
+        apply_kernel_query_fn!(self, |kernel| {
+            self.contact_jacobian_matrices_impl(query_points, kernel)
+                .zip(matrices.iter_mut())
+                .for_each(|(mtx, out)| *out = mtx.2)
+        })
+    }
+
+    /// Compute the contact Jacobian of this implicit surface function with respect to surface
+    /// points.
+    ///
+    /// The returned 2D arrays are column major 3x3 matrices.
+    pub fn contact_jacobian_matrices_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+    ) -> impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a {
+        apply_kernel_query_fn_impl_iter!(self, |kernel| self
+            .contact_jacobian_matrices_impl(query_points, kernel))
     }
 
     /// Compute the contact Jacobian of this implicit surface function with respect to surface
@@ -838,18 +850,19 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// Multiplier is a stacked velocity stored at samples.
-    pub(crate) fn contact_jacobian_matrices_impl<K>(
-        &self,
-        query_points: &[[T; 3]],
+    pub(crate) fn contact_jacobian_matrices_impl<'a, K: 'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
         kernel: K,
-        value_mtx: &mut [[[T; 3]; 3]],
-    ) where
+    ) -> impl Iterator<Item = (usize, usize, [[T; 3]; 3])> + 'a
+    where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
             ref samples,
+            ref surface_topo,
             bg_field_params,
             sample_type,
             ..
@@ -861,26 +874,23 @@ impl<T: Real> QueryTopo<T> {
 
         // For each row (query point),
         let jac = zip!(query_points.iter(), neigh_points)
-            .filter(|(_, nbrs)| !nbrs.is_empty())
-            .flat_map(move |(q, nbr_points)| {
+            .enumerate()
+            .filter(|(_, (_, nbrs))| !nbrs.is_empty())
+            .flat_map(move |(row, (q, nbr_points))| {
                 let view = SamplesView::new(nbr_points, samples);
-                contact_jacobian_at(Vector3::new(*q), view, kernel, bg_field_params).0
+                contact_jacobian_at(Vector3::new(*q), view, kernel, bg_field_params)
+                    .0
+                    .zip(nbr_points.iter())
+                    .map(move |(mtx, &col)| (row, col, mtx))
             });
 
         match sample_type {
-            SampleType::Vertex => {
-                value_mtx.iter_mut().zip(jac).for_each(|(mtx, new_mtx)| {
-                    *mtx = new_mtx.into();
-                });
-            }
-            SampleType::Face => {
-                value_mtx
-                    .iter_mut()
-                    .zip(jac.flat_map(move |j| std::iter::repeat(j * third).take(3)))
-                    .for_each(|(mtx, new_mtx)| {
-                        *mtx = new_mtx.into();
-                    });
-            }
+            SampleType::Vertex => Either::Left(jac.map(|(row, col, m)| (row, col, m.into()))),
+            SampleType::Face => Either::Right(jac.flat_map(move |(row, j, mtx)| {
+                surface_topo[j]
+                    .iter()
+                    .map(move |&col| (row, col, (mtx * third).into()))
+            })),
         }
     }
 

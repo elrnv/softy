@@ -90,7 +90,7 @@
                 friction_params: Some((
                     dynamic_friction: 1.0,
                     friction_profile: Quadratic,
-                    lagged: false,
+                    lagged: true,
                 )),
             ), (0, 1)),
         ],

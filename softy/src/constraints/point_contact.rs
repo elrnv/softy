@@ -1774,7 +1774,7 @@ impl<T: Real> PointContactConstraint<T> {
         let surf = &self.implicit_surface;
         let mut constraint_value_buf = self.constraint_value.borrow_mut();
         // Initialize to positive (outside) value.
-        constraint_value_buf.par_iter_mut().for_each(|val| {
+        constraint_value_buf.iter_mut().for_each(|val| {
             *val = radius;
         });
         // constraint_value_buf
@@ -1793,10 +1793,10 @@ impl<T: Real> PointContactConstraint<T> {
 
         // Clear potential value.
         constraint_value_buf
-            .par_iter_mut()
+            .iter_mut()
             .for_each(|val| *val = T::zero());
 
-        surf.potential_par(
+        surf.potential(
             self.collider_vertex_positions.view().into(),
             &mut *constraint_value_buf,
         );

@@ -1074,19 +1074,11 @@ where
         self.initial_point.copy_from_slice(&self.solution);
         {
             let Self {
-                solver,
-                solution,
-                sim_params,
-                ..
+                solver, solution, ..
             } = self;
 
             // Advance internal state (positions and velocities) of the problem.
-            solver.problem_mut().advance(
-                solution,
-                sim_params.derivative_test > 0,
-                !matches!(sim_params.linsolve, LinearSolver::Iterative { .. })
-                    || sim_params.derivative_test > 0,
-            );
+            solver.problem_mut().advance(solution);
             //TODO Remove debug code:
             // solution.iter_mut().for_each(|x| *x = T::zero());
         }
@@ -1164,10 +1156,17 @@ where
         let dt = self.time_step();
         self.iteration_count += 1;
 
+        let update_autodiff_state =
+            matches!(self.sim_params.linsolve, LinearSolver::Iterative { .. })
+                || self.sim_params.derivative_test > 2;
+        let update_jacobian = !matches!(self.sim_params.linsolve, LinearSolver::Iterative { .. })
+            || self.sim_params.derivative_test > 0;
+
         log::debug!("Updating constraint set...");
-        self.solver
-            .problem_mut()
-            .update_constraint_set(self.sim_params.should_compute_jacobian_matrix());
+        self.solver.problem_mut().update_constraint_set(
+            self.sim_params.should_compute_jacobian_matrix(),
+            update_autodiff_state,
+        );
 
         let mut contact_iterations = self.sim_params.contact_iterations as i64;
 
@@ -1198,6 +1197,14 @@ where
             // Update the current vertex data using the current dof state.
             self.solver.problem_mut().update_cur_vertices();
 
+            // Updates constraint state according to latest solution and saves old state for
+            // lagged solves.
+            self.solver.problem_mut().update_constraint_state(
+                self.initial_point.as_slice(),
+                update_jacobian,
+                update_autodiff_state,
+            );
+
             // No need to do this every time.
             self.solver.problem().check_jacobian(
                 self.sim_params.derivative_test,
@@ -1212,6 +1219,7 @@ where
                 // Start from initial point inside this loop explicitly. initial_point is not
                 // updated when a bad step is taken (contact violation or max step violation).
                 self.solution.copy_from_slice(&self.initial_point);
+
                 /****    Main solve step    ****/
                 let solve_result = self
                     .solver
@@ -1285,6 +1293,7 @@ where
                             //log::warn!("Max is step violated. Increase kernel radius to ensure all Jacobians are accurate.")
                             self.solver.problem_mut().update_constraint_set(
                                 self.sim_params.should_compute_jacobian_matrix(),
+                                false,
                             );
                             update_jacobian_indices = true;
                         }

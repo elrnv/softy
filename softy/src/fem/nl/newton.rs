@@ -538,7 +538,7 @@ pub struct Newton<P, T: Real> {
     pub workspace: RefCell<NewtonWorkspace<T>>,
 }
 
-fn sparse_matrix_and_mapping<'a, T: Real>(
+pub fn sparse_matrix_and_mapping<'a, T: Real>(
     mut rows: &'a [usize],
     mut cols: &'a [usize],
     vals: &[T],

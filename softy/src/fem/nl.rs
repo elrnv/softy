@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
 
-use crate::constraints::{FrictionJacobianTimings, FrictionTimings};
+use crate::constraints::{FrictionJacobianTimings, FrictionTimings, UpdateTimings};
 pub use mcp::*;
 pub use newton::*;
 pub use problem::*;
@@ -273,6 +273,11 @@ pub struct ResidualTimings {
     pub contact_jacobian: Duration,
     pub jacobian: JacobianTimings,
     pub friction_force: FrictionTimings,
+    pub update_constraint_details: UpdateTimings,
+    pub force_ad: Duration,
+    pub dof_to_vtx_ad: Duration,
+    pub read_deriv_ad: Duration,
+    pub product_ad: Duration,
     pub preconditioner: Duration,
 }
 
@@ -289,6 +294,11 @@ impl ResidualTimings {
         self.contact_jacobian = Duration::new(0, 0);
         self.volume_force = Duration::new(0, 0);
         self.friction_force.clear();
+        self.update_constraint_details.clear();
+        self.force_ad = Duration::new(0, 0);
+        self.dof_to_vtx_ad = Duration::new(0, 0);
+        self.read_deriv_ad = Duration::new(0, 0);
+        self.product_ad = Duration::new(0, 0);
         self.preconditioner = Duration::new(0, 0);
     }
 }
@@ -334,8 +344,10 @@ impl Display for Timings {
             f,
             "    Contact prep time:        {}",
             self.residual.update_state.as_millis()
+                + self.residual.update_constraint_gradient.as_millis()
                 + self.residual.update_distance_potential.as_millis()
                 + self.residual.update_multipliers.as_millis()
+                + self.residual.update_sliding_basis.as_millis()
         )?;
         writeln!(
             f,
@@ -349,6 +361,27 @@ impl Display for Timings {
         )?;
         writeln!(
             f,
+            "      Update constraint grad: {}",
+            self.residual.update_constraint_gradient.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Collect triplets:     {}",
+            self.residual
+                .update_constraint_details
+                .collect_triplets
+                .as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Redistribute triplets:{}",
+            self.residual
+                .update_constraint_details
+                .redistribute_triplets
+                .as_millis()
+        )?;
+        writeln!(
+            f,
             "      Update multipliers:     {}",
             self.residual.update_multipliers.as_millis()
         )?;
@@ -356,6 +389,51 @@ impl Display for Timings {
             f,
             "      Update sliding basis:   {}",
             self.residual.update_sliding_basis.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Stash:                {}",
+            self.residual.update_constraint_details.stash.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Contact jacobian:     {}",
+            self.residual
+                .update_constraint_details
+                .contact_jac
+                .as_millis()
+        )?;
+        writeln!(
+            f,
+            "          Collect triplets:   {}",
+            self.residual
+                .update_constraint_details
+                .jac_collect_triplets
+                .as_millis()
+        )?;
+        writeln!(
+            f,
+            "          Redistribute trip:  {}",
+            self.residual
+                .update_constraint_details
+                .jac_redistribute_triplets
+                .as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Contact basis:        {}",
+            self.residual
+                .update_constraint_details
+                .contact_basis
+                .as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Contact gradient:     {}",
+            self.residual
+                .update_constraint_details
+                .contact_grad
+                .as_millis()
         )?;
         writeln!(
             f,
@@ -401,6 +479,26 @@ impl Display for Timings {
             f,
             "      Jacobian Friction:      {}",
             self.residual.jacobian.friction.as_millis()
+        )?;
+        writeln!(
+            f,
+            "  Force AD time:              {}",
+            self.residual.force_ad.as_millis()
+        )?;
+        writeln!(
+            f,
+            "  DOF to VTX AD time:         {}",
+            self.residual.dof_to_vtx_ad.as_millis()
+        )?;
+        writeln!(
+            f,
+            "  Read deriv AD time:         {}",
+            self.residual.read_deriv_ad.as_millis()
+        )?;
+        writeln!(
+            f,
+            "  Product AD time:            {}",
+            self.residual.product_ad.as_millis()
         )?;
         writeln!(
             f,

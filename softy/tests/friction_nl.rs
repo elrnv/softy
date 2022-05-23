@@ -215,8 +215,8 @@ fn sliding_tet_on_points_lagged() -> Result<(), Error> {
     let tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
 
     let mut surface = GridBuilder {
-        rows: 5,
-        cols: 5,
+        rows: 10,
+        cols: 10,
         orientation: AxisPlaneOrientation::ZX,
     }
     .build();
@@ -299,7 +299,7 @@ fn sliding_tet_on_implicit_lagged() -> Result<(), Error> {
 
     let fc_params = FrictionalContactParams {
         kernel: KernelType::Approximate {
-            radius_multiplier: 1.5,
+            radius_multiplier: 20.5,
             tolerance: 0.001,
         },
         contact_offset: 0.0,
@@ -327,7 +327,17 @@ fn sliding_tet_on_implicit_lagged() -> Result<(), Error> {
 fn fully_deformable_friction_coupling() -> Result<(), Error> {
     init_logger();
     let scene = Scene::load_from_ron("./assets/fully_deformable_friction_coupling_config.ron")?;
-    scene.run(3)?;
+    scene.run(8)?;
+    Ok(())
+}
+
+// A test with both surfaces deformable
+#[test]
+fn fully_deformable_lagged_friction_coupling() -> Result<(), Error> {
+    init_logger();
+    let scene =
+        Scene::load_from_ron("./assets/fully_deformable_lagged_friction_coupling_config.ron")?;
+    scene.run(8)?;
     Ok(())
 }
 

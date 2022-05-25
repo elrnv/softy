@@ -7,6 +7,8 @@ use accelerate::*;
 use lazycell::LazyCell;
 #[cfg(not(target_os = "macos"))]
 use mkl_corrode as mkl;
+#[cfg(not(target_os = "macos"))]
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tensr::*;
 use thiserror::Error;
@@ -904,56 +906,60 @@ where
         //             .zip(jinv_r.iter())
         //             .fold(0.0, |acc, (&jinv_jp, &jinv_r)| acc + jinv_jp * jinv_r)
         //     };
-        let merit_jac_prod =
-            |problem: &P, linsolve: &LinearSolverWorkspace<T>, precond: &[T], x: &[T], p: &[T], jp: &mut [T], r: &[T]| {
-                if use_obj_merit {
-                    // problem.residual_symmetric(x, r_lagged);
-                    r.iter()
-                        .zip(p.iter())
-                        .map(|(&r, &p)| (r * p).to_f64().unwrap())
-                        .sum::<f64>()
-                } else {
-                    match linsolve {
-                        LinearSolverWorkspace::Iterative(_) => {
-                            problem.jacobian_product(x, p, r, jp);
+        let merit_jac_prod = |problem: &P,
+                              linsolve: &LinearSolverWorkspace<T>,
+                              precond: &[T],
+                              x: &[T],
+                              p: &[T],
+                              jp: &mut [T],
+                              r: &[T]| {
+            if use_obj_merit {
+                // problem.residual_symmetric(x, r_lagged);
+                r.iter()
+                    .zip(p.iter())
+                    .map(|(&r, &p)| (r * p).to_f64().unwrap())
+                    .sum::<f64>()
+            } else {
+                match linsolve {
+                    LinearSolverWorkspace::Iterative(_) => {
+                        problem.jacobian_product(x, p, r, jp);
+                    }
+                    LinearSolverWorkspace::Direct(DirectSolver { j, .. }) => {
+                        // It's assumed that j has already been updated during the direct solve.
+                        // So we can just use it directly to compute the product.
+                        jp.fill(T::zero());
+                        // On macos j is col major so we must multiply accordingly
+                        #[cfg(target_os = "macos")]
+                        {
+                            j.view().into_data().into_iter().enumerate().for_each(
+                                |(col_idx, col)| {
+                                    for (row_idx, &j_val) in col.into_iter() {
+                                        jp[row_idx] += j_val * p[col_idx];
+                                    }
+                                },
+                            );
                         }
-                        LinearSolverWorkspace::Direct(DirectSolver { j, .. }) => {
-                            // It's assumed that j has already been updated during the direct solve.
-                            // So we can just use it directly to compute the product.
-                            jp.fill(T::zero());
-                            // On macos j is col major so we must multiply accordingly
-                            #[cfg(target_os = "macos")]
-                            {
-                                j.view()
-                                    .into_data()
-                                    .into_iter().enumerate()
-                                    .for_each(|(col_idx, col)| {
-                                        for (row_idx, &j_val) in col.into_iter() {
-                                            jp[row_idx] += j_val * p[col_idx];
-                                        }
-                                    });
-                            }
-                            #[cfg(not(target_os = "macos"))]
-                            {
-                                j.view()
-                                    .into_data()
-                                    .into_par_iter()
-                                    .zip(jp.par_iter_mut())
-                                    .for_each(|(row, jp)| {
-                                        for (col_idx, &j_val) in row.into_iter() {
-                                            *jp += j_val * p[col_idx];
-                                        }
-                                    });
-                            }
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            j.view()
+                                .into_data()
+                                .into_par_iter()
+                                .zip(jp.par_iter_mut())
+                                .for_each(|(row, jp)| {
+                                    for (col_idx, &j_val) in row.into_iter() {
+                                        *jp += j_val * p[col_idx];
+                                    }
+                                });
                         }
                     }
-                    rescale_vector(precond, jp);
-                    //r.as_tensor().norm_squared().to_f64().unwrap()
-                    jp.iter()
-                        .zip(r.iter())
-                        .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap())
                 }
-            };
+                rescale_vector(precond, jp);
+                //r.as_tensor().norm_squared().to_f64().unwrap()
+                jp.iter()
+                    .zip(r.iter())
+                    .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap())
+            }
+        };
 
         // let SparseJacobian {
         //     j_rows,

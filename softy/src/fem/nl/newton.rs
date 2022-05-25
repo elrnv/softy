@@ -826,6 +826,7 @@ where
                 stats,
             };
         }
+        let t_jacobian_indices = Instant::now();
 
         {
             let Self {
@@ -904,7 +905,7 @@ where
         //             .fold(0.0, |acc, (&jinv_jp, &jinv_r)| acc + jinv_jp * jinv_r)
         //     };
         let merit_jac_prod =
-            |problem: &P, precond: &[T], x: &[T], p: &[T], jp: &mut [T], r: &[T]| {
+            |problem: &P, linsolve: &LinearSolverWorkspace<T>, precond: &[T], x: &[T], p: &[T], jp: &mut [T], r: &[T]| {
                 if use_obj_merit {
                     // problem.residual_symmetric(x, r_lagged);
                     r.iter()
@@ -912,7 +913,40 @@ where
                         .map(|(&r, &p)| (r * p).to_f64().unwrap())
                         .sum::<f64>()
                 } else {
-                    problem.jacobian_product(x, p, r, jp);
+                    match linsolve {
+                        LinearSolverWorkspace::Iterative(_) => {
+                            problem.jacobian_product(x, p, r, jp);
+                        }
+                        LinearSolverWorkspace::Direct(DirectSolver { j, .. }) => {
+                            // It's assumed that j has already been updated during the direct solve.
+                            // So we can just use it directly to compute the product.
+                            jp.fill(T::zero());
+                            // On macos j is col major so we must multiply accordingly
+                            #[cfg(target_os = "macos")]
+                            {
+                                j.view()
+                                    .into_data()
+                                    .into_iter().enumerate()
+                                    .for_each(|(col_idx, col)| {
+                                        for (row_idx, &j_val) in col.into_iter() {
+                                            jp[row_idx] += j_val * p[col_idx];
+                                        }
+                                    });
+                            }
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                j.view()
+                                    .into_data()
+                                    .into_par_iter()
+                                    .zip(jp.par_iter_mut())
+                                    .for_each(|(row, jp)| {
+                                        for (col_idx, &j_val) in row.into_iter() {
+                                            *jp += j_val * p[col_idx];
+                                        }
+                                    });
+                            }
+                        }
+                    }
                     rescale_vector(precond, jp);
                     //r.as_tensor().norm_squared().to_f64().unwrap()
                     jp.iter()
@@ -1302,7 +1336,7 @@ where
 
                     // Compute Jacobian product to be used to check armijo condition.
                     // We do this before incrementing x to avoid updating state back and forth.
-                    let merit_jac_p = merit_jac_prod(problem, precond, x_prev, p, jp.as_mut_slice(), r_cur);
+                    let merit_jac_p = merit_jac_prod(problem, linsolve, precond, x_prev, p, jp.as_mut_slice(), r_cur);
 
                     if matches!(linsolve, LinearSolverWorkspace::Iterative(_)) && merit_jac_p > 0.0 {
                         log::trace!("positive search direction reversed: {merit_jac_p:10.3e}");
@@ -1475,7 +1509,7 @@ where
                             f.push(probe_f.view().into_tensor().norm_squared());
                             merit_data.push(probe);
                             problem.update_state(&x_prev, true, false, false);
-                            r0.push(merit_jac_prod(problem, precond, &x_prev, &p, jp.as_mut_slice(), &probe_r));
+                            r0.push(merit_jac_prod(problem, linsolve, precond, &x_prev, &p, jp.as_mut_slice(), &probe_r));
                         }
                         writeln!(file, "merit_cur = {:?}", merit_cur).unwrap();
                         writeln!(file, "merit_next = {:?}", merit_next).unwrap();
@@ -1672,6 +1706,7 @@ where
         }
 
         timings.total = Instant::now() - t_begin_solve;
+        timings.jacobian_indices = t_jacobian_indices - t_begin_solve;
         timings.residual = *self.problem.residual_timings();
         timings.friction_jacobian = *self.problem.jacobian_timings();
 

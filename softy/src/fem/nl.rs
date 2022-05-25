@@ -312,6 +312,7 @@ pub struct Timings {
     direct_solve: Duration,
     jacobian_product: Duration,
     jacobian_values: Duration,
+    jacobian_indices: Duration,
     linsolve_debug_info: Duration,
     line_search: Duration,
     total: Duration,
@@ -509,6 +510,11 @@ impl Display for Timings {
             f,
             "    Jacobian product time:    {}",
             self.jacobian_product.as_millis()
+        )?;
+        writeln!(
+            f,
+            "    Jacobian indices time:    {}",
+            self.jacobian_indices.as_millis()
         )?;
         writeln!(
             f,

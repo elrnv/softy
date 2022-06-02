@@ -19,6 +19,9 @@ mod ffi {
         NewtonBacktracking,
         NewtonAssistedBacktracking,
         NewtonContactAssistedBacktracking,
+        AdaptiveNewtonBacktracking,
+        AdaptiveNewtonAssistedBacktracking,
+        AdaptiveNewtonContactAssistedBacktracking,
         TrustRegion,
     }
 

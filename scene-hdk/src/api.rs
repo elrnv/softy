@@ -77,13 +77,20 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             project_element_hessians,
             ..
         } = *self;
+        let adaptive_newton =
+            matches!(solver_type, SolverType::AdaptiveNewtonBacktracking) ||
+                matches!(solver_type, SolverType::AdaptiveNewtonAssistedBacktracking) ||
+                matches!(solver_type, SolverType::AdaptiveNewtonContactAssistedBacktracking;
         let line_search = match solver_type {
+            SolverType::AdaptiveNewtonAssistedBacktracking |
             SolverType::NewtonAssistedBacktracking => {
                 fem::nl::LineSearch::default_assisted_backtracking()
             }
+            SolverType::NewtonContactAssistedBacktracking |
             SolverType::NewtonContactAssistedBacktracking => {
                 fem::nl::LineSearch::default_contact_assisted_backtracking()
             }
+            SolverType::NewtonBacktracking |
             SolverType::NewtonBacktracking => fem::nl::LineSearch::default_backtracking(),
             _ => fem::nl::LineSearch::None,
         }
@@ -122,6 +129,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
                 LinearSolver::Direct
             },
             line_search,
+            adaptive_newton,
             derivative_test: derivative_test as u8,
             friction_tolerance,
             contact_tolerance,

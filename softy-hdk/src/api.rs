@@ -142,14 +142,20 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             ref log_file,
             ..
         } = *self;
+        let adaptive_newton =
+            matches!(solver_type, SolverType::AdaptiveNewtonAssistedBacktracking) ||
+        matches!(solver_type, SolverType::AdaptiveNewtonContactAssistedBacktracking) ||
+        matches!(solver_type, SolverType::AdaptiveNewtonBacktracking);
         let line_search = match solver_type {
+            SolverType::AdaptiveNewtonAssistedBacktracking |
             SolverType::NewtonAssistedBacktracking => {
                 fem::nl::LineSearch::default_assisted_backtracking()
             }
+            SolverType::AdaptiveNewtonContactAssistedBacktracking |
             SolverType::NewtonContactAssistedBacktracking => {
                 fem::nl::LineSearch::default_contact_assisted_backtracking()
             }
-            SolverType::NewtonBacktracking => fem::nl::LineSearch::default_backtracking(),
+            SolverType::AdaptiveNewtonBacktracking | SolverType::NewtonBacktracking => fem::nl::LineSearch::default_backtracking(),
             _ => fem::nl::LineSearch::None,
         }
         .with_step_factor(backtracking_coeff);
@@ -188,6 +194,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
                 LinearSolver::Direct
             },
             line_search,
+            adaptive_newton,
             derivative_test: derivative_test as u8,
             friction_tolerance,
             contact_tolerance,

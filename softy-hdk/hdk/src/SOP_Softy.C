@@ -100,6 +100,9 @@ static const char *theDsFile = R"THEDSFILE(
             "newtonbt" "Newton with Backtracking"
             "newtonassistbt" "Newton with Assisted Backtracking"
             "newtoncontactassistbt" "Newton with Contact Assisted Backtracking"
+            "adaptnewtonbt" "Adaptive Newton with Backtracking"
+            "adaptnewtonassistbt" "Adaptive Newton with Assisted Backtracking"
+            "adaptnewtoncontactassistbt" "Adaptive Newton with Contact Assisted Backtracking"
             "trustregion" "Trust Region"
         }
     }
@@ -805,6 +808,9 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
         case SOP_SoftyEnums::SolverType::NEWTONBT:
         case SOP_SoftyEnums::SolverType::NEWTONASSISTBT:
         case SOP_SoftyEnums::SolverType::NEWTONCONTACTASSISTBT:
+        case SOP_SoftyEnums::SolverType::ADAPTNEWTONBT:
+        case SOP_SoftyEnums::SolverType::ADAPTNEWTONASSISTBT:
+        case SOP_SoftyEnums::SolverType::ADAPTNEWTONCONTACTASSISTBT:
             sim_params.backtracking_coeff = sopparms.getBacktrackingCoeff();
             break;
         default:
@@ -824,6 +830,15 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
         break;
     case SOP_SoftyEnums::SolverType::NEWTONCONTACTASSISTBT:
         sim_params.solver_type = softy::SolverType::NewtonContactAssistedBacktracking;
+        break;
+    case SOP_SoftyEnums::SolverType::ADAPTNEWTONBT:
+        sim_params.solver_type = softy::SolverType::AdaptiveNewtonBacktracking;
+        break;
+    case SOP_SoftyEnums::SolverType::ADAPTNEWTONASSISTBT:
+        sim_params.solver_type = softy::SolverType::AdaptiveNewtonAssistedBacktracking;
+        break;
+    case SOP_SoftyEnums::SolverType::ADAPTNEWTONCONTACTASSISTBT:
+        sim_params.solver_type = softy::SolverType::AdaptiveNewtonContactAssistedBacktracking;
         break;
     case SOP_SoftyEnums::SolverType::TRUSTREGION:
         sim_params.solver_type = softy::SolverType::TrustRegion;

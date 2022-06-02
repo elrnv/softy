@@ -31,6 +31,79 @@ use tensr::{
     Tensor, Vector2, Vector3,
 };
 
+// #[derive(Clone, Debug)]
+// pub struct MinMaxHeap {
+//     min: f64,
+//     max_heap: BinaryHeap<NonNan>,
+// }
+//
+// impl MinMaxHeap {
+//     pub fn new() -> Self {
+//         MinMaxHeap {
+//             min: f64::INFINITY,
+//             max_heap: BinaryHeap::new(),
+//         }
+//     }
+//     pub fn clear(&mut self) {
+//         self.min = f64::INFINITY;
+//         self.max_heap.clear();
+//     }
+//
+//     pub fn push(&mut self, item: f64) {
+//         self.min = self.min.min(item);
+//         self.max_heap.push(item.into());
+//     }
+//
+//     pub fn min(&self) -> f64 {
+//         self.min
+//     }
+//
+//     pub fn max(&self) -> Option<f64> {
+//         self.max_heap.peek().map(|&x| f64::from(x))
+//     }
+//
+//     pub fn pop_max(&mut self) -> Option<f64> {
+//         self.max_heap.pop().map(f64::from)
+//     }
+// }
+//
+// // Utility type for BinaryHeap usage.
+// #[derive(Copy, Clone, Debug, PartialEq)]
+// pub struct NonNan(f64);
+//
+// impl NonNan {
+//     pub fn new(f: f64) -> Self {
+//         assert!(!f.is_nan());
+//         NonNan(f)
+//     }
+// }
+//
+// impl From<f64> for NonNan {
+//     fn from(f: f64) -> Self {
+//         NonNan::new(f)
+//     }
+// }
+//
+// impl From<NonNan> for f64 {
+//     fn from(nn: NonNan) -> Self {
+//         nn.0
+//     }
+// }
+//
+// impl PartialOrd for NonNan {
+//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+//         self.0.partial_cmp(&other.0)
+//     }
+// }
+//
+// impl Eq for NonNan {}
+//
+// impl std::cmp::Ord for NonNan {
+//     fn cmp(&self, other: &NonNan) -> Ordering {
+//         self.partial_cmp(other).unwrap()
+//     }
+// }
+
 pub type DistanceGradient<T = f64> = Tensor![T; S S 3 1];
 
 #[derive(Clone, Debug)]
@@ -225,6 +298,56 @@ impl<T: Real> MappedContactJacobian<T> {
                     .as_mut_tensor() += *block.into_arrays().as_tensor();
             }
         }
+    }
+
+    #[allow(dead_code)]
+    fn write_mtx(&self, count: u64) {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&format!("./out/jac_{count:?}.jl")).unwrap();
+        let mtx = self.matrix.view();
+        // Print the jacobian if it's small enough
+        let num_rows = mtx.into_tensor().num_rows() * 3;
+        let num_cols = mtx.into_tensor().num_cols() * 3;
+        writeln!(file, "Jrows = [").unwrap();
+        for (row_idx, row) in mtx.into_iter() {
+            for _ in row.into_iter() {
+                for i in 0..3 {
+                    for _ in 0..3 {
+                        write!(file, "{:?}, ", 3 * row_idx + i + 1).unwrap();
+                    }
+                }
+            }
+        }
+        writeln!(file, "]").unwrap();
+        writeln!(file, "Jcols = [").unwrap();
+        for (_, row) in mtx.into_iter() {
+            for (col_idx, _) in row.into_iter() {
+                for _ in 0..3 {
+                    for j in 0..3 {
+                        write!(file, "{:?}, ", 3 * col_idx + j + 1).unwrap();
+                    }
+                }
+            }
+        }
+        writeln!(file, "]").unwrap();
+        writeln!(file, "Jvals = [").unwrap();
+        for (_, row) in mtx.into_iter() {
+            for (_, block) in row.into_iter() {
+                let arrays = block.into_arrays();
+                for i in 0..3 {
+                    for j in 0..3 {
+                        write!(file, "{:?}, ", arrays[i][j].to_f64().unwrap()).unwrap();
+                    }
+                }
+            }
+        }
+        writeln!(file, "]").unwrap();
+        writeln!(
+            file,
+            "J = sparse(Jrows, Jcols, Jvals, {:?}, {:?})",
+            num_rows, num_cols
+        )
+        .unwrap();
     }
 
     pub fn mul(
@@ -751,6 +874,7 @@ where
     pub contact_basis: ContactBasis<T>,
     pub contact_jacobian: Option<MappedContactJacobian<T>>,
     pub distance_potential: Vec<T>,
+    // pub candidate_alphas: MinMaxHeap,
 }
 
 impl<T: Real> LineSearchAssistStash<T> {
@@ -770,6 +894,7 @@ impl<T: Real> LineSearchAssistStash<T> {
                 .iter()
                 .map(|&x| S::from(x).unwrap())
                 .collect(),
+            // candidate_alphas: self.candidate_alphas.clone(),
         }
     }
 
@@ -778,6 +903,7 @@ impl<T: Real> LineSearchAssistStash<T> {
             contact_basis: ContactBasis::new(),
             contact_jacobian: None,
             distance_potential: Vec::new(),
+            // candidate_alphas: MinMaxHeap::new(),
         }
     }
 }
@@ -1069,6 +1195,11 @@ impl<T: Real> ContactState<T> {
         self.contact_basis.update_from_normals(normals);
     }
 }
+//
+// use std::sync::Mutex;
+// use once_cell::sync::Lazy;
+//
+// static COUNTER: Lazy<Mutex<u64>> = Lazy::new(|| { Mutex::new(0) });
 
 pub(crate) fn update_contact_jacobian<'a, T: Real>(
     contact_jacobian: &'a mut MappedContactJacobian<T>,
@@ -1086,6 +1217,9 @@ pub(crate) fn update_contact_jacobian<'a, T: Real>(
     let t_collect_triplets = Instant::now();
 
     contact_jacobian.update_values(&jac_triplets);
+    // contact_jacobian.write_mtx(*COUNTER.lock().unwrap());
+    // *COUNTER.lock().unwrap() += 1;
+
     let t_redistribute_triplets = Instant::now();
     timings.jac_collect_triplets += t_collect_triplets - t_begin;
     timings.jac_redistribute_triplets += t_redistribute_triplets - t_collect_triplets;
@@ -1502,13 +1636,13 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     }
 
     pub(crate) fn precompute_contact_jacobian(&mut self, num_vertices: usize, and_hessian: bool) {
+        let pc = &mut self.contact_state.point_constraint;
+        self.contact_state.constrained_collider_vertices = pc.active_constraint_indices();
+
         if self.friction_params.is_none() {
             return;
         }
 
-        let pc = &mut self.contact_state.point_constraint;
-
-        self.contact_state.constrained_collider_vertices = pc.active_constraint_indices();
         let num_constraints = self.contact_state.constrained_collider_vertices.len();
 
         let constrained_collider_vertices = &self.contact_state.constrained_collider_vertices;
@@ -1736,6 +1870,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         mut alpha: T,
         // pos_cur: Chunked3<&[T]>,
         pos_next: Chunked3<&[T]>,
+        f1: Chunked3<&[T]>,
+        f2: Chunked3<&[T]>,
         delta: f32,
     ) -> T {
         let delta = T::from(delta).unwrap();
@@ -1757,17 +1893,23 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         // eprintln!("d1 = {:?}", d1);
         // eprintln!("d2 = {:?}", d2);
 
-        let alpha_min = T::from(1e-4).unwrap();
+        let constrained_collider_vertices =
+            self.contact_state.constrained_collider_vertices.as_slice();
 
-        for (&d1, &d2) in d1.iter().zip(d2.iter()) {
-            if d1 > delta && d2 <= delta {
-                alpha = num_traits::Float::min(
-                    alpha,
-                    num_traits::Float::max(
-                        alpha_min,
-                        (d1 - T::from(0.5).unwrap() * delta) / (d1 - d2),
-                    ),
-                );
+        assert_eq!(d2.len(), constrained_collider_vertices.len());
+        assert_eq!(d2.len(), d1.len());
+
+        for (i, (&d1, &d2)) in d1.iter().zip(d2.iter()).enumerate() {
+            if d1 > delta && d2 <= T::zero() {
+                let vtx_idx = self.collider_vertex_indices[constrained_collider_vertices[i]];
+                let f1 = f1[vtx_idx];
+                let f2 = f2[vtx_idx];
+                // eprintln!("contact {} is sliding at vtx {}", i, vtx_idx);
+                // eprintln!("f2 = {f2:?}; f1 = {f1:?}");
+                if f2.into_tensor().norm_squared() > f1.into_tensor().norm_squared() {
+                    let candidate_alpha = (d1 - T::from(0.5).unwrap() * delta) / (d1 - d2);
+                    alpha = num_traits::Float::min(alpha, candidate_alpha);
+                }
             }
         }
         alpha
@@ -1775,17 +1917,24 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
     pub(crate) fn assist_line_search_for_friction(
         &mut self,
-        mut alpha: T,
+        alpha: T,
         p: Chunked3<&[T]>,
         vel: Chunked3<&[T]>,
         f1: Chunked3<&[T]>,
         f2: Chunked3<&[T]>,
         // pos_next: Chunked3<&[T]>,
         delta: f32,
-    ) -> T {
+    ) -> (T, u64) {
         if self.friction_params.is_none() {
-            return alpha;
+            return (T::zero(), 0);
         }
+
+        let LineSearchAssistStash {
+            contact_jacobian,
+            contact_basis,
+            ..
+        } = &mut self.assist_stash;
+
         let delta = T::from(delta).unwrap();
         // self.update_state(pos_cur);
         // self.update_distance_potential();
@@ -1797,7 +1946,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
         // Update state to get a current estimate for the potential.
 
-        let alpha_min = T::from(1e-4).unwrap();
+        let alpha_min = T::from(1e-10).unwrap();
 
         // let mut f1 = Chunked3::from_flat(vec![T::zero(); vel.len() * 3]);
         // let mut f2 = Chunked3::from_flat(vec![T::zero(); vel.len() * 3]);
@@ -1809,8 +1958,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             self.contact_state.constrained_collider_vertices.as_slice();
 
         // Contact jacobian and contact basis from previous step.
-        let jac = self.assist_stash.contact_jacobian.as_ref().unwrap();
-        let contact_basis = &self.assist_stash.contact_basis;
+        let jac = contact_jacobian.as_ref().unwrap();
         //eprintln!("contact_basis = {:?}", &contact_basis);
 
         // Compute relative velocity at the point of contact: `vc = J(x)v`
@@ -1824,7 +1972,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             &self.collider_vertex_indices,
         );
         //let pc = (jac.view().into_tensor() * p.into_tensor()).into_data();
-        let pc = jac.mul(
+        let mut pc = jac.mul(
             p,
             constrained_collider_vertices,
             &self.implicit_surface_vertex_indices,
@@ -1838,7 +1986,12 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         // eprintln!("pc = {:?}", &pc);
         // eprintln!("d2 = {:?}", d2);
 
-        for (i, (&d2, (p, v))) in d2.iter().zip(pc.iter().zip(vc.iter())).enumerate() {
+        assert_eq!(d2.len(), pc.len());
+
+        let mut sum_alpha = T::zero();
+        let mut num_alphas = 0;
+
+        for (i, (&d2, (p, v))) in d2.iter().zip(pc.iter_mut().zip(vc.iter())).enumerate() {
             if d2 <= delta {
                 let vtx_idx = self.collider_vertex_indices[constrained_collider_vertices[i]];
                 let f1 = f1[vtx_idx];
@@ -1850,40 +2003,24 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                     let [_v0, v1, v2] = contact_basis.to_contact_coordinates(*v, i);
                     let [_p0, p1, p2] = contact_basis.to_contact_coordinates(*p, i);
                     // eprintln!("p = {:?}; v = {:?}", [p1, p2], [v1, v2]);
-                    let v = Vector2::from([v1, v2]);
-                    let p = Vector2::from([p1, p2]);
-                    let p_dot_v = p.dot(v);
-                    let v_dot_v = v.dot(v);
-                    if alpha * p_dot_v + v_dot_v <= T::zero() {
+                    let v2 = Vector2::from([v1, v2]);
+                    let p2 = Vector2::from([p1, p2]);
+                    let p_dot_v = alpha * p2.dot(v2);
+                    let v_dot_v = v2.dot(v2);
+                    if p_dot_v <= -v_dot_v {
                         // eprintln!("direction switched");
-                        alpha = num_traits::Float::min(
-                            alpha,
-                            num_traits::Float::max(alpha_min, -v_dot_v / p_dot_v),
-                            // num_traits::Float::max(alpha_min, -p_dot_v/p.norm_squared()),
-                        );
-                        // } else {
-                        //     eprintln!("direction not switched: {}", alpha * p_dot_v + v_dot_v);
-                        //     eprintln!("new alpha would be {}", -v_dot_v/p_dot_v);
+                        let candidate_alpha = -v_dot_v / p_dot_v;
+                        // Only add alphas if they are sufficiently smaller than the minimimum.
+                        // This keeps the heaps from getting too large.
+                        if candidate_alpha < alpha && candidate_alpha > alpha_min  {
+                            sum_alpha += candidate_alpha;
+                            num_alphas += 1;
+                        }
                     }
-                    // } else {
-                    //     eprintln!("dry run");
-                    //     let [_v0, v1, v2] = contact_basis.to_contact_coordinates(*v, i);
-                    //     let [_p0, p1, p2] = contact_basis.to_contact_coordinates(*p, i);
-                    //     eprintln!("p = {:?}; v = {:?}", [p1,p2], [v1,v2]);
-                    //     let v = Vector2::from([v1, v2]);
-                    //     let p = Vector2::from([p1, p2]);
-                    //     let p_dot_v = p.dot(v);
-                    //     let v_dot_v = v.dot(v);
-                    //     if alpha * p_dot_v + v_dot_v <= T::zero()  {
-                    //         eprintln!("new alpha would be {}", -v_dot_v/p_dot_v);
-                    //     } else {
-                    //         eprintln!("not switched");
-                    //     }
                 }
             }
         }
-        // eprintln!("alpha after: {alpha}");
-        alpha
+        (sum_alpha, num_alphas)
     }
 
     #[inline]
@@ -3009,12 +3146,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                             row.into_iter().map(move |(col_idx, block)| {
                                 (row_idx, col_idx, *block.into_arrays().as_tensor() * mu)
                             })
-                        })
-                        // .inspect(|(i, j, m)| {
-                        //     if *i == 4 && *j == 4 {
-                        //         log::trace!("E:({},{}): {:?}", i, j, (*m).into_data());
-                        //     }
-                        // }),
+                        }), // .inspect(|(i, j, m)| {
+                            //     if *i == 4 && *j == 4 {
+                            //         log::trace!("E:({},{}): {:?}", i, j, (*m).into_data());
+                            //     }
+                            // }),
                 )
                 .filter(move |&(row, col, _)| row < max_index && col < max_index)
                 .flat_map(move |(row, col, block)| {

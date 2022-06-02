@@ -867,6 +867,7 @@ impl SolverBuilder {
             timings: RefCell::new(crate::fem::nl::ResidualTimings::default()),
             jac_timings: RefCell::new(FrictionJacobianTimings::default()),
             project_element_hessians: params.project_element_hessians,
+            // candidate_alphas: RefCell::new(MinMaxHeap::new()),
         })
     }
 
@@ -915,6 +916,7 @@ impl SolverBuilder {
                 linsolve: params.linsolve,
                 line_search: params.line_search,
                 derivative_check: self.sim_params.derivative_test > 2,
+                adaptive_epsilon: params.adaptive_newton,
             },
             Box::new(move |_args| {
                 //let mesh = _args.problem.mesh_with(_args.x);

@@ -25,6 +25,7 @@
             preconditioner: None,
             log_file: None,
             project_element_hessians: false,
+            adaptive_newton: false,
         ),
         materials: [
             Fixed((

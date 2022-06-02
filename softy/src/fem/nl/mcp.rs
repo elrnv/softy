@@ -1,6 +1,6 @@
 use std::cell::{Ref, RefCell, RefMut};
 
-use crate::constraints::FrictionJacobianTimings;
+use crate::constraints::{FrictionJacobianTimings};
 use crate::nl_fem::ResidualTimings;
 use num_traits::Float;
 use rayon::prelude::*;
@@ -68,12 +68,12 @@ where
         self.problem.lumped_stiffness()
     }
     #[inline]
-    fn kappa(&self) -> f64 {
-        self.problem.kappa()
+    fn epsilon(&self) -> f64 {
+        self.problem.epsilon()
     }
     #[inline]
-    fn kappa_mut(&mut self) -> &mut f64 {
-        self.problem.kappa_mut()
+    fn epsilon_mut(&mut self) -> &mut f64 {
+        self.problem.epsilon_mut()
     }
     #[inline]
     fn contact_violation(&self, x: &[T]) -> ContactViolation {
@@ -92,8 +92,9 @@ where
         self.problem.objective(x)
     }
     #[inline]
-    fn assist_line_search_for_contact(&self, alpha: T, x: &[T]) -> T {
-        self.problem.assist_line_search_for_contact(alpha, x)
+    fn assist_line_search_for_contact(&self, alpha: T, x: &[T], r_cur: &[T], r_next: &[T]) -> T {
+        self.problem
+            .assist_line_search_for_contact(alpha, x, r_cur, r_next)
     }
     #[inline]
     fn assist_line_search_for_friction(

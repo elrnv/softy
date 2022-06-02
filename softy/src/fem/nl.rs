@@ -177,6 +177,8 @@ pub struct SimParams {
     pub max_iterations: u32,
     pub linsolve: LinearSolver,
     pub line_search: LineSearch,
+    /// Adjust friction epsilon between Newton steps to improve convergence rate.
+    pub adaptive_newton: bool,
     /// Test that the problem Jacobian is correct.
     pub derivative_test: u8,
     /// The velocity error tolerance for sticking between objects.
@@ -483,6 +485,66 @@ impl Display for Timings {
         )?;
         writeln!(
             f,
+            "        Friction constraint F:{}",
+            self.friction_jacobian.constraint_friction_force.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction contact J:   {}",
+            self.friction_jacobian.contact_jacobian.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction contact G:   {}",
+            self.friction_jacobian.contact_gradient.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction constraint J:{}",
+            self.friction_jacobian.constraint_jacobian.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction constraint G:{}",
+            self.friction_jacobian.constraint_gradient.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction f lambda jac:{}",
+            self.friction_jacobian.f_lambda_jac.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction A:           {}",
+            self.friction_jacobian.a.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction B:           {}",
+            self.friction_jacobian.b.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction C:           {}",
+            self.friction_jacobian.c.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction D Half:      {}",
+            self.friction_jacobian.d_half.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction D:           {}",
+            self.friction_jacobian.d.as_millis()
+        )?;
+        writeln!(
+            f,
+            "        Friction E:           {}",
+            self.friction_jacobian.e.as_millis()
+        )?;
+        writeln!(
+            f,
             "  Force AD time:              {}",
             self.residual.force_ad.as_millis()
         )?;
@@ -503,6 +565,11 @@ impl Display for Timings {
         )?;
         writeln!(
             f,
+            "  Jacobian indices time:      {}",
+            self.jacobian_indices.as_millis()
+        )?;
+        writeln!(
+            f,
             "  Linear solve time:          {}",
             self.linear_solve.as_millis()
         )?;
@@ -513,73 +580,8 @@ impl Display for Timings {
         )?;
         writeln!(
             f,
-            "    Jacobian indices time:    {}",
-            self.jacobian_indices.as_millis()
-        )?;
-        writeln!(
-            f,
             "    Jacobian values time:     {}",
             self.jacobian_values.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction constraint F:  {}",
-            self.friction_jacobian.constraint_friction_force.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction contact J:     {}",
-            self.friction_jacobian.contact_jacobian.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction contact G:     {}",
-            self.friction_jacobian.contact_gradient.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction constraint J:  {}",
-            self.friction_jacobian.constraint_jacobian.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction constraint G:  {}",
-            self.friction_jacobian.constraint_gradient.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction f lambda jac:  {}",
-            self.friction_jacobian.f_lambda_jac.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction A:             {}",
-            self.friction_jacobian.a.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction B:             {}",
-            self.friction_jacobian.b.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction C:             {}",
-            self.friction_jacobian.c.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction D Half:        {}",
-            self.friction_jacobian.d_half.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction D:             {}",
-            self.friction_jacobian.d.as_millis()
-        )?;
-        writeln!(
-            f,
-            "      Friction E:             {}",
-            self.friction_jacobian.e.as_millis()
         )?;
         writeln!(
             f,

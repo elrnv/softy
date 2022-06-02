@@ -39,6 +39,8 @@ pub struct NewtonParams {
     ///
     /// If true this causes a fine grained derivative check at each Newton iteration.
     pub derivative_check: bool,
+    /// Adjust epsilon between Newton steps.
+    pub adaptive_epsilon: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Error)]
@@ -538,6 +540,7 @@ pub struct Newton<P, T: Real> {
     /// If this function returns false, the solve is interrupted.
     pub outer_callback: RefCell<Callback<T>>,
     pub workspace: RefCell<NewtonWorkspace<T>>,
+    pub prev_iteration_count: u32,
 }
 
 pub fn sparse_matrix_and_mapping<'a, T: Real>(
@@ -652,6 +655,7 @@ where
                 // r_lagged,
                 precond,
             }),
+            prev_iteration_count: 1,
         }
     }
     fn update_jacobian_indices(
@@ -820,6 +824,17 @@ where
         self.problem.residual_timings().clear();
         let t_begin_solve = Instant::now();
 
+        let max_epsilon = 1.0;
+        let orig_epsilon = self.problem.epsilon();
+        let count_f64 = self.prev_iteration_count as f64 - 3.0;
+        let base = (max_epsilon/orig_epsilon).powf(1.0 / count_f64).max(1.0);//.min(2.0);
+        let mut epsilon_factor = 1.0 / base;
+        if self.params.adaptive_epsilon {
+            log::debug!("epsilon: factor initialized to {:?}", epsilon_factor);
+            *self.problem.epsilon_mut() = orig_epsilon * base.powf(count_f64);
+            log::debug!("epsilon: initialized to {:?}", self.problem.epsilon());
+        }
+
         if update_jacobian_indices && !self.update_jacobian_indices() {
             return SolveResult {
                 iterations: 0,
@@ -854,8 +869,11 @@ where
             inner_callback,
             outer_callback,
             workspace,
+            prev_iteration_count,
             ..
         } = self;
+
+        let armijo_coeff = params.line_search.armijo_coeff();
 
         let NewtonWorkspace {
             linsolve,
@@ -1035,6 +1053,40 @@ where
 
         let mut j_dense_ad = LazyCell::new();
         let mut j_dense = LazyCell::new();
+
+        let test_alpha = |linsolve: &LinearSolverWorkspace<T>,
+                          r_next: &[T],
+                          r_cur: &[T],
+                          merit_next: f64,
+                          merit_cur: f64,
+                          merit_jac_p: f64,
+                          alpha: f64| {
+            match linsolve {
+                LinearSolverWorkspace::Iterative(linsolve) => {
+                    let mut g_cur = merit_next;
+                    let mut g_prev = merit_cur;
+                    // INEXACT NEWTON:
+                    if use_obj_merit {
+                        g_cur = r_next.as_tensor().norm_squared().to_f64().unwrap();
+                        g_prev = r_cur.as_tensor().norm_squared().to_f64().unwrap();
+                    }
+                    let factor = 1.0 - armijo_coeff * alpha * (1.0 - linsolve.tol as f64);
+                    if g_cur <= g_prev * factor * factor {
+                        return true;
+                    }
+                    false
+                }
+                LinearSolverWorkspace::Direct(_) => {
+                    // TRADITIONAL BACKTRACKING:
+                    let increment = armijo_coeff * alpha;
+                    if merit_next <= merit_cur + increment * merit_jac_p {
+                        log::trace!("ls: backtracking success: {merit_next:?} <= {merit_cur:?} + {increment:?} * {merit_jac_p:?}");
+                        return true;
+                    }
+                    false
+                }
+            }
+        };
 
         let (iterations, status) = loop {
             if !(outer_callback.borrow_mut())(CallbackArgs {
@@ -1316,92 +1368,99 @@ where
 
             let rho = params.line_search.step_factor();
 
-            let (ls_count, alpha) = add_time! {
+            let merit_jac_p = if rho < 1.0 {
+                // Compute Jacobian product to be used to check armijo condition.
+                // We do this before incrementing x to avoid updating state back and forth.
+                let merit_jac_p = merit_jac_prod(
+                    problem,
+                    linsolve,
+                    precond,
+                    x_prev,
+                    p,
+                    jp.as_mut_slice(),
+                    r_cur,
+                );
+
+                // if matches!(linsolve, LinearSolverWorkspace::Iterative(_)) && merit_jac_p > 0.0 {
+                if merit_jac_p > 0.0 {
+                    log::trace!("positive search direction reversed: {merit_jac_p:10.3e}");
+                    // Reverse direction if it's not a descent direction.
+                    *p.as_mut_tensor() *= -T::one();
+                }
+
+                merit_jac_p
+            } else {
+                0.0
+            };
+
+            // Take the full step
+            *x.as_mut_tensor() += p.as_tensor();
+
+            // This ensures that next time jacobian_product is requested, the full jacobian values
+            // are recomputed for a fresh x.
+            problem.invalidate_cached_jacobian_product_values();
+
+            // Update all state corresponding to the full new velocity x + p
+            problem.update_state(x, true, !is_iterative, true);
+
+            // Compute the residual for the full step.
+            problem.residual(x, r_next.as_mut_slice(), false);
+            rescale_vector(precond, r_next.as_mut_slice());
+
+            merit_next = merit(problem, x, r_next);
+            log::trace!("ls: p merit: {:?}", merit_next);
+            // merit_next = merit_obj(problem, x);
+
+            // Line search.
+            let mut ls_count = 1;
+            let mut alpha = 1.0;
+
+            add_time! {
                 timings.line_search;
-                if rho >= 1.0 {
-                    // Take the full step
-                    *x.as_mut_tensor() += p.as_tensor();
+                if rho < 1.0 && !test_alpha(linsolve, r_next, r_cur, merit_next, merit_cur, merit_jac_p, alpha) {
+                    if params.line_search.is_assisted() {
+                       add_time!(
+                           timings.line_search_assist;
+                           {
+                 //              *x.as_mut_tensor() += p.as_tensor();
+                               let mut candidate_alpha = problem
+                                   .assist_line_search_for_contact(T::one(), x, r_cur, r_next);
 
-                    // This ensures that next time jacobian_product is requested, the full jacobian values
-                    // are recomputed for a fresh x.
-                    problem.invalidate_cached_jacobian_product_values();
+                               if candidate_alpha < T::one() {
+                                   log::trace!("ls: updating to contact alpha = {candidate_alpha:?}");
+                                   zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
+                                       *x = num_traits::Float::mul_add(p, candidate_alpha, x0);
+                                   });
 
-                    // Update all state corresponding to the full new velocity x + p
-                    problem.update_state(x, true, !is_iterative, false);
+                                   problem.update_state(x, true, !is_iterative, true);
+                                   problem.residual(x, r_next.as_mut_slice(), false);
+                                   rescale_vector(precond, r_next.as_mut_slice());
+                               }
 
-                    // Compute the residual for the full step.
-                    problem.residual(x, r_next.as_mut_slice(), false);
-                    rescale_vector(precond, r_next.as_mut_slice());
+                               if !params.line_search.is_contact_assisted() {
+                                   let friction_alpha = problem.assist_line_search_for_friction(candidate_alpha, x_prev, p, r_cur, r_next);
+                                   log::trace!("ls: updating to friction alpha = {friction_alpha:?}");
+                                   candidate_alpha = friction_alpha;
+                               }
 
-                    merit_next = merit(problem, x, r_next);
-                    // merit_next = merit_obj(problem, x);
-                    (1, 1.0)
-                } else {
-                    // Line search.
-                    let mut ls_count = 1;
+                               if candidate_alpha < T::one() {
+                                   alpha = candidate_alpha.to_f64().unwrap();
+                               } else {
+                                   // Contact and friction did nothing, just do normal backtracking.
+                                   alpha *= rho;
+                               }
 
-                    // Compute Jacobian product to be used to check armijo condition.
-                    // We do this before incrementing x to avoid updating state back and forth.
-                    let merit_jac_p = merit_jac_prod(problem, linsolve, precond, x_prev, p, jp.as_mut_slice(), r_cur);
+                               zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
+                                   *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
+                               });
 
-                    if matches!(linsolve, LinearSolverWorkspace::Iterative(_)) && merit_jac_p > 0.0 {
-                        log::trace!("positive search direction reversed: {merit_jac_p:10.3e}");
-                        // Reverse direction if it's not a descent direction.
-                        *p.as_mut_tensor() *= -T::one();
+                               // Compute the candidate residual for the new velocity.
+                               problem.update_state(x, true, !is_iterative, false);
+                               problem.residual(x, r_next.as_mut_slice(), false);
+                               rescale_vector(precond, r_next.as_mut_slice());
+                           }
+                       )
                     }
-
-                    let mut presliding_alpha = T::from(2.0).unwrap(); // This makes the else case work as expected.
-                    let mut alpha = if params.line_search.is_assisted() {
-                        add_time!(
-                            timings.line_search_assist;
-                            {
-                                *x.as_mut_tensor() += p.as_tensor();
-
-                                presliding_alpha = problem
-                                    .assist_line_search_for_contact(T::one(), x);
-
-                                if presliding_alpha < T::one() {
-                                    zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
-                                        *x = num_traits::Float::mul_add(p, presliding_alpha, x0);
-                                    });
-                                }
-
-                                problem.update_state(x, true, !is_iterative, true);
-                                problem.residual(x, r_next.as_mut_slice(), false);
-                                rescale_vector(precond, r_next.as_mut_slice());
-
-                                if params.line_search.is_contact_assisted() {
-                                    // Skip friction assist.
-                                    presliding_alpha
-                                        .to_f64()
-                                        .unwrap()
-                                } else {
-                                    problem
-                                        .assist_line_search_for_friction(presliding_alpha, x_prev, p, r_cur, r_next)
-                                        .to_f64()
-                                        .unwrap()
-                                }
-                            }
-                        )
-                    } else {
-                        1.0
-                    };
-
-                    if alpha < presliding_alpha.to_f64().unwrap() {
-                        zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
-                            *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
-                        });
-
-                        // Dont need to recompute if alpha wasn't decreased after last update.
-                        // Compute the candidate residual for the new velocity.
-                        problem.update_state(x, true, !is_iterative, false);
-                        problem.residual(x, r_next.as_mut_slice(), false);
-                        rescale_vector(precond, r_next.as_mut_slice());
-                    }
-
-                    // This ensures that next time jacobian_product is requested, the full jacobian values
-                    // are recomputed for a fresh x.
-                    problem.invalidate_cached_jacobian_product_values();
 
                     //dbg!(merit_jac_p);
                     //dbg!(r_cur.as_tensor().norm_squared().to_f64().unwrap());
@@ -1418,37 +1477,15 @@ where
 
                         // Compute the merit function
                         merit_next = merit(problem, x, r_next);
-                        // log::trace!("ls: merit = {:?}", merit_next);
+                        // log::trace!("ls: alpha = {alpha:?}; merit = {:?}", merit_next);
                         // merit_next = merit_obj(problem, x);//, init_sparse_solver);
 
-                        match linsolve {
-                            LinearSolverWorkspace::Iterative(linsolve) => {
-                                let mut g_cur = merit_next;
-                                let mut g_prev = merit_cur;
-                                // INEXACT NEWTON:
-                                if use_obj_merit {
-                                    g_cur = r_next.as_tensor().norm_squared().to_f64().unwrap();
-                                    g_prev = r_cur.as_tensor().norm_squared().to_f64().unwrap();
-                                }
-                                let t = params.line_search.armijo_coeff();
-                                let factor = 1.0 - t * alpha * (1.0 - linsolve.tol as f64);
-                                if g_cur <= g_prev * factor * factor {
-                                    break;
-                                }
-                                // TODO: Use another factor during backtracking.
-                                alpha *= rho;
-                            }
-                            LinearSolverWorkspace::Direct(_) => {
-                                // TRADITIONAL BACKTRACKING:
-                                let increment = params.line_search.armijo_coeff() * alpha;
-                                if merit_next <= merit_cur + increment * merit_jac_p
-                                {
-                                    log::trace!("ls: backtracking success: {merit_next:?} <= {merit_cur:?} + {increment:?} * {merit_jac_p:?}");
-                                    break;
-                                }
-                                alpha *= rho;
-                            }
+                        if test_alpha(linsolve, r_next, r_cur, merit_next, merit_cur, merit_jac_p, alpha) {
+                            break;
+                        } else {
+                            alpha *= rho;
                         }
+
                         // log::trace!("ls: alpha = {alpha:?}");
 
                         // Break if alpha becomes too small. This is usually a bad sign.
@@ -1494,7 +1531,7 @@ where
                         let mut file = std::fs::File::create(&format!("./out/debug_data_{iterations}.jl")).unwrap();
                         let last_index = 2000;
                         for i in 0..=last_index {
-                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.2 * 0.0005 * i as f64 - 0.2);
+                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.125 * 0.0005 * i as f64 - 0.125);
                             zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
                                 |(x, &x0, &p)| {
                                     *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
@@ -1528,7 +1565,7 @@ where
                         merit_data.clear();
                         for i in 0..=last_index {
                             // let alpha: f64 = /*(4.0*max_alpha).min*/(1.2)*0.0005 * i as f64 - 0.2;
-                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.2 * 0.0005 * i as f64 - 0.2);
+                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.125 * 0.0005 * i as f64 - 0.125);
                             zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
                                 |(x, &x0, &p)| {
                                     *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
@@ -1559,7 +1596,7 @@ where
                         merit_data.clear();
                         for i in 0..=last_index {
                             // let alpha: f64 = /*(4.0*max_alpha).min*/(1.5)*0.0005 * i as f64 - 0.5;
-                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.2 * 0.0005 * i as f64 - 0.2);
+                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.125 * 0.0005 * i as f64 - 0.125);
                             zip!(probe_x.iter_mut(), x_prev.iter(), grad.iter()).for_each(
                                 |(x, &x0, &p)| {
                                     *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
@@ -1628,11 +1665,10 @@ where
                         writeln!(file, "p = {:?}", &p).unwrap();
                         writeln!(file, "r = {:?}", &r_cur).unwrap();
                         writeln!(file, "jp_check = {:?}", &jp).unwrap();
-                        panic!("STOP");
+                        //panic!("STOP");
                     }
-                    (ls_count, alpha)
                 }
-            };
+            }
 
             iterations += 1;
 
@@ -1656,6 +1692,8 @@ where
             log::debug!("{}", &info);
             stats.push(info);
 
+            let do_update = problem.epsilon() > orig_epsilon;
+
             // Check the convergence condition.
             if problem.converged(
                 x_prev,
@@ -1667,7 +1705,16 @@ where
                 params.r_tol,
                 params.a_tol,
             ) {
-                break (iterations, Status::Success);
+                if problem.epsilon() == orig_epsilon {
+                    break (iterations, Status::Success);
+                } else {
+                    log::debug!("epsilon: converged but epsilon not small enough: {:?} vs original {:?}", problem.epsilon(), orig_epsilon);
+                    // Converged with weaker epsilon, set to orig and solve the desired problem.
+                    // epsilon_factor *= epsilon_factor;
+                }
+            } else {
+                // Not converged, make sure the factor is reset to gradually decrease epsilon.
+                // epsilon_factor = 1.0 / base;
             }
 
             // Check that we are running no more than the maximum allowed iterations.
@@ -1678,6 +1725,22 @@ where
             // Update merit function
             merit_prev = merit_cur;
             merit_cur = merit_next;
+
+            // Reduce epsilon.
+            if params.adaptive_epsilon {
+                epsilon_factor = (merit_cur/merit_prev).sqrt().min(1.0 / base);
+                // epsilon_factor = 2.0 * (merit_cur/merit_prev).sqrt() * (1.0 - iterations as f64 / count_f64);
+                log::debug!("epsilon: factor set to {:?}", epsilon_factor);
+                *problem.epsilon_mut() = orig_epsilon.max(problem.epsilon() * epsilon_factor);
+                log::debug!("epsilon: updated to {:?}", problem.epsilon());
+
+                // Compute the residual with the new epsilon
+                if do_update {
+                    problem.residual(x, r.as_mut_slice(), false);
+                    rescale_vector(precond, r.as_mut_slice());
+                    merit_cur = merit(problem, x, r);
+                }
+            }
         };
 
         if matches!(linsolve, LinearSolverWorkspace::Direct(DirectSolver { .. })) {
@@ -1730,6 +1793,7 @@ where
             log::debug!("{}", line);
         }
 
+        *prev_iteration_count = iterations;
         SolveResult {
             iterations,
             status,

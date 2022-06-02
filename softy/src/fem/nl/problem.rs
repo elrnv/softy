@@ -16,11 +16,7 @@ use tensr::{
 
 use super::state::*;
 use crate::attrib_defines::*;
-use crate::constraints::{
-    penalty_point_contact::PenaltyPointContactConstraint,
-    volume_change_penalty::VolumeChangePenalty, ContactPenalty, FrictionJacobianTimings,
-    MappedDistanceGradient,
-};
+use crate::constraints::{penalty_point_contact::PenaltyPointContactConstraint, volume_change_penalty::VolumeChangePenalty, ContactPenalty, FrictionJacobianTimings, MappedDistanceGradient};
 use crate::contact::ContactJacobianView;
 use crate::energy::{Energy, EnergyGradient, EnergyHessian, EnergyHessianTopology};
 use crate::energy_models::{gravity::*, inertia::*};
@@ -217,6 +213,7 @@ pub struct NLProblem<T: Real> {
     pub timings: RefCell<ResidualTimings>,
     pub jac_timings: RefCell<FrictionJacobianTimings>,
     pub project_element_hessians: bool,
+    // pub candidate_alphas: RefCell<MinMaxHeap>,
 }
 
 impl<T: Real> NLProblem<T> {
@@ -432,11 +429,11 @@ impl<T: Real64> NLProblem<T> {
         })
     }
 
-    fn kappa(&self) -> f64 {
-        self.kappa
+    fn epsilon(&self) -> f64 {
+        self.epsilon
     }
-    fn kappa_mut(&mut self) -> &mut f64 {
-        &mut self.kappa
+    fn epsilon_mut(&mut self) -> &mut f64 {
+        &mut self.epsilon
     }
     fn contact_violation(&self, x: &[T]) -> ContactViolation {
         let constraint = self.contact_constraint(x).into_storage();
@@ -3293,11 +3290,11 @@ pub trait NonLinearProblem<T: Real> {
     /// Returns a vector of lumped vertex stiffnesses.
     fn lumped_stiffness(&self) -> Ref<'_, [T]>;
 
-    /// Returns the contact multiplier.
-    fn kappa(&self) -> f64;
+    /// Returns the friction tolerance.
+    fn epsilon(&self) -> f64;
 
-    /// Returns the mutable reference to the contact multiplier.
-    fn kappa_mut(&mut self) -> &mut f64;
+    /// Returns the mutable reference to the friction tolerance.
+    fn epsilon_mut(&mut self) -> &mut f64;
 
     /// Computes the global maximum contact violation
     fn contact_violation(&self, x: &[T]) -> ContactViolation;
@@ -3314,7 +3311,7 @@ pub trait NonLinearProblem<T: Real> {
     /// Returns a better alpha estimate according to problem priors.
     ///
     /// By default this function does nothing.
-    fn assist_line_search_for_contact(&self, alpha: T, _x: &[T]) -> T {
+    fn assist_line_search_for_contact(&self, alpha: T, _x: &[T], _r_cur: &[T], _r_next: &[T]) -> T {
         alpha
     }
 
@@ -3328,9 +3325,7 @@ pub trait NonLinearProblem<T: Real> {
         _p: &[T],
         _r_cur: &[T],
         _r_next: &[T],
-    ) -> T {
-        alpha
-    }
+    ) -> T;
 
     /// Checks if the problem is converged.
     ///
@@ -3471,12 +3466,12 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         NLProblem::lumped_stiffness(self)
     }
     #[inline]
-    fn kappa(&self) -> f64 {
-        NLProblem::kappa(self)
+    fn epsilon(&self) -> f64 {
+        NLProblem::epsilon(self)
     }
     #[inline]
-    fn kappa_mut(&mut self) -> &mut f64 {
-        NLProblem::kappa_mut(self)
+    fn epsilon_mut(&mut self) -> &mut f64 {
+        NLProblem::epsilon_mut(self)
     }
     #[inline]
     fn contact_violation(&self, x: &[T]) -> ContactViolation {
@@ -3497,8 +3492,19 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         self.compute_objective(implicit_factor as f64, explicit_factor as f64)
     }
 
-    fn assist_line_search_for_contact(&self, mut alpha: T, v: &[T]) -> T {
-        let LineSearchWorkspace { pos_next, .. } = &mut *self.line_search_ws.borrow_mut();
+    fn assist_line_search_for_contact(
+        &self,
+        mut alpha: T,
+        v: &[T],
+        r_cur: &[T],
+        r_next: &[T],
+    ) -> T {
+        let LineSearchWorkspace {
+            pos_next,
+            f1vtx,
+            f2vtx,
+            ..
+        } = &mut *self.line_search_ws.borrow_mut();
 
         // Prepare positions
         let num_coords = {
@@ -3507,14 +3513,25 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         };
 
         pos_next.storage_mut().resize(num_coords, T::zero());
+        f1vtx.storage_mut().resize(num_coords, T::zero());
+        f2vtx.storage_mut().resize(num_coords, T::zero());
 
         {
-            self.integrate_step(v);
-            let state = &mut *self.state.borrow_mut();
-            state.update_vertices(v);
+            //self.integrate_step(v);
+            let state = &*self.state.borrow();
+            // state.update_vertices(v);
             pos_next
                 .storage_mut()
                 .copy_from_slice(state.vtx.next.pos.storage());
+
+            state::to_vertex_velocity(
+                Chunked::from_offsets(&[0, v.len()][..], r_cur),
+                f1vtx.view_mut(),
+            );
+            state::to_vertex_velocity(
+                Chunked::from_offsets(&[0, v.len()][..], r_next),
+                f2vtx.view_mut(),
+            );
         }
 
         // Contact assist
@@ -3525,6 +3542,8 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
                 fc_constraint.assist_line_search_for_contact(
                     alpha,
                     pos_next.view(),
+                    f1vtx.view(),
+                    f2vtx.view(),
                     self.delta as f32,
                 ),
             );
@@ -3534,7 +3553,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
     fn assist_line_search_for_friction(
         &self,
-        mut alpha: T,
+        alpha: T,
         v: &[T],
         p: &[T],
         r_cur: &[T],
@@ -3544,6 +3563,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             .frictional_contact_constraints
             .iter()
             .any(|fc| fc.constraint.borrow().friction_params.is_some());
+
         if !do_friction {
             return alpha;
         }
@@ -3557,52 +3577,58 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         } = &mut *self.line_search_ws.borrow_mut();
 
         // Prepare positions
-        {
-            let num_coords = {
-                let state = &*self.state.borrow_mut();
-                state.vtx.next.pos.len() * 3
-            };
+        let num_coords = {
+            let state = &*self.state.borrow_mut();
+            state.vtx.next.pos.len() * 3
+        };
 
-            vel.storage_mut().resize(num_coords, T::zero());
-            search_dir.storage_mut().resize(num_coords, T::zero());
-            f1vtx.storage_mut().resize(num_coords, T::zero());
-            f2vtx.storage_mut().resize(num_coords, T::zero());
+        vel.storage_mut().resize(num_coords, T::zero());
+        search_dir.storage_mut().resize(num_coords, T::zero());
+        f1vtx.storage_mut().resize(num_coords, T::zero());
+        f2vtx.storage_mut().resize(num_coords, T::zero());
 
-            // Copy search direction to vertex degrees of freedom.
-            // All fixed vertices will have a zero corresponding search direction.
-            // TODO: This data layout state specific, and should be moved to the state module.
-            state::to_vertex_velocity(
-                Chunked::from_offsets(&[0, p.len()][..], p),
-                search_dir.view_mut(),
-            );
-            state::to_vertex_velocity(Chunked::from_offsets(&[0, p.len()][..], v), vel.view_mut());
-            state::to_vertex_velocity(
-                Chunked::from_offsets(&[0, p.len()][..], r_cur),
-                f1vtx.view_mut(),
-            );
-            state::to_vertex_velocity(
-                Chunked::from_offsets(&[0, p.len()][..], r_next),
-                f2vtx.view_mut(),
-            );
-        }
+        // Copy search direction to vertex degrees of freedom.
+        // All fixed vertices will have a zero corresponding search direction.
+        // TODO: This data layout state specific, and should be moved to the state module.
+        state::to_vertex_velocity(
+            Chunked::from_offsets(&[0, p.len()][..], p),
+            search_dir.view_mut(),
+        );
+        state::to_vertex_velocity(Chunked::from_offsets(&[0, p.len()][..], v), vel.view_mut());
+        state::to_vertex_velocity(
+            Chunked::from_offsets(&[0, p.len()][..], r_cur),
+            f1vtx.view_mut(),
+        );
+        state::to_vertex_velocity(
+            Chunked::from_offsets(&[0, p.len()][..], r_next),
+            f2vtx.view_mut(),
+        );
 
         // Friction assist
         assert_eq!(vel.len(), search_dir.len());
+
+        let mut total_sum_alpha = T::zero();
+        let mut total_alphas = 0;
+
         for fc in self.frictional_contact_constraints.iter() {
             let mut fc_constraint = fc.constraint.borrow_mut();
-            alpha = num_traits::Float::min(
+            let (sum_alphas, num_alphas) = fc_constraint.assist_line_search_for_friction(
                 alpha,
-                fc_constraint.assist_line_search_for_friction(
-                    alpha,
-                    search_dir.view(),
-                    vel.view(),
-                    f1vtx.view(),
-                    f2vtx.view(),
-                    self.delta as f32,
-                ),
+                search_dir.view(),
+                vel.view(),
+                f1vtx.view(),
+                f2vtx.view(),
+                self.delta as f32,
             );
+            total_alphas += num_alphas;
+            total_sum_alpha += sum_alphas;
         }
-        alpha
+
+        if total_alphas > 0 {
+            total_sum_alpha / total_alphas as f64
+        } else {
+            alpha
+        }
     }
 
     /// Stopping condition.
@@ -3833,6 +3859,7 @@ impl<T: Real64> NLProblem<T> {
             preconditioner,
             time_integration,
             project_element_hessians,
+            // candidate_alphas,
             ..
         } = self.clone();
 
@@ -3858,6 +3885,7 @@ impl<T: Real64> NLProblem<T> {
         let preconditioner_workspace = RefCell::new(PreconditionerWorkspace {
             buffer: vec![ad::F1::zero(); preconditioner_workspace.borrow().buffer.len()],
         });
+        // let candidate_alphas = candidate_alphas.borrow();
         NLProblem {
             state,
             state_vertex_indices,
@@ -3903,6 +3931,7 @@ impl<T: Real64> NLProblem<T> {
             timings: RefCell::new(ResidualTimings::default()),
             jac_timings: RefCell::new(FrictionJacobianTimings::default()),
             project_element_hessians,
+            // candidate_alphas: RefCell::new(candidate_alphas.clone()),
         }
     }
 
@@ -4219,6 +4248,7 @@ mod tests {
             contact_iterations: 5,
             log_file: None,
             project_element_hessians: false,
+            adaptive_newton: false,
         }
     }
 }

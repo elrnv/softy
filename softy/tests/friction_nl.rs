@@ -254,7 +254,7 @@ fn sliding_tet_on_points() -> Result<(), Error> {
     .build();
     surface.scale([2.0, 1.0, 2.0]);
     surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
-    surface.translate([0.0, -0.7, 0.0]);
+    surface.translate([0.0, -0.6, 0.0]);
 
     // geo::io::save_polymesh(&surface, "./out/ramp.vtk");
     // geo::io::save_tetmesh(&tetmesh, "./out/mesh.vtk");

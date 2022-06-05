@@ -16,7 +16,11 @@ use tensr::{
 
 use super::state::*;
 use crate::attrib_defines::*;
-use crate::constraints::{penalty_point_contact::PenaltyPointContactConstraint, volume_change_penalty::VolumeChangePenalty, ContactPenalty, FrictionJacobianTimings, MappedDistanceGradient};
+use crate::constraints::{
+    penalty_point_contact::PenaltyPointContactConstraint,
+    volume_change_penalty::VolumeChangePenalty, ContactPenalty, FrictionJacobianTimings,
+    MappedDistanceGradient,
+};
 use crate::contact::ContactJacobianView;
 use crate::energy::{Energy, EnergyGradient, EnergyHessian, EnergyHessianTopology};
 use crate::energy_models::{gravity::*, inertia::*};

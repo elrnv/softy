@@ -1,6 +1,6 @@
 use std::cell::{Ref, RefCell, RefMut};
 
-use crate::constraints::{FrictionJacobianTimings};
+use crate::constraints::FrictionJacobianTimings;
 use crate::nl_fem::ResidualTimings;
 use num_traits::Float;
 use rayon::prelude::*;

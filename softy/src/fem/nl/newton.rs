@@ -827,7 +827,7 @@ where
         let max_epsilon = 1.0;
         let orig_epsilon = self.problem.epsilon();
         let count_f64 = self.prev_iteration_count as f64 - 3.0;
-        let base = (max_epsilon/orig_epsilon).powf(1.0 / count_f64).max(1.0);//.min(2.0);
+        let base = (max_epsilon / orig_epsilon).powf(1.0 / count_f64).max(1.0); //.min(2.0);
         let mut epsilon_factor = 1.0 / base;
         if self.params.adaptive_epsilon {
             log::debug!("epsilon: factor initialized to {:?}", epsilon_factor);
@@ -1708,7 +1708,11 @@ where
                 if problem.epsilon() == orig_epsilon {
                     break (iterations, Status::Success);
                 } else {
-                    log::debug!("epsilon: converged but epsilon not small enough: {:?} vs original {:?}", problem.epsilon(), orig_epsilon);
+                    log::debug!(
+                        "epsilon: converged but epsilon not small enough: {:?} vs original {:?}",
+                        problem.epsilon(),
+                        orig_epsilon
+                    );
                     // Converged with weaker epsilon, set to orig and solve the desired problem.
                     // epsilon_factor *= epsilon_factor;
                 }
@@ -1728,7 +1732,7 @@ where
 
             // Reduce epsilon.
             if params.adaptive_epsilon {
-                epsilon_factor = (merit_cur/merit_prev).sqrt().min(1.0 / base);
+                epsilon_factor = (merit_cur / merit_prev).sqrt().min(1.0 / base);
                 // epsilon_factor = 2.0 * (merit_cur/merit_prev).sqrt() * (1.0 - iterations as f64 / count_f64);
                 log::debug!("epsilon: factor set to {:?}", epsilon_factor);
                 *problem.epsilon_mut() = orig_epsilon.max(problem.epsilon() * epsilon_factor);

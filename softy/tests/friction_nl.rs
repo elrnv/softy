@@ -338,7 +338,10 @@ fn fully_deformable_friction_coupling_iterative() -> Result<(), Error> {
     let mut scene = Scene::load_from_ron("./assets/fully_deformable_friction_coupling_config.ron")?;
     // Set to a very low tolerance and large number of iterations so we can compare
     // The result with the direct solve.
-    scene.config.sim_params.linsolve = LinearSolver::Iterative { tolerance: 0.00001, max_iterations: 10000 };
+    scene.config.sim_params.linsolve = LinearSolver::Iterative {
+        tolerance: 0.00001,
+        max_iterations: 10000,
+    };
     scene.run(8)?;
     Ok(())
 }

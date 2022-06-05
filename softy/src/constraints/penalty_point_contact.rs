@@ -2012,7 +2012,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                         let candidate_alpha = -v_dot_v / p_dot_v;
                         // Only add alphas if they are sufficiently smaller than the minimimum.
                         // This keeps the heaps from getting too large.
-                        if candidate_alpha < alpha && candidate_alpha > alpha_min  {
+                        if candidate_alpha < alpha && candidate_alpha > alpha_min {
                             sum_alpha += candidate_alpha;
                             num_alphas += 1;
                         }

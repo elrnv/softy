@@ -524,6 +524,47 @@ impl<T: Scalar + Float> SphericalKernel<T> for GlobalInvDistance2 {
     }
 }
 
+// TODO: This kernel is a half-arsed attempt at refactoring, and is not actually used properly.
+//       The reason is that the gradient is tricky to compute for implicit surface vertices and the
+//       two terms need to be computed separately. There should be a better way to abstract this
+//       and it should be done in tandem with abstracting the contact jacobian neighbourhood weight
+//       derivatives.
+/// This kernel is separate from the rest and weighs contributions based on how far from parallel and in the same direction they are.
+pub struct NormalKernel<T> {
+    unit_nml: Vector3<T>,
+    grad_phi: Vector3<T>,
+}
+
+impl<T: Scalar + Float> NormalKernel<T> {
+    #[inline]
+    pub fn new(unit_nml: Vector3<T>, grad_phi: Vector3<T>) -> Self {
+        NormalKernel {
+            unit_nml,
+            grad_phi
+        }
+    }
+    /// Main kernel function evaluated at `x` with center at `p`.
+    #[inline]
+    pub fn eval(&self) -> T {
+        let half = T::from(0.5).unwrap();
+        let unit_nml = self.unit_nml;//.cast::<f64>().cast::<T>();
+        let grad_phi = self.grad_phi;//.cast::<f64>().cast::<T>();
+        let nml_dot_grad = unit_nml.dot(grad_phi);
+        let w = half * (T::one() + nml_dot_grad);
+        w * w
+    }
+    /// First derivative wrt `x` of the kernel evaluated at `x` with center at `p`.
+    /// To compute the derivatives wrt `p`, simply negate this derivative.
+    #[inline]
+    pub fn grad(&self, unit_nml_grad: Matrix3<T>, jac_grad_phi_t: Matrix3<T>) -> Vector3<T> {
+        let half = T::from(0.5).unwrap();
+        let nml_dot_grad = self.unit_nml.dot(self.grad_phi);
+        let w = half * (T::one() + nml_dot_grad);
+        (jac_grad_phi_t * self.unit_nml + unit_nml_grad * self.grad_phi) * w
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

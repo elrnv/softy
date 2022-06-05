@@ -1065,7 +1065,102 @@ where
     main_jac + bg_jac
 }
 
-/// Compute the normalized sum of all sample weight gradients.
+// Compute the normalized sum of all sample weight gradients. In this version normal weights are used as well.
+pub(crate) fn normalized_neighbor_weight_nml_vertex_gradients<'a, T, K, V>(
+    q: Vector3<T>,
+    samples: SamplesView<'a, 'a, T>,
+    kernel: K,
+    num_surface_vertices: usize,
+    surface_topo: &'a [[usize; 3]],
+    bg: BackgroundField<'a, T, V, K>,
+    grad_phi: Vector3<T>,
+    unit_nml_grads: &[Vec<Matrix3<T>>],
+    jac_grad_phi: &[Matrix3<T>],
+    neigh_verts: &[usize],
+) -> Vec<Vector3<T>>
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
+        V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
+{
+    let closest_d = bg.closest_sample_dist();
+
+    // Background potential adds to the total weight sum, so we should get the updated weight
+    // sum from there.
+    let weight_sum_inv = weight_nml_sum_inv(q, samples, kernel, closest_d, grad_phi);
+    // let weight_sum_inv = bg.weight_sum_inv();
+    let third = T::from(1.0 / 3.0).unwrap();
+    let factor = third * weight_sum_inv;
+
+    let mut dwnmldq_neigh = vec![Vector3::zero(); num_surface_vertices];
+
+    let mut first_term = Vector3::zero();
+
+    samples.iter().for_each(|s| {
+        let unit_nml = s.nml.normalized();
+        let w = kernel.with_closest_dist(closest_d).eval(q, s.pos);
+        let sqrt_factor = T::from(0.5).unwrap() * (T::one() + unit_nml.dot(grad_phi));
+        first_term += s.nml.normalized() * w * sqrt_factor;
+    });
+    neigh_verts.iter().zip(jac_grad_phi.iter()).for_each(|(&vtx_idx, &jgp)| {
+        dwnmldq_neigh[vtx_idx] += jgp.transpose() * (first_term * weight_sum_inv);
+    });
+    samples.iter().enumerate().for_each(|(which_sample, s)| {
+        let unit_nml = s.nml.normalized();
+        let bg_grad = bg.background_weight_gradient(Some(s.index));
+        let w = kernel.with_closest_dist(closest_d).eval(q, s.pos);
+        let dw = kernel.with_closest_dist(closest_d).grad(q, s.pos);
+        let nml_kern = NormalKernel::new(unit_nml, grad_phi);
+        let dwn = (dw - bg_grad) * nml_kern.eval() * factor;
+        surface_topo[s.index]
+            .iter().zip(unit_nml_grads[which_sample].iter())
+            .for_each(|(&tri_vtx, &unit_nml_grad)| {
+                let sqrt_factor = T::from(0.5).unwrap() * (T::one() + unit_nml.dot(grad_phi));
+                // Subtract since it's with respect to vertices.
+                dwnmldq_neigh[tri_vtx] -= dwn;
+                dwnmldq_neigh[tri_vtx] += unit_nml_grad * (grad_phi * w * weight_sum_inv * sqrt_factor);
+            });
+    });
+
+    dwnmldq_neigh
+}
+
+/// Compute the normalized sum of all neighbourhood query weight gradients. This version includes normal weights
+pub(crate) fn normalized_neighbor_weight_nml_gradient<'a, T, K, V>(
+    q: Vector3<T>,
+    samples: SamplesView<'a, 'a, T>,
+    kernel: K,
+    bg: BackgroundField<'a, T, V, K>,
+    grad_phi: Vector3<T>,
+    ddpsi_t: Matrix3<T>,
+) -> Vector3<T>
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
+        V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
+{
+    let closest_d = bg.closest_sample_dist();
+
+    // Background potential adds to the total weight sum, so we should get the updated weight
+    // sum from there.
+    // let weight_sum_inv = bg.weight_sum_inv();
+    let weight_sum_inv = weight_nml_sum_inv(q, samples, kernel, closest_d, grad_phi);
+
+    let bg_term = bg.background_weight_gradient(None);
+
+    samples
+        .iter()
+        .map(|s| {
+            let unit_nml = s.nml.normalized();
+            let nml_kern = NormalKernel::new(unit_nml, grad_phi);
+            let w = kernel.with_closest_dist(closest_d).eval(q, s.pos);
+            let dw = kernel.with_closest_dist(closest_d).grad(q, s.pos);
+            ((dw + bg_term) * nml_kern.eval() + nml_kern.grad(Matrix3::zero(), ddpsi_t) * w) * weight_sum_inv
+        })
+        .sum()
+}
+
+/// Compute the normalized sum of all neighbourhood sample weight gradients.
 pub(crate) fn normalized_neighbor_weight_vertex_gradients<'a, T, K, V>(
     q: Vector3<T>,
     samples: SamplesView<'a, 'a, T>,
@@ -1101,7 +1196,7 @@ where
     dwdq_neigh
 }
 
-/// Compute the normalized sum of all sample weight gradients.
+/// Compute the normalized sum of all neighbourhood query weight gradients.
 pub(crate) fn normalized_neighbor_weight_gradient<'a, T, K, V>(
     q: Vector3<T>,
     samples: SamplesView<'a, 'a, T>,
@@ -1426,13 +1521,17 @@ where
     T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy,
 {
-    // let weight_sum_inv = T::from(weight_sum_inv.to_f64().unwrap()).unwrap();
-    let w_normalized = kernel.with_closest_dist(closest_d).eval(q, sample_pos) * weight_sum_inv;
-    // grad_phi.normalize();
     sample_nml.normalize();
     // let grad_phi = grad_phi.cast::<f64>().cast::<T>();
     // let sample_nml = sample_nml.cast::<f64>().cast::<T>();
     let nml_dot_grad = sample_nml.dot(grad_phi);
+
+    let angle_w = NormalKernel::new(sample_nml, grad_phi).eval();
+
+    // let weight_sum_inv = T::from(weight_sum_inv.to_f64().unwrap()).unwrap();
+    let w_normalized = kernel.with_closest_dist(closest_d).eval(q, sample_pos) * angle_w * weight_sum_inv;
+    // let w_normalized = kernel.with_closest_dist(closest_d).eval(q, sample_pos) * weight_sum_inv;
+
     let u = sample_nml.cross(grad_phi);
     // eprintln!("u = {:?}", u.into_data());
     let ux = u.skew();
@@ -1497,16 +1596,17 @@ where
 {
     let bg = BackgroundField::local(q, samples, kernel, bg_field_params, None).unwrap();
 
-    let weight_sum_inv = bg.weight_sum_inv();
+    // let weight_sum_inv = bg.weight_sum_inv();
     let closest_d = bg.closest_sample_dist();
+
+    let grad_phi = query_jacobian_at(q, samples, None, kernel, bg_field_params);
+    // grad_phi.normalize();
+
+    let weight_sum_inv = weight_nml_sum_inv(q, samples, kernel, closest_d, grad_phi);
 
     let bg_jac = bg.compute_query_jacobian();
 
-    let grad_phi = query_jacobian_at(q, samples, None, kernel, bg_field_params);
-    // eprintln!("grad_phi = {:?}", grad_phi);
-
     let jac_iter = samples.into_iter().map(move |sample| {
-        // dbg!(sample.index);
         sample_contact_jacobian_at(
             q,
             sample.pos,
@@ -1538,12 +1638,15 @@ where
 {
     let bg = BackgroundField::local(q, samples, kernel, bg_field_params, None).unwrap();
 
-    let weight_sum_inv = bg.weight_sum_inv();
+    // let weight_sum_inv = bg.weight_sum_inv();
     let closest_d = bg.closest_sample_dist();
 
-    let bg_jac = bg.compute_query_jacobian();
-
     let grad_phi = query_jacobian_at(q, samples, None, kernel, bg_field_params);
+    // grad_phi.normalize();
+
+    let weight_sum_inv = weight_nml_sum_inv(q, samples, kernel, closest_d, grad_phi);
+
+    let bg_jac = bg.compute_query_jacobian();
 
     let jac = samples
         .into_iter()
@@ -1568,6 +1671,29 @@ where
     jac + bg_jac
 }
 
+pub(crate) fn weight_nml_sum_inv<'a, T, K>(
+    q: Vector3<T>,
+    samples: SamplesView<'a, 'a, T>,
+    kernel: K,
+    closest_d: T,
+    grad_phi: Vector3<T>
+) -> T
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+{
+    let mut weight_sum = T::zero();
+    for Sample { pos, nml, .. } in samples.iter() {
+        let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+        weight_sum += w * NormalKernel::new(nml.normalized(), grad_phi).eval();
+    }
+    if weight_sum > T::zero() {
+        T::one() / weight_sum
+    } else {
+        T::zero()
+    }
+}
+
 /// Compute the Jacobian of a vector on the surface in physical space with respect to the
 /// mesh vertex positions. Note that this is not a strict Jacobian product when the background
 /// field is non-zero. Instead this function becomes an affine map. This function assumes that
@@ -1587,12 +1713,15 @@ where
 {
     let bg = BackgroundField::local(q, samples, kernel, bg_field_params, None).unwrap();
 
-    let weight_sum_inv = bg.weight_sum_inv();
+    // let weight_sum_inv = bg.weight_sum_inv();
     let closest_d = bg.closest_sample_dist();
 
-    let bg_jac = bg.compute_query_jacobian();
-
     let grad_phi = query_jacobian_at(q, samples, None, kernel, bg_field_params);
+    // grad_phi.normalize();
+
+    let weight_sum_inv = weight_nml_sum_inv(q, samples, kernel, closest_d, grad_phi);
+
+    let bg_jac = bg.compute_query_jacobian();
 
     let jac = samples
         .into_iter()

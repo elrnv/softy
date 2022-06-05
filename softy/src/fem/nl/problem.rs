@@ -417,7 +417,7 @@ impl<T: Real64> NLProblem<T> {
 
         self.compute_residual_on_mesh(&mut mesh);
         self.compute_distance_potential(&mut mesh);
-        self.compute_frictional_contact_forces(&mut mesh);
+        self.compute_frictional_contact_data(&mut mesh);
         mesh
     }
 
@@ -513,7 +513,7 @@ impl<T: Real64> NLProblem<T> {
     }
 
     // This includes friction and contact forces individually
-    fn compute_frictional_contact_forces(&self, mesh: &mut Mesh) {
+    fn compute_frictional_contact_data(&self, mesh: &mut Mesh) {
         let State { vtx, .. } = &mut *self.state.borrow_mut();
 
         // Clear residual vector.
@@ -522,8 +522,13 @@ impl<T: Real64> NLProblem<T> {
             .iter_mut()
             .for_each(|x| *x = T::zero());
 
+        // let mut rel_vel = Chunked3::from_flat(vec![T::zero(); vtx.residual.storage().len()]);
+        // let mut normals = Chunked3::from_flat(vec![T::zero(); vtx.residual.storage().len()]);
+        // let mut tangents = Chunked3::from_flat(vec![T::zero(); vtx.residual.storage().len()]);
+        // let mut bitangents = Chunked3::from_flat(vec![T::zero(); vtx.residual.storage().len()]);
         let mut contact_force = Chunked3::from_flat(vec![T::zero(); vtx.residual.storage().len()]);
         let mut friction_force = Chunked3::from_flat(vec![T::zero(); vtx.residual.storage().len()]);
+
         {
             let ResidualState { next, .. } = vtx.residual_state().into_storage();
             let frictional_contacts = self.frictional_contact_constraints.as_slice();
@@ -540,18 +545,40 @@ impl<T: Real64> NLProblem<T> {
                     self.epsilon as f32,
                     false,
                 );
+
+                //fc_constraint.add_contact_data(
+                //    Chunked3::from_flat(next.vel),
+                //    normals.view_mut(),
+                //    tangents.view_mut(),
+                //    bitangents.view_mut(),
+                //    rel_vel.view_mut(),
+                //);
             }
         }
 
+        // let mut orig_order_relative_velocities = vec![[0.0; 3]; rel_vel.len()];
+        // let mut orig_order_normals = vec![[0.0; 3]; normals.len()];
+        // let mut orig_order_tangents = vec![[0.0; 3]; tangents.len()];
+        // let mut orig_order_bitangents = vec![[0.0; 3]; bitangents.len()];
         let mut orig_order_contact_forces = vec![[0.0; 3]; contact_force.len()];
         let mut orig_order_friction_forces = vec![[0.0; 3]; friction_force.len()];
-        vtx.orig_index
-            .iter()
-            .zip(contact_force.iter().zip(friction_force.iter()))
-            .for_each(|(&i, (c, f))| {
-                orig_order_contact_forces[i] = (-c.as_tensor().cast::<f64>()).into_data();
-                orig_order_friction_forces[i] = (-f.as_tensor().cast::<f64>()).into_data();
-            });
+        zip!(
+            vtx.orig_index.iter(),
+            contact_force.iter(),
+            friction_force.iter(),
+            // rel_vel.iter(),
+            // normals.iter(),
+            // tangents.iter(),
+            // bitangents.iter(),
+        )
+        .for_each(|(&i, c, f /*, v, n, t, b*/)| {
+            // orig_order_normals[i] = (-n.as_tensor().cast::<f64>()).into_data();
+            // orig_order_tangents[i] = (-t.as_tensor().cast::<f64>()).into_data();
+            // orig_order_bitangents[i] = (-b.as_tensor().cast::<f64>()).into_data();
+            // orig_order_relative_velocities[i] = (-v.as_tensor().cast::<f64>()).into_data();
+            orig_order_contact_forces[i] = (-c.as_tensor().cast::<f64>()).into_data();
+            orig_order_friction_forces[i] = (-f.as_tensor().cast::<f64>()).into_data();
+        });
         // Should not panic since vertex_forces should have the same number of elements as vertices.
         mesh.set_attrib_data::<ContactForceType, VertexIndex>(
             CONTACT_ATTRIB,
@@ -563,6 +590,17 @@ impl<T: Real64> NLProblem<T> {
             orig_order_friction_forces,
         )
         .unwrap();
+        // mesh.set_attrib_data::<VelType, VertexIndex>(
+        //     "rel_vel",
+        //     orig_order_relative_velocities,
+        // )
+        // .unwrap();
+        // mesh.set_attrib_data::<[f64; 3], VertexIndex>("contact_normals", orig_order_normals)
+        //     .unwrap();
+        // mesh.set_attrib_data::<[f64; 3], VertexIndex>("contact_tangents", orig_order_tangents)
+        //     .unwrap();
+        // mesh.set_attrib_data::<[f64; 3], VertexIndex>("contact_bitangents", orig_order_bitangents)
+        //     .unwrap();
     }
 
     /// Get the minimum contact radius among all contact problems.
@@ -3285,6 +3323,8 @@ pub trait NonLinearProblem<T: Real> {
     /// Returns a mesh using current state data.
     fn mesh(&self) -> Mesh;
 
+    fn save_contact_jac(&self, i: usize);
+
     /// Returns a mesh updated with the given velocity information.
     fn mesh_with(&self, dq: &[T]) -> Mesh;
 
@@ -3460,6 +3500,83 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     #[inline]
     fn mesh_with(&self, dq: &[T]) -> Mesh {
         NLProblem::mesh_with(self, dq)
+    }
+
+    fn save_contact_jac(&self, i: usize) {
+        use std::io::Write;
+        for (jaci, fc) in self.frictional_contact_constraints.iter().enumerate() {
+            let mut file = std::fs::File::create(&format!("./out/jac/jac_{jaci}_{i}.py")).unwrap();
+            let fc_constraint = fc.constraint.borrow();
+            let jac = fc_constraint
+                .contact_state
+                .contact_jacobian
+                .as_ref()
+                .unwrap()
+                .matrix
+                .view();
+            let constrained_collider_vertices = fc_constraint
+                .contact_state
+                .constrained_collider_vertices
+                .as_slice();
+            writeln!(file, "Jrows = [").unwrap();
+            for (row_idx, row) in jac.into_iter() {
+                let vtx_idx =
+                    fc_constraint.collider_vertex_indices[constrained_collider_vertices[row_idx]];
+                for (_, _) in row.into_iter() {
+                    for i in 0..3 {
+                        for _ in 0..3 {
+                            write!(file, "{:?}, ", 3 * vtx_idx + i).unwrap();
+                        }
+                    }
+                }
+            }
+            writeln!(file, "]").unwrap();
+            writeln!(file, "Jcols = [").unwrap();
+            for (_, row) in jac.into_iter() {
+                for (col_idx, _) in row.into_iter() {
+                    for _ in 0..3 {
+                        for j in 0..3 {
+                            write!(
+                                file,
+                                "{:?}, ",
+                                3 * fc_constraint.implicit_surface_vertex_indices[col_idx] + j
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+            }
+            writeln!(file, "]").unwrap();
+            writeln!(file, "Jvals = [").unwrap();
+            for (_, row) in jac.into_iter() {
+                for (_, block) in row.into_iter() {
+                    for i in 0..3 {
+                        for j in 0..3 {
+                            write!(file, "{:?}, ", block.into_arrays()[i][j].to_f64().unwrap())
+                                .unwrap();
+                        }
+                    }
+                }
+            }
+            writeln!(file, "]").unwrap();
+            writeln!(file, "nrows = {:?}", self.num_variables()).unwrap();
+            writeln!(file, "ncols = {:?}", self.num_variables()).unwrap();
+            writeln!(
+                file,
+                "v = {:?}",
+                &self
+                    .state
+                    .borrow()
+                    .vtx
+                    .next
+                    .vel
+                    .storage()
+                    .iter()
+                    .map(|x| x.to_f64().unwrap())
+                    .collect::<Vec<_>>()
+            )
+            .unwrap();
+        }
     }
     #[inline]
     fn lumped_mass_inv(&self) -> Ref<'_, [T]> {

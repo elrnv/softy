@@ -1520,7 +1520,7 @@ where
                     if alpha < 1e-20 && ls_count > 80 {
                         problem.invalidate_cached_jacobian_product_values();
                         dbg!(alpha);
-                        let max_alpha = 1e-3_f64;//alpha;
+                        let max_alpha = 1e-5_f64;//alpha;
                         let mut merit_data = vec![];
                         let mut r0 = vec![];
                         let mut f = vec![];
@@ -1529,7 +1529,7 @@ where
                         let mut probe_x = vec![T::zero(); x.len()];
                         use std::io::Write;
                         let mut file = std::fs::File::create(&format!("./out/debug_data_{iterations}.jl")).unwrap();
-                        let last_index = 2000;
+                        let last_index = 4000;
                         for i in 0..=last_index {
                             let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.125 * 0.0005 * i as f64 - 0.125);
                             zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
@@ -1545,7 +1545,8 @@ where
                             } else if i == last_index  {
                                 writeln!(file, "r_end = {:?}", &probe_r).unwrap();
                             }
-                            //geo::io::save_mesh(&problem.mesh(), &format!("./out/dbg_mesh_{}.vtk", i)).unwrap();
+                            geo::io::save_mesh(&problem.mesh(), &format!("./out/dbg_meshes/dbg_mesh_{}.vtk", i)).unwrap();
+                            //problem.save_contact_jac(i);
                             let probe_f = problem.debug_friction();
                             let probe = merit(problem, &probe_x, &probe_r);
                             xs.push(alpha);

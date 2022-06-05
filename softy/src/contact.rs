@@ -572,6 +572,7 @@ impl<T: Real> TripletContactJacobian<T> {
 
         // Build a reverse map for mapping to active contacts
         let mut active_contact_point_indices = vec![Index::INVALID; query_points.len()];
+        // TODO: this is the same as collider_vertex_constraints in penalty_point_contact. Pass these in to avoid recomputing.
         for (i, &acpi) in active_contact_points.index_iter().enumerate() {
             active_contact_point_indices[acpi] = Index::new(i);
         }

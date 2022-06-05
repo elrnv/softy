@@ -294,7 +294,7 @@ pub(crate) mod test_utils {
     where
         E: Energy<F> + EnergyGradient<F, F>,
     {
-        let dqdv = 1.0;
+        let dqdv = 2.0;
         for (energy, pos) in configurations.iter() {
             let (x0, mut x, mut dx) = autodiff_step(bytemuck::cast_slice(&pos), ty, dqdv);
 
@@ -306,7 +306,7 @@ pub(crate) mod test_utils {
                 x[i] = x0[i] + dx[i] * F::cst(dqdv);
                 let energy = energy.energy(&x, &dx, F::cst(dqdv));
                 assert_relative_eq!(
-                    grad[i].value(),
+                    dqdv * grad[i].value(), // multiplying by dqdv since the deriv is wrt x
                     energy.deriv(),
                     max_relative = 1e-6,
                     epsilon = 1e-10
@@ -322,7 +322,7 @@ pub(crate) mod test_utils {
     where
         E: EnergyGradient<F, F> + EnergyHessian<F>,
     {
-        let dt = 1.0;
+        let dt = 2.0;
 
         // An arbitrary scale (!=1.0) that will ensure that Hessians are scaled correctly.
         let scale = 0.2;
@@ -353,16 +353,16 @@ pub(crate) mod test_utils {
                 val,
             } in hess_triplets.into_iter()
             {
-                hess[row][col] += val.value();
+                hess[row][col] += dt * val.value();
                 if row != col {
-                    hess[col][row] += val.value();
+                    hess[col][row] += dt * val.value();
                 }
             }
 
             // Test diagonal
             for idx in 0..x.len() {
                 assert_relative_eq!(
-                    hess_diagonal[idx].value(),
+                    dt * hess_diagonal[idx].value(),
                     hess[idx][idx],
                     max_relative = 1e-6,
                     epsilon = 1e-10
@@ -374,11 +374,11 @@ pub(crate) mod test_utils {
                 dx[i] = F::var(dx[i]);
                 x[i] = x0[i] + dx[i] * dt;
                 let mut grad = vec![F::zero(); x.len()];
-                energy.add_energy_gradient(&x, &dx, &mut grad, F::cst(1.0));
+                energy.add_energy_gradient(&x, &dx, &mut grad, F::cst(dt));
                 grad.iter_mut().for_each(|g| *g *= scale);
                 for j in 0..x.len() {
                     let res = relative_eq!(
-                        hess[i][j],
+                        hess[i][j], // dqdv here since hess is wrt x
                         grad[j].deriv(),
                         max_relative = 1e-6,
                         epsilon = 1e-10

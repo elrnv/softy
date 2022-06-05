@@ -105,18 +105,25 @@ impl<T: Real, E: TetEnergy<T>> Energy<T> for TetSolidElasticity<'_, E> {
             let half = T::from(0.5).unwrap();
             let damping = T::from(damping).unwrap();
             let tet_energy = E::new(Dx, DX_inv, vol, lambda, mu);
-            let dF = tet_energy.deformation_gradient_differential(&tet_v);
-            // elasticity
-            tet_energy.energy()
-                // damping (viscosity)
-                + mu * vol * dF.norm_squared() * half * damping * dqdv2
-            //+ half * damping * {
-            //    let dH = tet_energy.energy_hessian_product_transpose(&tet_dx);
-            //    dH[0].dot(Vector3::new(tet_dx.0.into()))
-            //        + dH[1].dot(Vector3::new(tet_dx.1.into()))
-            //        + dH[2].dot(Vector3::new(tet_dx.2.into()))
-            //        - (dH * Vector3::new(tet_dx.3.into())).sum()
-            //}
+            let elastic_energy = tet_energy.energy();
+
+            // For damping
+            let tet_x0 = tet_x - tet_v * dqdv;
+            let Dx0 = Matrix3::new(tet_x0.shape_matrix());
+            let tet_energy_prev = E::new(Dx0, DX_inv, vol, lambda, mu);
+
+            // let dF = tet_energy.deformation_gradient_differential(&tet_v);
+            // damping (viscosity)
+            // + mu * vol * dF.norm_squared() * half * damping * dqdv2
+            let damping_potential = half * damping * dqdv2 * {
+                let dH = tet_energy_prev.energy_hessian_product_transpose(&tet_v);
+                dH[0].dot(Vector3::new(tet_v.0.into()))
+                    + dH[1].dot(Vector3::new(tet_v.1.into()))
+                    + dH[2].dot(Vector3::new(tet_v.2.into()))
+                    - (dH * Vector3::new(tet_v.3.into())).sum()
+            };
+
+            elastic_energy + damping_potential
         })
         .sum()
     }
@@ -159,21 +166,25 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T, T> for TetSolidElasticity<'_, E
             let mut grad = tet_energy.energy_gradient();
 
             // Damping
-            let damping = T::from(damping).unwrap();
-            let dF = tet_energy.deformation_gradient_differential(&tet_v) * dqdv;
-
-            let damp = DX_inv.transpose() * dF * (vol * mu * damping);
-            for i in 0..3 {
-                grad[i] += damp[i];
-                grad[3] -= damp[i];
-            }
-
             // let damping = T::from(damping).unwrap();
-            // let dH = tet_energy.energy_hessian_product_transpose(&tet_v);
+            // let dF = tet_energy.deformation_gradient_differential(&tet_v) * dqdv;
+            //
+            // let damp = DX_inv.transpose() * dF * (vol * mu * damping);
             // for i in 0..3 {
-            //    grad[i] += dH[i] * damping;
-            //    grad[3] -= dH[i] * damping;
+            //     grad[i] += damp[i];
+            //     grad[3] -= damp[i];
             // }
+
+            let tet_x0 = tet_x - tet_v * dqdv;
+            let Dx0 = Matrix3::new(tet_x0.shape_matrix());
+            let tet_energy_prev = E::new(Dx0, DX_inv, vol, lambda, mu);
+
+            let damping = T::from(damping).unwrap() * dqdv;
+            let dH = tet_energy_prev.energy_hessian_product_transpose(&tet_v);
+            for i in 0..3 {
+                grad[i] += dH[i] * damping;
+                grad[3] -= dH[i] * damping;
+            }
 
             grad
         })
@@ -277,9 +288,10 @@ impl<E> EnergyHessianTopology for TetSolidElasticity<'_, E> {
 
 impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasticity<'_, E> {
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&self, x: &[T], _: &[T], scale: T, values: &mut [T], _dqdv: T) {
+    fn energy_hessian_values(&self, x: &[T], v: &[T], scale: T, values: &mut [T], _dqdv: T) {
         assert_eq!(values.len(), self.energy_hessian_size());
         let pos: &[Vector3<T>] = bytemuck::cast_slice(x);
+        let vel: &[Vector3<T>] = bytemuck::cast_slice(v);
 
         // Break up the hessian triplets into chunks of elements for each tet.
         let hess_chunks: &mut [[T; 78]] = unsafe { reinterpret_mut_slice(values) };
@@ -299,6 +311,7 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
         .for_each(|(tet_hess, damping, &vol, &DX_inv, cell, &lambda, &mu)| {
             // Make deformed tet.
             let tet_x = Tetrahedron::from_indexed_slice(cell, pos);
+            let tet_v = Tetrahedron::from_indexed_slice(cell, vel);
 
             let Dx = Matrix3::new(tet_x.shape_matrix());
 
@@ -309,9 +322,6 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
             let mu = T::from(mu).unwrap();
 
             let tet_energy = E::new(Dx, DX_inv, vol, lambda, mu);
-
-            //let factor = T::from(1.0 + damping).unwrap() * scale;
-            let factor = scale;
 
             let mut local_hessians = tet_energy.energy_hessian();
 
@@ -343,23 +353,29 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
             // Damping
             let damping = T::from(damping).unwrap();
             // let density = T::from(density).unwrap();
-            let ddF = DX_inv.transpose() * DX_inv * (vol * mu * damping);
+            // let ddF = DX_inv.transpose() * DX_inv * (vol * mu * damping);
 
-            let id = Matrix3::identity();
+            // let id = Matrix3::identity();
+
+            let tet_x0 = tet_x - tet_v * _dqdv;
+            let Dx0 = Matrix3::new(tet_x0.shape_matrix());
+            let tet_energy_prev = E::new(Dx0, DX_inv, vol, lambda, mu);
+            let damping_hessians = tet_energy_prev.energy_hessian();
 
             Self::hessian_for_each(
                 |n, k| {
-                    let damping_hess = id
-                        * if n == 3 && k == 3 {
-                            ddF.sum_inner()
-                        } else if k == 3 {
-                            -ddF[n].sum()
-                        } else if n == 3 {
-                            -ddF[k].sum() // ddF should be symmetric.
-                        } else {
-                            ddF[n][k]
-                        };
-                    (local_hessians[n][k] + damping_hess) * factor
+                    // let damping_hess = id
+                    //     * if n == 3 && k == 3 {
+                    //         ddF.sum_inner()
+                    //     } else if k == 3 {
+                    //         -ddF[n].sum()
+                    //     } else if n == 3 {
+                    //         -ddF[k].sum() // ddF should be symmetric.
+                    //     } else {
+                    //         ddF[n][k]
+                    //     };
+                    // (local_hessians[n][k] + damping_hess) * factor
+                    (local_hessians[n][k] + damping_hessians[n][k] * damping) * scale
                 },
                 |i, _, (row, col), h| {
                     // // DEBUG CODE
@@ -379,8 +395,9 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
 
     #[allow(non_snake_case)]
     #[unroll_for_loops]
-    fn add_energy_hessian_diagonal(&self, x: &[T], _: &[T], scale: T, diag: &mut [T], _dqdv: T) {
+    fn add_energy_hessian_diagonal(&self, x: &[T], v: &[T], scale: T, diag: &mut [T], _dqdv: T) {
         let pos: &[Vector3<T>] = bytemuck::cast_slice(x);
+        let vel: &[Vector3<T>] = bytemuck::cast_slice(v);
 
         // Break up the hessian triplets into chunks of elements for each tet.
         let hess_diag: &mut [Vector3<T>] = bytemuck::cast_slice_mut(diag);
@@ -397,6 +414,7 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
         .map(|(damping, &vol, &DX_inv, cell, &lambda, &mu)| {
             // Make deformed tet.
             let tet_x = Tetrahedron::from_indexed_slice(cell, pos);
+            let tet_v = Tetrahedron::from_indexed_slice(cell, vel);
 
             let Dx = Matrix3::new(tet_x.shape_matrix());
 
@@ -408,26 +426,32 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
 
             let tet_energy = E::new(Dx, DX_inv, vol, lambda, mu);
 
-            //let factor = T::from(1.0 + damping).unwrap() * scale;
-            let factor = scale;
+            let damping = T::from(damping).unwrap();
 
             let local_hessians = tet_energy.energy_hessian();
 
+            let tet_x0 = tet_x - tet_v * _dqdv;
+            let Dx0 = Matrix3::new(tet_x0.shape_matrix());
+            let tet_energy_prev = E::new(Dx0, DX_inv, vol, lambda, mu);
+            let damping_hessians = tet_energy_prev.energy_hessian();
+
             let mut diag = [Vector3::zeros(); 4];
             for i in 0..4 {
-                diag[i] = utils::get_diag3(local_hessians[i][i].as_data()).into_tensor() * factor;
+                diag[i] = (utils::get_diag3(local_hessians[i][i].as_data()).into_tensor()
+                    + utils::get_diag3(damping_hessians[i][i].as_data()).into_tensor() * damping)
+                    * scale;
             }
 
             // Damping
-            let damping = T::from(damping).unwrap();
-            let ddF = DX_inv.transpose() * DX_inv * (vol * mu * damping);
-
-            let id = Vector3::from([T::one(); 3]);
-
-            for i in 0..3 {
-                diag[i] += id * ddF[i][i] * factor;
-            }
-            diag[3] += id * ddF.sum_inner() * factor;
+            // let damping = T::from(damping).unwrap();
+            // let ddF = DX_inv.transpose() * DX_inv * (vol * mu * damping);
+            //
+            // let id = Vector3::from([T::one(); 3]);
+            //
+            // for i in 0..3 {
+            //     diag[i] += id * ddF[i][i] * factor;
+            // }
+            // diag[3] += id * ddF.sum_inner() * factor;
 
             diag
         })
@@ -463,7 +487,7 @@ mod tests {
                 ElasticityModel::NeoHookean,
             ))
             .with_density(10.0)
-            .with_damping(1.0)
+            .with_damping(2.0)
     }
 
     fn test_solids() -> Vec<(TetElements, Vec<[f64; 3]>)> {

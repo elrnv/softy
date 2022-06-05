@@ -2149,6 +2149,50 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         }
     }
 
+    // Information about the contact space for debugging.
+    // Normals tangents, bitangents and relative velocities.
+    #[allow(dead_code)]
+    pub fn add_contact_data(
+        &mut self,
+        v: Chunked3<&[T]>,
+        mut n_out: Chunked3<&mut [T]>,
+        mut t_out: Chunked3<&mut [T]>,
+        mut b_out: Chunked3<&mut [T]>,
+        mut v_rel_out: Chunked3<&mut [T]>,
+    ) {
+        let params = if let Some(params) = self.friction_params {
+            params
+        } else {
+            return;
+        };
+
+        let state = if params.lagged {
+            &self.contact_state_prev
+        } else {
+            &self.contact_state
+        };
+
+        let jac = state.contact_jacobian.as_ref().unwrap();
+
+        // Compute relative velocity at the point of contact: `vc = J(x)v`
+        //assert_eq!(jac.num_cols() + pc.collider_vertex_positions.len(), v.len());
+        let vc = jac.mul(
+            v,
+            &state.constrained_collider_vertices,
+            &self.implicit_surface_vertex_indices,
+            &self.collider_vertex_indices,
+        );
+
+        for (i, vc) in vc.iter().enumerate() {
+            let mtx = state.contact_basis.contact_basis_matrix(i);
+            let vtx_idx = self.collider_vertex_indices[state.constrained_collider_vertices[i]];
+            *n_out[vtx_idx].as_mut_tensor() += mtx[0];
+            *t_out[vtx_idx].as_mut_tensor() += mtx[1];
+            *b_out[vtx_idx].as_mut_tensor() += mtx[2];
+            *v_rel_out[vtx_idx].as_mut_tensor() += *vc.as_tensor();
+        }
+    }
+
     // Compute `b(x,v) = H(T(x)'v)λ(x)`, friction force in contact space.
     //
     // This function uses current state. To get an upto date friction impulse call update_state.

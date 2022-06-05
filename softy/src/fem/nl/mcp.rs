@@ -124,6 +124,9 @@ where
         self.problem
             .converged(x_prev, x, r, r_unscaled, merit, x_tol, r_tol, a_tol)
     }
+    fn save_contact_jac(&self, i: usize) {
+        self.problem.save_contact_jac(i);
+    }
     #[inline]
     fn use_obj_merit(&self) -> bool {
         self.problem.use_obj_merit()

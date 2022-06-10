@@ -73,10 +73,11 @@ static const char *theDsFile = R"THEDSFILE(
         type ordinal
         default { "1" }
         menu {
-            "interpolating" "Local interpolating"
+            "compact" "Local compact"
             "approximate" "Local approximately interpolating"
             "cubic" "Local cubic"
             "global" "Global inverse squared distance"
+            "interpolating" "Local interpolating"
             "hrbf" "HRBF potential"
         }
     }

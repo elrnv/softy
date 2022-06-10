@@ -233,8 +233,8 @@ fn get_frictional_contacts<'a>(
             (
                 softy_contact::FrictionalContactParams {
                     kernel: match kernel {
-                        Kernel::Interpolating => {
-                            softy::KernelType::Interpolating { radius_multiplier }
+                        Kernel::Compact => {
+                            softy::KernelType::Compact { tolerance, radius_multiplier }
                         }
                         Kernel::Approximate => softy::KernelType::Approximate {
                             tolerance,

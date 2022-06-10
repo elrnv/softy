@@ -1520,8 +1520,9 @@ where
                     if alpha < 1e-20 && ls_count > 80 {
                         problem.invalidate_cached_jacobian_product_values();
                         dbg!(alpha);
-                        let max_alpha = 1e-5_f64;//alpha;
+                        let max_alpha = 1e-7_f64;//alpha;
                         let mut merit_data = vec![];
+                        let mut merit_data_u = vec![];
                         let mut r0 = vec![];
                         let mut f = vec![];
                         let mut xs = vec![];
@@ -1529,8 +1530,10 @@ where
                         let mut probe_x = vec![T::zero(); x.len()];
                         use std::io::Write;
                         let mut file = std::fs::File::create(&format!("./out/debug_data_{iterations}.jl")).unwrap();
+                        let first_index = 0;
                         let last_index = 4000;
-                        for i in 0..=last_index {
+                        // let last_index = 223;
+                        for i in first_index..=last_index {
                             let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.125 * 0.0005 * i as f64 - 0.125);
                             zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
                                 |(x, &x0, &p)| {
@@ -1539,6 +1542,17 @@ where
                             );
                             problem.update_state(&probe_x, true, false, false);
                             problem.residual(&probe_x, probe_r.as_mut_slice(), false);
+                            let probe_u = merit(problem, &probe_x, &probe_r);
+                            merit_data_u.push(probe_u);
+                            if i == 222  {
+                                writeln!(file, "r_222 = {:?}", &probe_r).unwrap();
+                            } else if i == 223 {
+                                writeln!(file, "r_223 = {:?}", &probe_r).unwrap();
+                            } else if i == 0  {
+                                writeln!(file, "r_begin_u = {:?}", &probe_r).unwrap();
+                            } else if i == last_index  {
+                                writeln!(file, "r_end_u = {:?}", &probe_r).unwrap();
+                            }
                             rescale_vector(precond, probe_r.as_mut_slice());
                             if i == 0  {
                                 writeln!(file, "r_begin = {:?}", &probe_r).unwrap();
@@ -1559,25 +1573,10 @@ where
                         writeln!(file, "merit_next = {:?}", merit_next).unwrap();
                         writeln!(file, "xs = {:?}", &xs).unwrap();
                         writeln!(file, "merit_data = {:?}", &merit_data).unwrap();
+                        writeln!(file, "merit_data_u = {:?}", &merit_data_u).unwrap();
                         writeln!(file, "r0 = {:?}", &r0).unwrap();
                         writeln!(file, "f = {:?}", &f).unwrap();
                         writeln!(file, "xs_length = {:?}", xs.len()).unwrap();
-
-                        merit_data.clear();
-                        for i in 0..=last_index {
-                            // let alpha: f64 = /*(4.0*max_alpha).min*/(1.2)*0.0005 * i as f64 - 0.2;
-                            let alpha: f64 = (1.0e3*max_alpha).min(1.0)*(1.125 * 0.0005 * i as f64 - 0.125);
-                            zip!(probe_x.iter_mut(), x_prev.iter(), p.iter()).for_each(
-                                |(x, &x0, &p)| {
-                                    *x = num_traits::Float::mul_add(p, T::from(alpha).unwrap(), x0);
-                                },
-                            );
-                            problem.update_state(&probe_x, true, false, false);
-                            problem.residual(&probe_x, probe_r.as_mut_slice(), false);
-                            let probe = merit(problem, &probe_x, &probe_r);
-                            merit_data.push(probe);
-                        }
-                        writeln!(file, "merit_data_u = {:?}", &merit_data).unwrap();
 
                         // Also compute the gradient and output that.
                         let mut zero_col = vec![T::zero(); x.len()];

@@ -12,6 +12,10 @@ pub enum KernelType {
     Interpolating {
         radius_multiplier: f64,
     },
+    Compact {
+        radius_multiplier: f64,
+        tolerance: f64,
+    },
     Approximate {
         radius_multiplier: f64,
         tolerance: f64,
@@ -29,6 +33,10 @@ pub enum KernelType {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LocalKernel {
     Interpolating {
+        radius_multiplier: f64,
+    },
+    Compact {
+        tolerance: f64,
         radius_multiplier: f64,
     },
     Approximate {
@@ -50,6 +58,7 @@ impl LocalKernel {
     pub fn radius_multiplier(self) -> f64 {
         match self {
             LocalKernel::Interpolating { radius_multiplier }
+            | LocalKernel::Compact { radius_multiplier, .. }
             | LocalKernel::Approximate {
                 radius_multiplier, ..
             }
@@ -60,6 +69,10 @@ impl LocalKernel {
     pub fn with_radius_multiplier(self, radius_multiplier: f64) -> Self {
         match self {
             LocalKernel::Interpolating { .. } => LocalKernel::Interpolating { radius_multiplier },
+            LocalKernel::Compact { tolerance, .. } => LocalKernel::Compact {
+                radius_multiplier,
+                tolerance,
+            },
             LocalKernel::Approximate { tolerance, .. } => LocalKernel::Approximate {
                 radius_multiplier,
                 tolerance,
@@ -79,6 +92,13 @@ macro_rules! apply_as_spherical {
             LocalKernel::Interpolating { radius_multiplier } => $f(
                 $crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier),
             ),
+            LocalKernel::Compact {
+                radius_multiplier,
+                tolerance,
+            } => $f($crate::kernel::LocalCompact::new(
+                $base_radius * radius_multiplier,
+                tolerance,
+            )),
             LocalKernel::Approximate {
                 radius_multiplier,
                 tolerance,
@@ -105,9 +125,16 @@ macro_rules! apply_as_spherical_impl_iter {
     // Fallible version
     ($kernel:expr, $base_radius:expr, $f:expr, ?) => {{
         match $kernel {
-            LocalKernel::Interpolating { radius_multiplier } => Either::Left($f(
+            LocalKernel::Interpolating { radius_multiplier } => Either::Left(Either::Left($f(
                 $crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier),
-            )?),
+            )?)),
+            LocalKernel::Compact {
+                radius_multiplier,
+                tolerance,
+            } => Either::Left(Either::Right($f($crate::kernel::LocalCompact::new(
+                $base_radius * radius_multiplier,
+                tolerance,
+            ))?)),
             LocalKernel::Approximate {
                 radius_multiplier,
                 tolerance,
@@ -129,9 +156,16 @@ macro_rules! apply_as_spherical_impl_iter {
     };
     ($kernel:expr, $base_radius:expr, $f:expr) => {{
         match $kernel {
-            LocalKernel::Interpolating { radius_multiplier } => Either::Left($f(
+            LocalKernel::Interpolating { radius_multiplier } => Either::Left(Either::Left($f(
                 $crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier),
-            )),
+            ))),
+            LocalKernel::Compact {
+                radius_multiplier,
+                tolerance,
+            } => Either::Left(Either::Right($f($crate::kernel::LocalCompact::new(
+                $base_radius * radius_multiplier,
+                tolerance,
+            )))),
             LocalKernel::Approximate {
                 radius_multiplier,
                 tolerance,
@@ -160,6 +194,13 @@ impl From<KernelType> for LocalKernel {
                 LocalKernel::Interpolating { radius_multiplier }
             }
             KernelType::Cubic { radius_multiplier } => LocalKernel::Cubic { radius_multiplier },
+            KernelType::Compact {
+                radius_multiplier,
+                tolerance,
+            } => LocalKernel::Compact {
+                radius_multiplier,
+                tolerance,
+            },
             KernelType::Approximate {
                 radius_multiplier,
                 tolerance,
@@ -192,6 +233,7 @@ impl KernelType {
         match self {
             KernelType::Interpolating { .. }
             | KernelType::Approximate { .. }
+            | KernelType::Compact { .. }
             | KernelType::Cubic { .. }
             | KernelType::Global { .. } => mls(),
             KernelType::Hrbf => hrbf(),
@@ -326,6 +368,87 @@ impl<T: Scalar + Float> Kernel<T> for LocalInterpolating {
 
     fn ddf(&self, x: T) -> T {
         self.df(autodiff::F::var(x)).deriv()
+    }
+}
+
+/// This kernel is a compromise between the cubic and interpolating kernels.
+///
+/// This kernel is fairly cheap to compute and has flexible smoothness properties, which are controllable using the
+/// `tolerance` parameter.
+///
+/// In contrast to `LocalApproximate`, this kernel has a zero derivative at `radius`, which is important for generating ontinuous forces.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct LocalCompact {
+    pub radius: f64,
+    pub tolerance: f64,
+}
+
+impl LocalCompact {
+    pub fn new(radius: f64, tolerance: f64) -> Self {
+        LocalCompact { radius, tolerance }
+    }
+}
+
+impl<T: Scalar + num_traits::Float> Kernel<T> for LocalCompact {
+    fn f(&self, x: T) -> T {
+        let r = T::from(self.radius).unwrap();
+        if x > r {
+            return T::zero();
+        }
+
+        let eps = T::from(self.tolerance).unwrap();
+
+        let _2 = T::from(2.0).unwrap();
+        let _3 = T::from(3.0).unwrap();
+
+        let x2 = x*x;
+        let r2 = r*r;
+
+        T::exp(-x2/eps)*(T::one() - _3 * x2 / r2 + _2 * x2 * x / (r2 * r))
+    }
+    fn df(&self, x: T) -> T {
+        let r = T::from(self.radius).unwrap();
+
+        if x > r {
+            return T::zero();
+        }
+
+        let eps = T::from(self.tolerance).unwrap();
+
+        let _2 = T::from(2.0).unwrap();
+        let _3 = T::from(3.0).unwrap();
+
+        let x2 = x*x;
+        let xr = x*r;
+        let r2 = r*r;
+
+        _2*(x2-xr)*T::exp(-x2/eps) *(r2  + xr +_3*eps - _2*x2)/(r2*r*eps)
+    }
+
+    fn ddf(&self, x: T) -> T {
+        let r = T::from(self.radius).unwrap();
+
+        if x > r {
+            return T::zero();
+        }
+
+        let eps = T::from(self.tolerance).unwrap();
+
+        let _2 = T::from(2.0).unwrap();
+        let _3 = T::from(3.0).unwrap();
+        let _4 = T::from(4.0).unwrap();
+        let _5 = T::from(5.0).unwrap();
+        let _6 = T::from(6.0).unwrap();
+        let _14 = T::from(14.0).unwrap();
+
+        let x2 = x*x;
+        let x3 = x2*x;
+        let r2 = r*r;
+        let r3 = r2*r;
+        let eps2 = eps*eps;
+
+        let exp = T::exp(-x2/eps);
+        -_2 * exp *(r3*(eps - _2*x2) + _3 * r * (eps2 - _5*eps*x2 + _2*x2*x2) - _6*eps2*x + _14*eps*x3 - _4*x3*x2)/(r3*eps2)
     }
 }
 
@@ -492,6 +615,13 @@ impl<T: Scalar + Float> RadialKernel<T> for LocalApproximate {
     }
 }
 
+impl<T: Scalar + Float> RadialKernel<T> for LocalCompact {
+    #[inline]
+    fn with_closest_dist(self, _: T) -> Self {
+        self
+    }
+}
+
 //
 // Implement Spherical kernel for all kernels defined above
 //
@@ -511,6 +641,13 @@ impl<T: Scalar + Float> SphericalKernel<T> for LocalInterpolating {
 }
 
 impl<T: Scalar + Float> SphericalKernel<T> for LocalApproximate {
+    #[inline]
+    fn radius(&self) -> T {
+        T::from(self.radius).unwrap()
+    }
+}
+
+impl<T: Scalar + Float> SphericalKernel<T> for LocalCompact {
     #[inline]
     fn radius(&self) -> T {
         T::from(self.radius).unwrap()
@@ -616,6 +753,20 @@ mod tests {
         // Test the properties of the local approximate kernel and check its derivatives.
         let tol = 0.01;
         let kern = GlobalInvDistance2::new(tol);
+
+        test_derivatives(&kern, 0);
+        test_radial_derivatives(&kern, 1);
+    }
+
+    #[test]
+    fn local_compact_kernel_test() {
+        // Test the properties of the local approximate kernel and check its derivatives.
+        let radius = 5.0;
+        let tolerance = 0.01;
+        let kern = LocalCompact::new(radius, tolerance);
+
+        // Check that the kernel has compact support: it's zero outside the radius
+        test_locality(&kern, radius);
 
         test_derivatives(&kern, 0);
         test_radial_derivatives(&kern, 1);

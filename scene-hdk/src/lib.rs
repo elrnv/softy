@@ -40,7 +40,7 @@ mod ffi {
 
     #[derive(Debug)]
     pub enum Kernel {
-        Interpolating,
+        Compact,
         Approximate,
         Cubic,
         Global,

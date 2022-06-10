@@ -453,8 +453,8 @@ fn get_frictional_contacts<'a>(
                 GenericFrictionalContactParams::NL(
                     softy::constraints::penalty_point_contact::FrictionalContactParams {
                         kernel: match kernel {
-                            Kernel::Interpolating => {
-                                softy::KernelType::Interpolating { radius_multiplier }
+                            Kernel::Compact => {
+                                softy::KernelType::Compact { tolerance, radius_multiplier }
                             }
                             Kernel::Approximate => softy::KernelType::Approximate {
                                 tolerance,
@@ -519,8 +519,8 @@ fn get_frictional_contacts_ipopt<'a>(
             (
                 GenericFrictionalContactParams::Ipopt(softy::FrictionalContactParams {
                     kernel: match kernel {
-                        Kernel::Interpolating => {
-                            softy::KernelType::Interpolating { radius_multiplier }
+                        Kernel::Compact  => {
+                            softy::KernelType::Compact  { tolerance, radius_multiplier }
                         }
                         Kernel::Approximate => softy::KernelType::Approximate {
                             tolerance,

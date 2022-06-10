@@ -350,7 +350,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     }
 
     /// Builds the a local mls implicit surface. This function returns `None` when there is not enough data to
-    /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
+    /// make a valid implicit surface. For example if kernel radius is 0.0 or points is empty, this
     /// function will return `None`.
     pub fn build_local_mls<T: Real>(&self) -> Option<LocalMLS<T>>
     where
@@ -360,6 +360,9 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         match self.kernel {
             KernelType::Interpolating { radius_multiplier }
             | KernelType::Approximate {
+                radius_multiplier, ..
+            }
+            | KernelType::Compact {
                 radius_multiplier, ..
             }
             | KernelType::Cubic { radius_multiplier } => {
@@ -378,6 +381,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         match self.kernel {
             KernelType::Interpolating { .. }
             | KernelType::Cubic { .. }
+            | KernelType::Compact { .. }
             | KernelType::Approximate { .. } => Some(LocalMLS {
                 kernel: self.kernel.into(),
                 base_radius,

@@ -2183,10 +2183,14 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             &self.collider_vertex_indices,
         );
 
+        // let mut grad_psi = vec![[T::zero(); 3]; state.constrained_collider_vertices.len()];
+        // state.point_constraint.implicit_surface.query_jacobian(state.point_constraint.collider_vertex_positions.view().into(), &mut grad_psi);
+
         for (i, vc) in vc.iter().enumerate() {
             let mtx = state.contact_basis.contact_basis_matrix(i);
             let vtx_idx = self.collider_vertex_indices[state.constrained_collider_vertices[i]];
             *n_out[vtx_idx].as_mut_tensor() += mtx[0];
+            // *n_out[vtx_idx].as_mut_tensor() += grad_psi[i].into_tensor();
             *t_out[vtx_idx].as_mut_tensor() += mtx[1];
             *b_out[vtx_idx].as_mut_tensor() += mtx[2];
             *v_rel_out[vtx_idx].as_mut_tensor() += *vc.as_tensor();

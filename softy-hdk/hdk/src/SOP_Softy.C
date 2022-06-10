@@ -321,9 +321,9 @@ static const char *theDsFile = R"THEDSFILE(
                 name "kernel#"
                 label "Kernel"
                 type ordinal
-                default { "1" }
+                default { "0" }
                 menu {
-                    "compact" "Local Compact"
+                    "smooth" "Local smooth"
                     "approximate" "Local approximately interpolating"
                     "cubic" "Local cubic"
                     "global" "Global inverse squared distance"
@@ -934,8 +934,8 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
 
         switch (static_cast<SOP_SoftyEnums::Kernel>(sop_fc.kernel))
         {
-        case SOP_SoftyEnums::Kernel::COMPACT:
-            fc_params.kernel = softy::Kernel::Compact;
+        case SOP_SoftyEnums::Kernel::SMOOTH:
+            fc_params.kernel = softy::Kernel::Smooth;
             break;
         case SOP_SoftyEnums::Kernel::APPROXIMATE:
             fc_params.kernel = softy::Kernel::Approximate;

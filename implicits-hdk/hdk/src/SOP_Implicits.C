@@ -73,11 +73,11 @@ static const char *theDsFile = R"THEDSFILE(
         type ordinal
         default { "1" }
         menu {
-            "compact" "Local compact"
+            "smooth" "Local smooth"
             "approximate" "Local approximately interpolating"
             "cubic" "Local cubic"
-            "global" "Global inverse squared distance"
             "interpolating" "Local interpolating"
+            "global" "Global inverse squared distance"
             "hrbf" "HRBF potential"
         }
     }
@@ -238,6 +238,8 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         if (sopparms.getUseBaseRadius()) {
             iso_params.base_radius = sopparms.getBaseRadius();
         }
+        // Note that when casting directly to an enum, the options must be in the same order in the enum as given
+        // by the parameter value.
         iso_params.kernel = static_cast<ISO_KernelType>(sopparms.getKernel());
         iso_params.background_field = static_cast<ISO_BackgroundFieldType>(sopparms.getBgPotential());
         iso_params.weighted = sopparms.getBgWeighted();

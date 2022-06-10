@@ -32,10 +32,11 @@ pub enum ISO_BackgroundFieldType {
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub enum ISO_KernelType {
-    /// Local Interpolating kernel. This kernel will generate an implicit surface that passes
-    /// through each sample point exactly, however it can produce singularities for large radii
-    /// and is generally not suitable for simulation.
-    LocalInterpolating,
+    /// Local Smooth kernel. This kernel approximately interpolates the
+    /// sample points defined by the input triangle mesh. The tradeoff between interpolating
+    /// quality and smoothness is determined by the given tolerance. Unlike LocalApproximate
+    /// this version of the kernel has a zero (and hence continuous) derivative at the boundary.
+    LocalSmooth,
     /// Local Approximately Interpolating kernel. This kernel approximately interpolates the
     /// sample points defined by the input triangle mesh. The tradeoff between interpolating
     /// quality and smoothness is determined by the given tolerance. (See [Most and Bucher 2005]
@@ -46,6 +47,10 @@ pub enum ISO_KernelType {
     /// Not unlike the Gaussian kernel, this kernel has poor interpolation properties with large
     /// radii (See [Most and Bucher 2005] for details).
     LocalCubic,
+    /// Local Interpolating kernel. This kernel will generate an implicit surface that passes
+    /// through each sample point exactly, however it can produce singularities for large radii
+    /// and is generally not suitable for simulation.
+    LocalInterpolating,
     /// Global inverse squared distance kernel. A global kernel traditionally used for surface
     /// reconstruction. It is unsuitable for simulation since the potential at each query point
     /// will depend on every single mesh sample. (See [Shen et al. 2004] for details).
@@ -143,6 +148,10 @@ impl Into<implicits::Params> for ISO_Params {
         } = self;
         implicits::Params {
             kernel: match kernel {
+                ISO_KernelType::LocalSmooth => implicits::KernelType::Smooth {
+                    radius_multiplier: radius_multiplier as f64,
+                    tolerance: tolerance as f64,
+                },
                 ISO_KernelType::LocalInterpolating => implicits::KernelType::Interpolating {
                     radius_multiplier: radius_multiplier as f64,
                 },
@@ -698,7 +707,7 @@ mod tests {
         let params = ISO_Params {
             tolerance: 1e-5,
             radius_multiplier: 2.0,
-            kernel: ISO_KernelType::LocalApproximate,
+            kernel: ISO_KernelType::LocalSmooth,
             background_field: ISO_BackgroundFieldType::DistanceBased,
             weighted: false,
             sample_type: ISO_SampleType::Face,

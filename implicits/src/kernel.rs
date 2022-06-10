@@ -12,7 +12,7 @@ pub enum KernelType {
     Interpolating {
         radius_multiplier: f64,
     },
-    Compact {
+    Smooth {
         radius_multiplier: f64,
         tolerance: f64,
     },
@@ -35,7 +35,7 @@ pub enum LocalKernel {
     Interpolating {
         radius_multiplier: f64,
     },
-    Compact {
+    Smooth {
         tolerance: f64,
         radius_multiplier: f64,
     },
@@ -58,7 +58,9 @@ impl LocalKernel {
     pub fn radius_multiplier(self) -> f64 {
         match self {
             LocalKernel::Interpolating { radius_multiplier }
-            | LocalKernel::Compact { radius_multiplier, .. }
+            | LocalKernel::Smooth {
+                radius_multiplier, ..
+            }
             | LocalKernel::Approximate {
                 radius_multiplier, ..
             }
@@ -69,7 +71,7 @@ impl LocalKernel {
     pub fn with_radius_multiplier(self, radius_multiplier: f64) -> Self {
         match self {
             LocalKernel::Interpolating { .. } => LocalKernel::Interpolating { radius_multiplier },
-            LocalKernel::Compact { tolerance, .. } => LocalKernel::Compact {
+            LocalKernel::Smooth { tolerance, .. } => LocalKernel::Smooth {
                 radius_multiplier,
                 tolerance,
             },
@@ -92,10 +94,10 @@ macro_rules! apply_as_spherical {
             LocalKernel::Interpolating { radius_multiplier } => $f(
                 $crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier),
             ),
-            LocalKernel::Compact {
+            LocalKernel::Smooth {
                 radius_multiplier,
                 tolerance,
-            } => $f($crate::kernel::LocalCompact::new(
+            } => $f($crate::kernel::LocalSmooth::new(
                 $base_radius * radius_multiplier,
                 tolerance,
             )),
@@ -128,10 +130,10 @@ macro_rules! apply_as_spherical_impl_iter {
             LocalKernel::Interpolating { radius_multiplier } => Either::Left(Either::Left($f(
                 $crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier),
             )?)),
-            LocalKernel::Compact {
+            LocalKernel::Smooth {
                 radius_multiplier,
                 tolerance,
-            } => Either::Left(Either::Right($f($crate::kernel::LocalCompact::new(
+            } => Either::Left(Either::Right($f($crate::kernel::LocalSmooth::new(
                 $base_radius * radius_multiplier,
                 tolerance,
             ))?)),
@@ -159,10 +161,10 @@ macro_rules! apply_as_spherical_impl_iter {
             LocalKernel::Interpolating { radius_multiplier } => Either::Left(Either::Left($f(
                 $crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier),
             ))),
-            LocalKernel::Compact {
+            LocalKernel::Smooth {
                 radius_multiplier,
                 tolerance,
-            } => Either::Left(Either::Right($f($crate::kernel::LocalCompact::new(
+            } => Either::Left(Either::Right($f($crate::kernel::LocalSmooth::new(
                 $base_radius * radius_multiplier,
                 tolerance,
             )))),
@@ -194,10 +196,10 @@ impl From<KernelType> for LocalKernel {
                 LocalKernel::Interpolating { radius_multiplier }
             }
             KernelType::Cubic { radius_multiplier } => LocalKernel::Cubic { radius_multiplier },
-            KernelType::Compact {
+            KernelType::Smooth {
                 radius_multiplier,
                 tolerance,
-            } => LocalKernel::Compact {
+            } => LocalKernel::Smooth {
                 radius_multiplier,
                 tolerance,
             },
@@ -233,7 +235,7 @@ impl KernelType {
         match self {
             KernelType::Interpolating { .. }
             | KernelType::Approximate { .. }
-            | KernelType::Compact { .. }
+            | KernelType::Smooth { .. }
             | KernelType::Cubic { .. }
             | KernelType::Global { .. } => mls(),
             KernelType::Hrbf => hrbf(),
@@ -378,33 +380,35 @@ impl<T: Scalar + Float> Kernel<T> for LocalInterpolating {
 ///
 /// In contrast to `LocalApproximate`, this kernel has a zero derivative at `radius`, which is important for generating ontinuous forces.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct LocalCompact {
+pub struct LocalSmooth {
     pub radius: f64,
     pub tolerance: f64,
 }
 
-impl LocalCompact {
+impl LocalSmooth {
     pub fn new(radius: f64, tolerance: f64) -> Self {
-        LocalCompact { radius, tolerance }
+        LocalSmooth { radius, tolerance }
     }
 }
 
-impl<T: Scalar + num_traits::Float> Kernel<T> for LocalCompact {
+impl<T: Scalar + num_traits::Float> Kernel<T> for LocalSmooth {
     fn f(&self, x: T) -> T {
         let r = T::from(self.radius).unwrap();
         if x > r {
             return T::zero();
         }
 
-        let eps = T::from(self.tolerance).unwrap();
+        let t = T::from(self.tolerance).unwrap();
 
         let _2 = T::from(2.0).unwrap();
         let _3 = T::from(3.0).unwrap();
 
-        let x2 = x*x;
-        let r2 = r*r;
+        let d = x / r;
+        let d2 = d * d;
+        let d3 = d2 * d;
 
-        T::exp(-x2/eps)*(T::one() - _3 * x2 / r2 + _2 * x2 * x / (r2 * r))
+        // T::exp(-x2/eps)*(T::one() - _3 * x2 / r2 + _2 * x2 * x / (r2 * r))
+        t * (_2 * d3 - _3 * d2 + T::one()) / (t + d2)
     }
     fn df(&self, x: T) -> T {
         let r = T::from(self.radius).unwrap();
@@ -413,16 +417,18 @@ impl<T: Scalar + num_traits::Float> Kernel<T> for LocalCompact {
             return T::zero();
         }
 
-        let eps = T::from(self.tolerance).unwrap();
+        let t = T::from(self.tolerance).unwrap();
 
         let _2 = T::from(2.0).unwrap();
         let _3 = T::from(3.0).unwrap();
 
-        let x2 = x*x;
-        let xr = x*r;
-        let r2 = r*r;
+        let d = x / r;
+        let d2 = d * d;
+        let d3 = d2 * d;
+        let d4 = d3 * d;
 
-        _2*(x2-xr)*T::exp(-x2/eps) *(r2  + xr +_3*eps - _2*x2)/(r2*r*eps)
+        // _2*(x2-xr)*T::exp(-x2/eps) *(r2  + xr +_3*eps - _2*x2)/(r2*r*eps)
+        _2 * t * d * (_3 * t * d - _3 * t + d3 - T::one()) / (r * (t * t + _2 * t * d2 + d4))
     }
 
     fn ddf(&self, x: T) -> T {
@@ -432,23 +438,27 @@ impl<T: Scalar + num_traits::Float> Kernel<T> for LocalCompact {
             return T::zero();
         }
 
-        let eps = T::from(self.tolerance).unwrap();
+        let t = T::from(self.tolerance).unwrap();
 
         let _2 = T::from(2.0).unwrap();
         let _3 = T::from(3.0).unwrap();
-        let _4 = T::from(4.0).unwrap();
-        let _5 = T::from(5.0).unwrap();
+        // let _4 = T::from(4.0).unwrap();
+        // let _5 = T::from(5.0).unwrap();
         let _6 = T::from(6.0).unwrap();
-        let _14 = T::from(14.0).unwrap();
+        let _9 = T::from(9.0).unwrap();
 
-        let x2 = x*x;
-        let x3 = x2*x;
-        let r2 = r*r;
-        let r3 = r2*r;
-        let eps2 = eps*eps;
+        let d = x / r;
+        let d2 = d * d;
+        let d3 = d2 * d;
+        let d4 = d3 * d;
+        let d6 = d3 * d3;
+        let t2 = t * t;
+        let t3 = t2 * t;
 
-        let exp = T::exp(-x2/eps);
-        -_2 * exp *(r3*(eps - _2*x2) + _3 * r * (eps2 - _5*eps*x2 + _2*x2*x2) - _6*eps2*x + _14*eps*x3 - _4*x3*x2)/(r3*eps2)
+        // let exp = T::exp(-x2/eps);
+        // -_2 * exp *(r3*(eps - _2*x2) + _3 * r * (eps2 - _5*eps*x2 + _2*x2*x2) - _6*eps2*x + _14*eps*x3 - _4*x3*x2)/(r3*eps2)
+        _2 * t * (_6 * t2 * d - _3 * t2 - _2 * t * d3 + _9 * t * d2 - t + _3 * d2)
+            / (r * r * (t3 + _3 * t2 * d2 + _3 * t * d4 + d6))
     }
 }
 
@@ -615,7 +625,7 @@ impl<T: Scalar + Float> RadialKernel<T> for LocalApproximate {
     }
 }
 
-impl<T: Scalar + Float> RadialKernel<T> for LocalCompact {
+impl<T: Scalar + Float> RadialKernel<T> for LocalSmooth {
     #[inline]
     fn with_closest_dist(self, _: T) -> Self {
         self
@@ -647,7 +657,7 @@ impl<T: Scalar + Float> SphericalKernel<T> for LocalApproximate {
     }
 }
 
-impl<T: Scalar + Float> SphericalKernel<T> for LocalCompact {
+impl<T: Scalar + Float> SphericalKernel<T> for LocalSmooth {
     #[inline]
     fn radius(&self) -> T {
         T::from(self.radius).unwrap()
@@ -675,17 +685,14 @@ pub struct NormalKernel<T> {
 impl<T: Scalar + Float> NormalKernel<T> {
     #[inline]
     pub fn new(unit_nml: Vector3<T>, grad_phi: Vector3<T>) -> Self {
-        NormalKernel {
-            unit_nml,
-            grad_phi
-        }
+        NormalKernel { unit_nml, grad_phi }
     }
     /// Main kernel function evaluated at `x` with center at `p`.
     #[inline]
     pub fn eval(&self) -> T {
         let half = T::from(0.5).unwrap();
-        let unit_nml = self.unit_nml;//.cast::<f64>().cast::<T>();
-        let grad_phi = self.grad_phi;//.cast::<f64>().cast::<T>();
+        let unit_nml = self.unit_nml; //.cast::<f64>().cast::<T>();
+        let grad_phi = self.grad_phi; //.cast::<f64>().cast::<T>();
         let nml_dot_grad = unit_nml.dot(grad_phi);
         let w = half * (T::one() + nml_dot_grad);
         w * w
@@ -700,7 +707,6 @@ impl<T: Scalar + Float> NormalKernel<T> {
         (jac_grad_phi_t * self.unit_nml + unit_nml_grad * self.grad_phi) * w
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -763,7 +769,7 @@ mod tests {
         // Test the properties of the local approximate kernel and check its derivatives.
         let radius = 5.0;
         let tolerance = 0.01;
-        let kern = LocalCompact::new(radius, tolerance);
+        let kern = LocalSmooth::new(radius, tolerance);
 
         // Check that the kernel has compact support: it's zero outside the radius
         test_locality(&kern, radius);

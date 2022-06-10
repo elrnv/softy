@@ -1,10 +1,14 @@
 use super::*;
-use crate::jacobian::{normalized_neighbor_weight_gradient, normalized_neighbor_weight_nml_gradient, normalized_neighbor_weight_nml_vertex_gradients, normalized_neighbor_weight_vertex_gradients, query_jacobian_at, rodrigues_rotation, weight_nml_sum_inv};
+use crate::jacobian::{
+    normalized_neighbor_weight_gradient, normalized_neighbor_weight_nml_gradient,
+    normalized_neighbor_weight_nml_vertex_gradients, normalized_neighbor_weight_vertex_gradients,
+    query_jacobian_at, rodrigues_rotation, weight_nml_sum_inv,
+};
 use crate::Error;
+use ahash::{AHashSet as HashSet, RandomState};
 use rayon::iter::Either;
 use std::cmp::Ordering;
 use tensr::IntoTensor;
-use ahash::{AHashSet as HashSet, RandomState};
 
 /// Symmetric outer product of two vectors: a*b' + b*a'
 pub(crate) fn sym_outer<T: Scalar>(a: Vector3<T>, b: Vector3<T>) -> Matrix3<T> {
@@ -594,13 +598,20 @@ impl<T: Real> QueryTopo<T> {
                         // let weight_sum_inv = bg.weight_sum_inv();
                         let closest_d = bg.closest_sample_dist();
                         let grad_phi = query_jacobian_at(q, view, None, kernel, bg_field_params);
-                        let weight_sum_inv = weight_nml_sum_inv(q, view, kernel, closest_d, grad_phi);
+                        let weight_sum_inv =
+                            weight_nml_sum_inv(q, view, kernel, closest_d, grad_phi);
                         // let dw_neigh =
                         //     normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
                         let ddpsi = query_hessian_at(q, view, kernel, bg_field_params);
 
-                        let dw_neigh =
-                            normalized_neighbor_weight_nml_gradient(q, view, kernel, bg.clone(), grad_phi, ddpsi.transpose());
+                        let dw_neigh = normalized_neighbor_weight_nml_gradient(
+                            q,
+                            view,
+                            kernel,
+                            bg.clone(),
+                            grad_phi,
+                            ddpsi.transpose(),
+                        );
 
                         view.into_iter().map(move |sample| {
                             let mut lambda = Vector3::zero();
@@ -762,12 +773,19 @@ impl<T: Real> QueryTopo<T> {
                         // let weight_sum_inv = bg.weight_sum_inv();
                         let closest_d = bg.closest_sample_dist();
                         let grad_phi = query_jacobian_at(q, view, None, kernel, bg_field_params);
-                        let weight_sum_inv = weight_nml_sum_inv(q, view, kernel, closest_d, grad_phi);
+                        let weight_sum_inv =
+                            weight_nml_sum_inv(q, view, kernel, closest_d, grad_phi);
                         // let dw_neigh =
                         //     normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
                         let ddpsi = query_hessian_at(q, view, kernel, bg_field_params);
-                        let dw_neigh =
-                            normalized_neighbor_weight_nml_gradient(q, view, kernel, bg.clone(), grad_phi, ddpsi.transpose());
+                        let dw_neigh = normalized_neighbor_weight_nml_gradient(
+                            q,
+                            view,
+                            kernel,
+                            bg.clone(),
+                            grad_phi,
+                            ddpsi.transpose(),
+                        );
 
                         view.into_iter().flat_map(move |sample| {
                             let mtx = query_contact_jacobian_gradient_product_at(
@@ -1498,43 +1516,49 @@ pub(crate) fn jacobian_gradient_phi<'a, T, K>(
     weight_sum_inv: T,
     closest_d: T,
 ) -> Vec<Matrix3<T>>
-    where
-        T: Real,
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
-    neigh_verts.iter().map(|&vtx_idx| {
-        view
-            .iter()
-            .enumerate()
-            .map(|(which_sample, sample)| {
-                (
-                    surface_topo[sample.index]
-                        .iter()
-                        .position(|&x| x == vtx_idx),
-                    which_sample,
-                    sample,
-                )
-            })
-            .map(|(which_vtx, which_sample, sample)| {
-                let sample_unit_nml = sample.nml.normalized();
-                sample_query_hessian_component_at(
-                    q,
-                    sample,
-                    sample_unit_nml,
-                    kernel,
-                    &unit_nml_grads[which_sample],
-                    which_vtx,
-                    dw_neigh_normalized,
-                    ddwdq_neigh_normalized[vtx_idx],
-                    dwdq_neigh_normalized[vtx_idx],
-                    weight_sum_inv,
-                    closest_d,
-                )
-            }).sum::<Matrix3<T>>()
-    }).collect::<Vec<_>>()
+    neigh_verts
+        .iter()
+        .map(|&vtx_idx| {
+            view.iter()
+                .enumerate()
+                .map(|(which_sample, sample)| {
+                    (
+                        surface_topo[sample.index]
+                            .iter()
+                            .position(|&x| x == vtx_idx),
+                        which_sample,
+                        sample,
+                    )
+                })
+                .map(|(which_vtx, which_sample, sample)| {
+                    let sample_unit_nml = sample.nml.normalized();
+                    sample_query_hessian_component_at(
+                        q,
+                        sample,
+                        sample_unit_nml,
+                        kernel,
+                        &unit_nml_grads[which_sample],
+                        which_vtx,
+                        dw_neigh_normalized,
+                        ddwdq_neigh_normalized[vtx_idx],
+                        dwdq_neigh_normalized[vtx_idx],
+                        weight_sum_inv,
+                        closest_d,
+                    )
+                })
+                .sum::<Matrix3<T>>()
+        })
+        .collect::<Vec<_>>()
 }
 
-pub(crate) fn neighborhood_verts<'a, T>(view: SamplesView<'a, 'a, T>, surface_topo: &'a [[usize; 3]]) -> Vec<usize>
+pub(crate) fn neighborhood_verts<'a, T>(
+    view: SamplesView<'a, 'a, T>,
+    surface_topo: &'a [[usize; 3]],
+) -> Vec<usize>
 where
     T: Real,
 {
@@ -1543,9 +1567,10 @@ where
         let hash_builder = RandomState::with_seeds(7, 47, 2377, 719);
         HashSet::with_capacity_and_hasher(view.len() * 3, hash_builder)
     };
-    neigh_verts.extend(view
-        .into_iter()
-        .flat_map(|sample| IntoIterator::into_iter(surface_topo[sample.index])));
+    neigh_verts.extend(
+        view.into_iter()
+            .flat_map(|sample| IntoIterator::into_iter(surface_topo[sample.index])),
+    );
     neigh_verts.into_iter().collect()
 }
 
@@ -1639,7 +1664,7 @@ where
         grad_phi,
         &unit_nml_grads,
         &jac_grad_phi,
-        &neigh_verts
+        &neigh_verts,
     );
 
     // For each sample
@@ -1770,7 +1795,7 @@ where
         grad_phi,
         &unit_nml_grads,
         &jac_grad_phi,
-        &neigh_verts
+        &neigh_verts,
     );
 
     // For each sample
@@ -1849,7 +1874,8 @@ where
     let w = kernel.eval(q, sample.pos);
     let w_normalized = w_nml * w * weight_sum_inv;
     let dw = kernel.grad(q, sample.pos);
-    let dw_normalized = (dw * w_nml + nml_kern.grad(Matrix3::zero(), ddpsi.transpose()) * w) * weight_sum_inv;
+    let dw_normalized =
+        (dw * w_nml + nml_kern.grad(Matrix3::zero(), ddpsi.transpose()) * w) * weight_sum_inv;
     let dw_normalized_term =
         (dw_normalized - dw_neigh_normalized * w_normalized) * (rot * multiplier).transpose();
 
@@ -1926,47 +1952,60 @@ where
         .iter()
         .map(move |&tri_vtx| (tri_vtx, dw_normalized_term));
 
-    let sqrt_w_nml_factor = T::from(0.5).unwrap() * (T::one() + sample_unit_nml.dot(grad_phi)) * w_normalized;
+    let sqrt_w_nml_factor =
+        T::from(0.5).unwrap() * (T::one() + sample_unit_nml.dot(grad_phi)) * w_normalized;
 
-    let unit_nml_grad_entries = surface_topo[sample.index].iter().zip(unit_nml_grads[which_sample].clone().into_iter())
-            .map(move |(&tri_vtx, unit_nml_grad)| {
-                (tri_vtx, (unit_nml_grad * grad_phi * sqrt_w_nml_factor) * rot_b_t)
-            });
+    let unit_nml_grad_entries = surface_topo[sample.index]
+        .iter()
+        .zip(unit_nml_grads[which_sample].clone().into_iter())
+        .map(move |(&tri_vtx, unit_nml_grad)| {
+            (
+                tri_vtx,
+                (unit_nml_grad * grad_phi * sqrt_w_nml_factor) * rot_b_t,
+            )
+        });
 
     // Compute Jacobian of the rotation matrix Qs multiplied by multiplier.
-    let second_term_entries = neigh_verts.iter().zip(jac_grad_phi.iter()).map(|(&tri_vtx, jac_grad_phi)| {
-        // let dw_normalized_denom_term = -dwdq_neigh_normalized[tri_vtx]
-        //     * w
-        //     * weight_sum_inv
-        //     * (rot * multiplier).transpose();
-        let dw_normalized_denom_term = -dwdq_neigh_normalized[tri_vtx]
-            * w_normalized
-            * w_nml
-            * rot_b_t;
+    let second_term_entries = neigh_verts
+        .iter()
+        .zip(jac_grad_phi.iter())
+        .map(|(&tri_vtx, jac_grad_phi)| {
+            // let dw_normalized_denom_term = -dwdq_neigh_normalized[tri_vtx]
+            //     * w
+            //     * weight_sum_inv
+            //     * (rot * multiplier).transpose();
+            let dw_normalized_denom_term =
+                -dwdq_neigh_normalized[tri_vtx] * w_normalized * w_nml * rot_b_t;
 
-        let jac_grad_phi_t = jac_grad_phi.transpose();
+            let jac_grad_phi_t = jac_grad_phi.transpose();
 
-        let jac_grad_phi_term = (jac_grad_phi_t * sample_unit_nml * sqrt_w_nml_factor) * rot_b_t;
+            let jac_grad_phi_term =
+                (jac_grad_phi_t * sample_unit_nml * sqrt_w_nml_factor) * rot_b_t;
 
-        let unit_nml_grad = surface_topo[sample.index]
-            .iter()
-            .position(|&x| x == tri_vtx)
-            .map(|which_vtx| unit_nml_grads[which_sample][which_vtx])
-            .unwrap_or_else(Vector3::zero);
+            let unit_nml_grad = surface_topo[sample.index]
+                .iter()
+                .position(|&x| x == tri_vtx)
+                .map(|which_vtx| unit_nml_grads[which_sample][which_vtx])
+                .unwrap_or_else(Vector3::zero);
 
-        let rot_jac = rodrigues_rotation_jacobian_product_at(
-            sample_unit_nml,
-            grad_phi,
-            jac_grad_phi_t,
-            unit_nml_grad,
-            nml_dot_grad,
-            multiplier,
-            transpose,
-        );
-        (tri_vtx, dw_normalized_denom_term + rot_jac * w_normalized * w_nml + jac_grad_phi_term)
-    })
-    .collect::<Vec<_>>();
-    dw_normalized_entries.chain(second_term_entries.into_iter()).chain(unit_nml_grad_entries.into_iter())
+            let rot_jac = rodrigues_rotation_jacobian_product_at(
+                sample_unit_nml,
+                grad_phi,
+                jac_grad_phi_t,
+                unit_nml_grad,
+                nml_dot_grad,
+                multiplier,
+                transpose,
+            );
+            (
+                tri_vtx,
+                dw_normalized_denom_term + rot_jac * w_normalized * w_nml + jac_grad_phi_term,
+            )
+        })
+        .collect::<Vec<_>>();
+    dw_normalized_entries
+        .chain(second_term_entries.into_iter())
+        .chain(unit_nml_grad_entries.into_iter())
 }
 
 /// Jacobian of `Qs^T b` for some multiplier `b` with respect to sample position.

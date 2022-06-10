@@ -1078,10 +1078,10 @@ pub(crate) fn normalized_neighbor_weight_nml_vertex_gradients<'a, T, K, V>(
     jac_grad_phi: &[Matrix3<T>],
     neigh_verts: &[usize],
 ) -> Vec<Vector3<T>>
-    where
-        T: Real,
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
-        V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
+    V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
 {
     let closest_d = bg.closest_sample_dist();
 
@@ -1102,9 +1102,12 @@ pub(crate) fn normalized_neighbor_weight_nml_vertex_gradients<'a, T, K, V>(
         let sqrt_factor = T::from(0.5).unwrap() * (T::one() + unit_nml.dot(grad_phi));
         first_term += s.nml.normalized() * w * sqrt_factor;
     });
-    neigh_verts.iter().zip(jac_grad_phi.iter()).for_each(|(&vtx_idx, &jgp)| {
-        dwnmldq_neigh[vtx_idx] += jgp.transpose() * (first_term * weight_sum_inv);
-    });
+    neigh_verts
+        .iter()
+        .zip(jac_grad_phi.iter())
+        .for_each(|(&vtx_idx, &jgp)| {
+            dwnmldq_neigh[vtx_idx] += jgp.transpose() * (first_term * weight_sum_inv);
+        });
     samples.iter().enumerate().for_each(|(which_sample, s)| {
         let unit_nml = s.nml.normalized();
         let bg_grad = bg.background_weight_gradient(Some(s.index));
@@ -1113,12 +1116,14 @@ pub(crate) fn normalized_neighbor_weight_nml_vertex_gradients<'a, T, K, V>(
         let nml_kern = NormalKernel::new(unit_nml, grad_phi);
         let dwn = (dw - bg_grad) * nml_kern.eval() * factor;
         surface_topo[s.index]
-            .iter().zip(unit_nml_grads[which_sample].iter())
+            .iter()
+            .zip(unit_nml_grads[which_sample].iter())
             .for_each(|(&tri_vtx, &unit_nml_grad)| {
                 let sqrt_factor = T::from(0.5).unwrap() * (T::one() + unit_nml.dot(grad_phi));
                 // Subtract since it's with respect to vertices.
                 dwnmldq_neigh[tri_vtx] -= dwn;
-                dwnmldq_neigh[tri_vtx] += unit_nml_grad * (grad_phi * w * weight_sum_inv * sqrt_factor);
+                dwnmldq_neigh[tri_vtx] +=
+                    unit_nml_grad * (grad_phi * w * weight_sum_inv * sqrt_factor);
             });
     });
 
@@ -1134,10 +1139,10 @@ pub(crate) fn normalized_neighbor_weight_nml_gradient<'a, T, K, V>(
     grad_phi: Vector3<T>,
     ddpsi_t: Matrix3<T>,
 ) -> Vector3<T>
-    where
-        T: Real,
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
-        V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
+    V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
 {
     let closest_d = bg.closest_sample_dist();
 
@@ -1155,7 +1160,8 @@ pub(crate) fn normalized_neighbor_weight_nml_gradient<'a, T, K, V>(
             let nml_kern = NormalKernel::new(unit_nml, grad_phi);
             let w = kernel.with_closest_dist(closest_d).eval(q, s.pos);
             let dw = kernel.with_closest_dist(closest_d).grad(q, s.pos);
-            ((dw + bg_term) * nml_kern.eval() + nml_kern.grad(Matrix3::zero(), ddpsi_t) * w) * weight_sum_inv
+            ((dw + bg_term) * nml_kern.eval() + nml_kern.grad(Matrix3::zero(), ddpsi_t) * w)
+                * weight_sum_inv
         })
         .sum()
 }
@@ -1529,7 +1535,8 @@ where
     let angle_w = NormalKernel::new(sample_nml, grad_phi).eval();
 
     // let weight_sum_inv = T::from(weight_sum_inv.to_f64().unwrap()).unwrap();
-    let w_normalized = kernel.with_closest_dist(closest_d).eval(q, sample_pos) * angle_w * weight_sum_inv;
+    let w_normalized =
+        kernel.with_closest_dist(closest_d).eval(q, sample_pos) * angle_w * weight_sum_inv;
     // let w_normalized = kernel.with_closest_dist(closest_d).eval(q, sample_pos) * weight_sum_inv;
 
     let u = sample_nml.cross(grad_phi);
@@ -1676,11 +1683,11 @@ pub(crate) fn weight_nml_sum_inv<'a, T, K>(
     samples: SamplesView<'a, 'a, T>,
     kernel: K,
     closest_d: T,
-    grad_phi: Vector3<T>
+    grad_phi: Vector3<T>,
 ) -> T
-    where
-        T: Real,
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let mut weight_sum = T::zero();
     for Sample { pos, nml, .. } in samples.iter() {

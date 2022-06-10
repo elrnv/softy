@@ -77,21 +77,24 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             project_element_hessians,
             ..
         } = *self;
-        let adaptive_newton =
-            matches!(solver_type, SolverType::AdaptiveNewtonBacktracking) ||
-                matches!(solver_type, SolverType::AdaptiveNewtonAssistedBacktracking) ||
-                matches!(solver_type, SolverType::AdaptiveNewtonContactAssistedBacktracking;
+        let adaptive_newton = matches!(solver_type, SolverType::AdaptiveNewtonBacktracking)
+            || matches!(solver_type, SolverType::AdaptiveNewtonAssistedBacktracking)
+            || matches!(
+                solver_type,
+                SolverType::AdaptiveNewtonContactAssistedBacktracking
+            );
         let line_search = match solver_type {
-            SolverType::AdaptiveNewtonAssistedBacktracking |
-            SolverType::NewtonAssistedBacktracking => {
+            SolverType::AdaptiveNewtonAssistedBacktracking
+            | SolverType::NewtonAssistedBacktracking => {
                 fem::nl::LineSearch::default_assisted_backtracking()
             }
-            SolverType::NewtonContactAssistedBacktracking |
-            SolverType::NewtonContactAssistedBacktracking => {
+            SolverType::AdaptiveNewtonContactAssistedBacktracking
+            | SolverType::NewtonContactAssistedBacktracking => {
                 fem::nl::LineSearch::default_contact_assisted_backtracking()
             }
-            SolverType::NewtonBacktracking |
-            SolverType::NewtonBacktracking => fem::nl::LineSearch::default_backtracking(),
+            SolverType::AdaptiveNewtonBacktracking | SolverType::NewtonBacktracking => {
+                fem::nl::LineSearch::default_backtracking()
+            }
             _ => fem::nl::LineSearch::None,
         }
         .with_step_factor(backtracking_coeff);
@@ -233,9 +236,10 @@ fn get_frictional_contacts<'a>(
             (
                 softy_contact::FrictionalContactParams {
                     kernel: match kernel {
-                        Kernel::Compact => {
-                            softy::KernelType::Compact { tolerance, radius_multiplier }
-                        }
+                        Kernel::Smooth => softy::KernelType::Smooth {
+                            tolerance,
+                            radius_multiplier,
+                        },
                         Kernel::Approximate => softy::KernelType::Approximate {
                             tolerance,
                             radius_multiplier,

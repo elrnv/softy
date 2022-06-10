@@ -88,7 +88,7 @@ mod ffi {
 
     #[derive(Debug)]
     pub enum Kernel {
-        Compact,
+        Smooth,
         Approximate,
         Cubic,
         Global,

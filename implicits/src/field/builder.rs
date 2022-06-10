@@ -362,7 +362,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             | KernelType::Approximate {
                 radius_multiplier, ..
             }
-            | KernelType::Compact {
+            | KernelType::Smooth {
                 radius_multiplier, ..
             }
             | KernelType::Cubic { radius_multiplier } => {
@@ -381,7 +381,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         match self.kernel {
             KernelType::Interpolating { .. }
             | KernelType::Cubic { .. }
-            | KernelType::Compact { .. }
+            | KernelType::Smooth { .. }
             | KernelType::Approximate { .. } => Some(LocalMLS {
                 kernel: self.kernel.into(),
                 base_radius,

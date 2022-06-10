@@ -142,20 +142,24 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             ref log_file,
             ..
         } = *self;
-        let adaptive_newton =
-            matches!(solver_type, SolverType::AdaptiveNewtonAssistedBacktracking) ||
-        matches!(solver_type, SolverType::AdaptiveNewtonContactAssistedBacktracking) ||
-        matches!(solver_type, SolverType::AdaptiveNewtonBacktracking);
+        let adaptive_newton = matches!(solver_type, SolverType::AdaptiveNewtonAssistedBacktracking)
+            || matches!(
+                solver_type,
+                SolverType::AdaptiveNewtonContactAssistedBacktracking
+            )
+            || matches!(solver_type, SolverType::AdaptiveNewtonBacktracking);
         let line_search = match solver_type {
-            SolverType::AdaptiveNewtonAssistedBacktracking |
-            SolverType::NewtonAssistedBacktracking => {
+            SolverType::AdaptiveNewtonAssistedBacktracking
+            | SolverType::NewtonAssistedBacktracking => {
                 fem::nl::LineSearch::default_assisted_backtracking()
             }
-            SolverType::AdaptiveNewtonContactAssistedBacktracking |
-            SolverType::NewtonContactAssistedBacktracking => {
+            SolverType::AdaptiveNewtonContactAssistedBacktracking
+            | SolverType::NewtonContactAssistedBacktracking => {
                 fem::nl::LineSearch::default_contact_assisted_backtracking()
             }
-            SolverType::AdaptiveNewtonBacktracking | SolverType::NewtonBacktracking => fem::nl::LineSearch::default_backtracking(),
+            SolverType::AdaptiveNewtonBacktracking | SolverType::NewtonBacktracking => {
+                fem::nl::LineSearch::default_backtracking()
+            }
             _ => fem::nl::LineSearch::None,
         }
         .with_step_factor(backtracking_coeff);
@@ -453,9 +457,10 @@ fn get_frictional_contacts<'a>(
                 GenericFrictionalContactParams::NL(
                     softy::constraints::penalty_point_contact::FrictionalContactParams {
                         kernel: match kernel {
-                            Kernel::Compact => {
-                                softy::KernelType::Compact { tolerance, radius_multiplier }
-                            }
+                            Kernel::Smooth => softy::KernelType::Smooth {
+                                tolerance,
+                                radius_multiplier,
+                            },
                             Kernel::Approximate => softy::KernelType::Approximate {
                                 tolerance,
                                 radius_multiplier,
@@ -519,9 +524,10 @@ fn get_frictional_contacts_ipopt<'a>(
             (
                 GenericFrictionalContactParams::Ipopt(softy::FrictionalContactParams {
                     kernel: match kernel {
-                        Kernel::Compact  => {
-                            softy::KernelType::Compact  { tolerance, radius_multiplier }
-                        }
+                        Kernel::Smooth => softy::KernelType::Smooth {
+                            tolerance,
+                            radius_multiplier,
+                        },
                         Kernel::Approximate => softy::KernelType::Approximate {
                             tolerance,
                             radius_multiplier,

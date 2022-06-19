@@ -98,7 +98,9 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTetEnergy<T> {
         let F = self.deformation_gradient();
         let J = F.determinant();
         if J <= T::zero() {
-            [Vector3::zero(); 4]
+            // Using infinity here instead of zero to set gradient norm (which is often used
+            // as a merit function) to infinity.
+            [Vector3::from([T::infinity(); 3]); 4]
         } else {
             let F_inv_tr = F.inverse_transpose().unwrap();
             let logJ = Float::ln(J);

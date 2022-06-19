@@ -845,24 +845,6 @@ where
         }
         let t_jacobian_indices = Instant::now();
 
-        {
-            let Self {
-                problem, workspace, ..
-            } = self;
-
-            let NewtonWorkspace { r, precond, .. } = &mut *workspace.borrow_mut();
-
-            // Update all state to correspond to x being the next velocity.
-            problem.update_state(x, true, !is_iterative, false);
-
-            // Compute preconditioner.
-            // TODO: determine if it's any better doing this for every step or just once at the beginning is enough.
-            problem.diagonal_preconditioner(x, precond);
-
-            // Initialize the residual.
-            problem.residual(x, r.as_mut_slice(), false);
-        }
-
         let Self {
             problem,
             params,
@@ -1013,6 +995,46 @@ where
         // Forcing term only used for inexact newton.
         let orig_linsolve_tol = linsolve.iterative_tolerance();
 
+        // Update all state to correspond to x being the next velocity.
+        problem.update_state(x, true, !is_iterative, false);
+
+        // Compute preconditioner.
+        // TODO: determine if it's any better doing this for every step or just once at the beginning is enough.
+        problem.diagonal_preconditioner(x, precond);
+
+        // Keep track of merit function to avoid having to recompute it. This must be after rescale.
+        let mut initial_backtrack_iterations = 0;
+        let mut merit_cur = loop {
+            // Initialize the residual.
+            problem.residual(x, r.as_mut_slice(), false);
+            r_next_unscaled.copy_from_slice(r);
+            rescale_vector(precond, r.as_mut_slice());
+            let m = merit(problem, x, r);
+            if m.is_finite() || initial_backtrack_iterations > 9 {
+                break m;
+            }
+
+            if initial_backtrack_iterations > 8 {
+                // Save our breath and just zero out the initial guess if it's that bad.
+                x.fill(T::zero());
+                log::trace!("setting initial guess to zero");
+            } else {
+                // Scale back x if needed. Some merit functions can produce infinities, so we need to scale
+                // back the velocity to produce a valid initial guess.
+                x.iter_mut().for_each(|x| *x *= T::from(0.5).unwrap());
+            }
+
+            // Update all state to correspond to x being the next velocity.
+            problem.update_state(x, true, !is_iterative, false);
+            initial_backtrack_iterations += 1;
+        };
+
+        // let mut merit_cur = merit_obj(&self.problem, x);
+        let mut merit_prev = merit_cur;
+        let mut merit_next;
+
+        log::trace!("ls: initial merit = {merit_cur:?}");
+
         let header = IterationInfo::header();
         log::debug!("{}", header[0]);
         log::debug!("{}", header[1]);
@@ -1022,8 +1044,8 @@ where
             linsolve_result,
             orig_linsolve_tol,
             1.0,
-            f64::INFINITY,
-            r,
+            merit_cur,
+            r_next_unscaled,
             x_prev,
             x,
             &*problem.lumped_mass_inv(),
@@ -1039,17 +1061,6 @@ where
                 stats,
             };
         }
-
-        // We do this late, so that the first IterationInfo gets an unscaled value.
-        rescale_vector(precond, r.as_mut_slice());
-
-        // Keep track of merit function to avoid having to recompute it. This must be after rescale.
-        let mut merit_cur = merit(problem, x, r);
-        // let mut merit_cur = merit_obj(&self.problem, x);
-        let mut merit_prev = merit_cur;
-        let mut merit_next;
-
-        log::trace!("ls: initial merit = {merit_cur:?}");
 
         let mut j_dense_ad = LazyCell::new();
         let mut j_dense = LazyCell::new();
@@ -1517,10 +1528,21 @@ where
                         log::trace!("incremented eta: {:?}", linsolve.tol);
                     }
 
+                    // let denom = x.as_tensor().norm() + T::one();
+                    // let dx_norm = num_traits::Float::sqrt(
+                    //     x_prev
+                    //         .iter()
+                    //         .zip(x.iter())
+                    //         .map(|(&a, &b)| (a - b) * (a - b))
+                    //         .sum::<T>(),
+                    // );
+
+                    // if dx_norm < T::from(params.x_tol).unwrap() * denom {
+                    // if alpha < 1e-5 && ls_count > 15 && iterations > 50 {
                     if alpha < 1e-20 && ls_count > 80 {
                         problem.invalidate_cached_jacobian_product_values();
                         dbg!(alpha);
-                        let max_alpha = 1e-7_f64;//alpha;
+                        let max_alpha = 1e-6_f64;//alpha;
                         let mut merit_data = vec![];
                         let mut merit_data_u = vec![];
                         let mut r0 = vec![];

@@ -88,7 +88,7 @@ pub fn default_solid() -> SolidMaterial {
         .with_elasticity(Elasticity::from_lame(
             93333.33,
             10e3,
-            ElasticityModel::NeoHookean,
+            ElasticityModel::StableNeoHookean,
         ))
         .with_density(1000.0)
 }

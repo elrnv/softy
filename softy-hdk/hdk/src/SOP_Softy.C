@@ -45,630 +45,630 @@ void newSopOperator(OP_OperatorTable *table)
 
 static const char *theDsFile = R"THEDSFILE(
 {
-    name softy
+name softy
+
+parm {
+    name "clearlogs"
+    label "Clear Logs"
+    type button
+    default { "0" }
+    range { 0 1 }
+}
+
+parm {
+    name "clearcache"
+    label "Clear Cache"
+    type button
+    default { "0" }
+    range { 0 1 }
+}
+
+parm {
+    name "timestep"
+    cppname "TimeStep"
+    label "Time Step"
+    type float
+    default { "1.0/$FPS" }
+    range { 0 10 }
+}
+
+parm {
+    name "gravity"
+    label "Gravity"
+    type float
+    default { "9.81" }
+    range { 0 20 }
+}
+
+parm {
+    name "logfile"
+    cppname "LogFile"
+    label "Log File"
+    type file
+    default { "" }
+}
+
+parm {
+    name "solvertype"
+    cppname "SolverType"
+    label "Solver Type"
+    type ordinal
+    default { "0" }
+    menu {
+        "ipopt" "IPOPT (Optimization)"
+        "newton" "Newton"
+        "newtonbt" "Newton with Backtracking"
+        "newtonassistbt" "Newton with Assisted Backtracking"
+        "newtoncontactassistbt" "Newton with Contact Assisted Backtracking"
+        "adaptnewtonbt" "Adaptive Newton with Backtracking"
+        "adaptnewtonassistbt" "Adaptive Newton with Assisted Backtracking"
+        "adaptnewtoncontactassistbt" "Adaptive Newton with Contact Assisted Backtracking"
+        "trustregion" "Trust Region"
+    }
+}
+parm {
+    name "backtrackingcoeff"
+    cppname "BacktrackingCoeff"
+    label "Backtracking Coefficient"
+    type float
+    default { "0.9" }
+    range { 0 1 }
+    hidewhen "{ solvertype == ipopt } { solvertype == newton } { solvertype == trustregion }"
+}
+
+group {
+    name "material"
+    label "Material"
+
+    multiparm {
+        name  "materials"
+        label "Number of Materials"
+        default 0
+        parmtag { "multistartoffset" "1" }
+
+        parm {
+            name "materialid#"
+            cppname "MaterialId"
+            label "Material Id:  #"
+            type label
+            default { "" }
+        }
+
+        parm {
+            name "objtype#"
+            cppname "ObjectType"
+            label "Object Type"
+            type ordinal
+            default { "0" }
+            menu {
+                "solid" "Solid"
+                "shell" "Shell"
+                "rigid" "Rigid"
+            }
+        }
+
+        parm {
+            name "elasticitymodel#"
+            cppname "ElasticityModel"
+            label "Elasticity Model"
+            type ordinal
+            default { "0" }
+            hidewhen "{ objtype# != solid }"
+            menu {
+                "snh" "Stable Neo-Hookean"
+                "nh" "Neo-Hookean"
+            }
+        }
+
+        parm {
+            name "bendingstiffness#"
+            cppname "BendingStiffness"
+            label "Bending Stiffness"
+            type float
+            default { "0" }
+            range { 0 100 }
+            hidewhen "{ objtype# != shell }"
+        }
+
+        parm {
+            name "density#"
+            label "Density"
+            type float
+            default { "1000" }
+            range { 0 2000 }
+        }
+        parm {
+            name "damping#"
+            label "Damping"
+            type float
+            default { "0.0" }
+            range { 0 1000 }
+            hidewhen "{ objtype# == rigid }"
+        }
+
+        parm {
+            name "stiffnesstype#"
+            cppname "StiffnessType"
+            label "Stiffness Type"
+            type ordinal
+            default { "1" }
+            hidewhen "{ objtype# == rigid }"
+            menu {
+                "shearbulk" "Shear and Bulk Moduli"
+                "youngpoisson" "Young's Modulus and Poisson's Ratio"
+            }
+        }
+
+        parm {
+            name "shapestiffness#"
+            cppname "ShapeStiffness"
+            label "Shape Stiffness"
+            type float
+            default { "10" }
+            range { 0 100 }
+            hidewhen "{ stiffnesstype# == youngpoisson } { objtype# == rigid }"
+        }
+
+        parm {
+            name "volumestiffness#"
+            cppname "VolumeStiffness"
+            label "Volume Stiffness"
+            type float
+            default { "1750" }
+            range { 0 10000 }
+            hidewhen "{ stiffnesstype# == youngpoisson } { objtype# == rigid }"
+        }
+
+        parm {
+            name "youngmodulus#"
+            cppname "YoungModulus"
+            label "Young's Modulus"
+            type float
+            default { "3.24" }
+            range { 0 1000 }
+            hidewhen "{ stiffnesstype# == shearbulk } { objtype# == rigid }"
+        }
+
+        parm {
+            name "poissonratio#"
+            cppname "PoissonRatio"
+            label "Poisson Ratio"
+            type float
+            default { "0.49" }
+            range { 0 0.5 }
+            hidewhen "{ stiffnesstype# == shearbulk } { objtype# == rigid }"
+        }
+    }
+}
+
+group {
+    name "zones"
+    label "Volume Zones"
+
+    multiparm {
+        name    "volumezones"
+        cppname "VolumeZones"
+        label    "Volume Zones"
+        default 0
+
+        parm {
+            name "zonepressurization#"
+            label "Zone Pressurization"
+            type float
+            default { "1" }
+            range { 0! 10 }
+        }
+        parm {
+            name "compressioncoefficient#"
+            label "Compression Coefficient"
+            type log
+            default { "1" }
+            range { 0.0 1.0 }
+        }
+        parm {
+            name "hessianapproximation#"
+            label "Hessian Approximation"
+            type toggle
+            default { "on" }
+        }
+    }
+}
+
+group {
+    name "constraints"
+    label "Constraints"
 
     parm {
-        name "clearlogs"
-        label "Clear Logs"
-        type button
-        default { "0" }
-        range { 0 1 }
+        name "volumeconstraint"
+        cppname "VolumeConstraint"
+        label "Enable Volume Constraint"
+        type toggle
+        default { "off" }
+        hidewhen "{ solvertype != ipopt }"
     }
 
     parm {
-        name "clearcache"
-        label "Clear Cache"
-        type button
-        default { "0" }
-        range { 0 1 }
+        name "frictioniterations"
+        cppname "FrictionIterations"
+        label "Friction Iterations"
+        type integer
+        default { "10" }
+        range { 0 50 }
+    }
+
+    multiparm {
+        name    "frictionalcontacts"
+        cppname "FrictionalContacts"
+        label    "Frictional Contacts"
+        default 0
+
+        parm {
+            name "objectmaterialid#"
+            label "Implicit Material Id"
+            type integer
+            default { "0" }
+            range { 0! 1 }
+        }
+
+        parm {
+            name "collidermaterialids#"
+            label "Point Material Ids"
+            type string
+            default { "" }
+        }
+
+        parm {
+            name "kernel#"
+            label "Kernel"
+            type ordinal
+            default { "0" }
+            menu {
+                "smooth" "Local smooth"
+                "approximate" "Local approximately interpolating"
+                "cubic" "Local cubic"
+                "global" "Global inverse squared distance"
+            }
+        }
+
+        parm {
+            name "contacttype#"
+            cppname "ContactType"
+            label "Contact Type"
+            type ordinal
+            default { "0" }
+            menu {
+                "linearized" "Linearized Point"
+                "point" "Point"
+            }
+        }
+
+        parm {
+            name "radiusmult#"
+            cppname "RadiusMultiplier"
+            label "Radius Multiplier"
+            type float
+            default { "1" }
+            range { 0.0 10.0 }
+        }
+
+        parm {
+            name "smoothtol#"
+            cppname "SmoothTol"
+            label "Smoothness Tolerance"
+            type log
+            default { "1e-5" }
+            range { 0.0 1.0 }
+            hidewhen "{ kernel# == cubic }"
+        }
+
+        parm {
+            name "contactoffset#"
+            cppname "ContactOffset"
+            label "Contact Offset"
+            type log
+            default { "0.0" }
+            range { 0.0 1.0 }
+        }
+
+        parm {
+            name "usefixed#"
+            label "Use Fixed for Implicit"
+            type toggle
+            default { "off" }
+        }
+
+        parm {
+            name "friction#"
+            label "Friction"
+            type toggle
+            default { "off" }
+        }
+
+        groupsimple {
+            name "frictionparams#"
+            label "Friction Parameters"
+            grouptag { "group_type" "simple" }
+            hidewhen "{ friction# == 0 }"
+
+            parm {
+                name "frictionforwarding#"
+                label "Friction Forwarding"
+                type float
+                default { "1.0" }
+                range { 0! 1 }
+            }
+            parm {
+                name "smoothingweight#"
+                label "Smoothing Weight"
+                type float
+                default { "0.0" }
+                range { 0! 1 }
+            }
+            parm {
+                name "dynamiccof#"
+                label "Dynamic Coefficient"
+                type float
+                default { "0.2" }
+                range { 0 2 }
+            }
+            parm {
+                name "frictiontolerance#"
+                label "Tolerance"
+                type log
+                default { "1e-10" }
+                range { 0.0 1.0 }
+            }
+            parm {
+                name "frictioninneriterations#"
+                label "Inner Iterations"
+                type integer
+                default { "50" }
+                range { 0 10 }
+            }
+        }
+
+    }
+}
+
+group {
+    name "solver"
+    label "Solver"
+
+    parm {
+        name "preconditioner"
+        label "Preconditioner"
+        type ordinal
+        default { "2" }
+        menu {
+            "none" "None"
+            "incompletejacobi" "Incomplete Jacobi"
+            "approximatejacobi" "Approximate Jacobi"
+        }
+        hidewhen "{ solvertype == ipopt }"
     }
 
     parm {
-        name "timestep"
-        cppname "TimeStep"
-        label "Time Step"
-        type float
-        default { "1.0/$FPS" }
-        range { 0 10 }
-    }
-
-    parm {
-        name "gravity"
-        label "Gravity"
-        type float
-        default { "9.81" }
-        range { 0 20 }
-    }
-
-    parm {
-        name "logfile"
-        cppname "LogFile"
-        label "Log File"
-        type file
-        default { "" }
-    }
-
-    parm {
-        name "solvertype"
-        cppname "SolverType"
-        label "Solver Type"
+        name "timeintegration"
+        cppname "TimeIntegration"
+        label "Time Integration"
         type ordinal
         default { "0" }
         menu {
-            "ipopt" "IPOPT (Optimization)"
-            "newton" "Newton"
-            "newtonbt" "Newton with Backtracking"
-            "newtonassistbt" "Newton with Assisted Backtracking"
-            "newtoncontactassistbt" "Newton with Contact Assisted Backtracking"
-            "adaptnewtonbt" "Adaptive Newton with Backtracking"
-            "adaptnewtonassistbt" "Adaptive Newton with Assisted Backtracking"
-            "adaptnewtoncontactassistbt" "Adaptive Newton with Contact Assisted Backtracking"
-            "trustregion" "Trust Region"
+            "be" "Backward Euler (BE)"
+            "tr" "Trapezoidal Rule (TR)"
+            "bdf2" "BDF2"
+            "trbdf2" "TR-BDF2"
+            "trbdf2u" "TR-BDF2-Uneven"
+            "sdirk2" "SDIRK2"
+        }
+        hidewhen "{ solvertype == ipopt }"
+    }
+    parm {
+        name "velocityclearfrequency"
+        cppname "VelocityClearFrequency"
+        label "Velocity Clear Frequency"
+        type float
+        default { "0.0" }
+        range { 0 100000 }
+    }
+
+    parm {
+        name "innertolerance"
+        cppname "InnerTolerance"
+        label "Inner Error Tolerance"
+        type log
+        default { "0.0" }
+        range { 0.0 1.0 }
+    }
+    parm {
+        name "maxinneriterations"
+        cppname "MaxInnerIterations"
+        label "Max Inner Iterations"
+        type integer
+        default { "0" }
+        range { 0 1000 }
+    }
+
+    parm {
+        name "outertolerance"
+        cppname "OuterTolerance"
+        label "Outer Error Tolerance"
+        type log
+        default { "1e-5" }
+        range { 0.0 1.0 }
+        hidewhen "{ solvertype != ipopt }"
+    }
+    parm {
+        name    "residualcriterion"
+        cppname "ResidualCriterion"
+        label ""
+        nolabel
+        type    toggle
+        joinnext
+        default { "on" }
+        hidewhen "{ solvertype == ipopt }"
+    }
+    parm {
+        name    "residualtolerance"
+        cppname "ResidualTolerance"
+        label   "Residual Tolerance"
+        type log
+        default { "1e-5" }
+        range { 0.0 1.0 }
+        hidewhen "{ solvertype == ipopt }"
+        disablewhen "{ residualcriterion == 0 }"
+    }
+    parm {
+        name    "accelerationcriterion"
+        cppname "AccelerationCriterion"
+        label ""
+        nolabel
+        type    toggle
+        joinnext
+        default { "off" }
+        hidewhen "{ solvertype == ipopt }"
+    }
+    parm {
+        name    "accelerationtolerance"
+        cppname "AccelerationTolerance"
+        label   "Acceleration Tolerance"
+        type log
+        default { "1e-5" }
+        range { 0.0 1.0 }
+        hidewhen "{ solvertype == ipopt }"
+        disablewhen "{ accelerationcriterion == 0 }"
+    }
+    parm {
+        name    "velocitycriterion"
+        cppname "VelocityCriterion"
+        label ""
+        nolabel
+        type    toggle
+        joinnext
+        default { "on" }
+        hidewhen "{ solvertype == ipopt }"
+    }
+    parm {
+        name "velocitytolerance"
+        cppname "VelocityTolerance"
+        label   "Velocity Tolerance"
+        type log
+        default { "1e-5" }
+        range { 0.0 1.0 }
+        hidewhen "{ solvertype == ipopt }"
+        disablewhen "{ velocitycriterion == 0 }"
+    }
+
+    parm {
+        name "maxouteriterations"
+        cppname "MaxOuterIterations"
+        label "Max Outer Iterations"
+        type integer
+        default { "50" }
+        range { 0 1000 }
+    }
+
+    parm {
+        name "derivativetest"
+        cppname "DerivativeTest"
+        label "Derivative Test"
+        type integer
+        default { "0" }
+        range { 0! 3 }
+    }
+
+    parm {
+        name "frictiontolerance"
+        cppname "FrictionTolerance"
+        label "Friction Tolerance"
+        type log
+        default { "1e-5" }
+        range { 0.0 1.0 }
+        hidewhen "{ solvertype == ipopt }"
+    }
+
+    parm {
+        name "contacttolerance"
+        cppname "ContactTolerance"
+        label "Contact Tolerance"
+        type log
+        default { "1e-5" }
+        range { 0.0 1.0 }
+        hidewhen "{ solvertype == ipopt }"
+    }
+    parm {
+        name "contactiterations"
+        cppname "ContactIterations"
+        label "Contact Iterations"
+        type integer
+        default { "5" }
+        range { 0 50 }
+        hidewhen "{ solvertype == ipopt }"
+    }
+    parm {
+        name "frictionprofile"
+        cppname "FrictionProfile"
+        label "Friction Profile"
+        type ordinal
+        default { "0" }
+        menu {
+            "stabilized" "Stabilized"
+            "quadratic" "Quadratic"
         }
     }
     parm {
-        name "backtrackingcoeff"
-        cppname "BacktrackingCoeff"
-        label "Backtracking Coefficient"
-        type float
-        default { "0.9" }
-        range { 0 1 }
-        hidewhen "{ solvertype == ipopt } { solvertype == newton } { solvertype == trustregion }"
+        name "laggedfriction"
+        cppname "LaggedFriction"
+        label "Lagged Friction"
+        type toggle
+        default { "off" }
+    }
+    parm {
+        name "projecthessians"
+        cppname "ProjectHessians"
+        label "Project Element Hessians"
+        type toggle
+        default { "off" }
     }
 
-    group {
-        name "material"
-        label "Material"
-
-        multiparm {
-            name  "materials"
-            label "Number of Materials"
-            default 0
-            parmtag { "multistartoffset" "1" }
-
-            parm {
-                name "materialid#"
-                cppname "MaterialId"
-                label "Material Id:  #"
-                type label
-                default { "" }
-            }
-
-            parm {
-                name "objtype#"
-                cppname "ObjectType"
-                label "Object Type"
-                type ordinal
-                default { "0" }
-                menu {
-                    "solid" "Solid"
-                    "shell" "Shell"
-                    "rigid" "Rigid"
-                }
-            }
-
-            parm {
-                name "elasticitymodel#"
-                cppname "ElasticityModel"
-                label "Elasticity Model"
-                type ordinal
-                default { "0" }
-                hidewhen "{ objtype# != solid }"
-                menu {
-                    "snh" "Stable Neo-Hookean"
-                    "nh" "Neo-Hookean"
-                }
-            }
-
-            parm {
-                name "bendingstiffness#"
-                cppname "BendingStiffness"
-                label "Bending Stiffness"
-                type float
-                default { "0" }
-                range { 0 100 }
-                hidewhen "{ objtype# != shell }"
-            }
-
-            parm {
-                name "density#"
-                label "Density"
-                type float
-                default { "1000" }
-                range { 0 2000 }
-            }
-            parm {
-                name "damping#"
-                label "Damping"
-                type float
-                default { "0.0" }
-                range { 0 1000 }
-                hidewhen "{ objtype# == rigid }"
-            }
-
-            parm {
-                name "stiffnesstype#"
-                cppname "StiffnessType"
-                label "Stiffness Type"
-                type ordinal
-                default { "1" }
-                hidewhen "{ objtype# == rigid }"
-                menu {
-                    "shearbulk" "Shear and Bulk Moduli"
-                    "youngpoisson" "Young's Modulus and Poisson's Ratio"
-                }
-            }
-
-            parm {
-                name "shapestiffness#"
-                cppname "ShapeStiffness"
-                label "Shape Stiffness"
-                type float
-                default { "10" }
-                range { 0 100 }
-                hidewhen "{ stiffnesstype# == youngpoisson } { objtype# == rigid }"
-            }
-
-            parm {
-                name "volumestiffness#"
-                cppname "VolumeStiffness"
-                label "Volume Stiffness"
-                type float
-                default { "1750" }
-                range { 0 10000 }
-                hidewhen "{ stiffnesstype# == youngpoisson } { objtype# == rigid }"
-            }
-
-            parm {
-                name "youngmodulus#"
-                cppname "YoungModulus"
-                label "Young's Modulus"
-                type float
-                default { "3.24" }
-                range { 0 1000 }
-                hidewhen "{ stiffnesstype# == shearbulk } { objtype# == rigid }"
-            }
-
-            parm {
-                name "poissonratio#"
-                cppname "PoissonRatio"
-                label "Poisson Ratio"
-                type float
-                default { "0.49" }
-                range { 0 0.5 }
-                hidewhen "{ stiffnesstype# == shearbulk } { objtype# == rigid }"
-            }
-        }
-    }
-
-    group {
-        name "zones"
-        label "Volume Zones"
-
-        multiparm {
-            name    "volumezones"
-            cppname "VolumeZones"
-            label    "Volume Zones"
-            default 0
-
-            parm {
-                name "zonepressurization#"
-                label "Zone Pressurization"
-                type float
-                default { "1" }
-                range { 0! 10 }
-            }
-            parm {
-                name "compressioncoefficient#"
-                label "Compression Coefficient"
-                type log
-                default { "1" }
-                range { 0.0 1.0 }
-            }
-            parm {
-                name "hessianapproximation#"
-                label "Hessian Approximation"
-                type toggle
-                default { "on" }
-            }
-        }
-    }
-
-    group {
-        name "constraints"
-        label "Constraints"
+    groupcollapsible {
+        name    "ipoptoptions"
+        label   "Ipopt Options"
+        grouptag { "group_type" "collapsible" }
+        disablewhen "{ solvertype != ipopt }"
+        hidewhen "{ solvertype != ipopt }"
 
         parm {
-            name "volumeconstraint"
-            cppname "VolumeConstraint"
-            label "Enable Volume Constraint"
-            type toggle
-            default { "off" }
-            hidewhen "{ solvertype != ipopt }"
-        }
-
-        parm {
-            name "frictioniterations"
-            cppname "FrictionIterations"
-            label "Friction Iterations"
-            type integer
-            default { "10" }
-            range { 0 50 }
-        }
-
-        multiparm {
-            name    "frictionalcontacts"
-            cppname "FrictionalContacts"
-            label    "Frictional Contacts"
-            default 0
-
-            parm {
-                name "objectmaterialid#"
-                label "Implicit Material Id"
-                type integer
-                default { "0" }
-                range { 0! 1 }
-            }
-
-            parm {
-                name "collidermaterialids#"
-                label "Point Material Ids"
-                type string
-                default { "" }
-            }
-
-            parm {
-                name "kernel#"
-                label "Kernel"
-                type ordinal
-                default { "0" }
-                menu {
-                    "smooth" "Local smooth"
-                    "approximate" "Local approximately interpolating"
-                    "cubic" "Local cubic"
-                    "global" "Global inverse squared distance"
-                }
-            }
-
-            parm {
-                name "contacttype#"
-                cppname "ContactType"
-                label "Contact Type"
-                type ordinal
-                default { "0" }
-                menu {
-                    "linearized" "Linearized Point"
-                    "point" "Point"
-                }
-            }
-
-            parm {
-                name "radiusmult#"
-                cppname "RadiusMultiplier"
-                label "Radius Multiplier"
-                type float
-                default { "1" }
-                range { 0.0 10.0 }
-            }
-
-            parm {
-                name "smoothtol#"
-                cppname "SmoothTol"
-                label "Smoothness Tolerance"
-                type log
-                default { "1e-5" }
-                range { 0.0 1.0 }
-                hidewhen "{ kernel# == cubic }"
-            }
-
-            parm {
-                name "contactoffset#"
-                cppname "ContactOffset"
-                label "Contact Offset"
-                type log
-                default { "0.0" }
-                range { 0.0 1.0 }
-            }
-
-            parm {
-                name "usefixed#"
-                label "Use Fixed for Implicit"
-                type toggle
-                default { "off" }
-            }
-
-            parm {
-                name "friction#"
-                label "Friction"
-                type toggle
-                default { "off" }
-            }
-
-            groupsimple {
-                name "frictionparams#"
-                label "Friction Parameters"
-                grouptag { "group_type" "simple" }
-                hidewhen "{ friction# == 0 }"
-
-                parm {
-                    name "frictionforwarding#"
-                    label "Friction Forwarding"
-                    type float
-                    default { "1.0" }
-                    range { 0! 1 }
-                }
-                parm {
-                    name "smoothingweight#"
-                    label "Smoothing Weight"
-                    type float
-                    default { "0.0" }
-                    range { 0! 1 }
-                }
-                parm {
-                    name "dynamiccof#"
-                    label "Dynamic Coefficient"
-                    type float
-                    default { "0.2" }
-                    range { 0 2 }
-                }
-                parm {
-                    name "frictiontolerance#"
-                    label "Tolerance"
-                    type log
-                    default { "1e-10" }
-                    range { 0.0 1.0 }
-                }
-                parm {
-                    name "frictioninneriterations#"
-                    label "Inner Iterations"
-                    type integer
-                    default { "50" }
-                    range { 0 10 }
-                }
-            }
-
-        }
-    }
-
-    group {
-        name "solver"
-        label "Solver"
-
-        parm {
-            name "preconditioner"
-            label "Preconditioner"
+            name "mustrategy"
+            cppname "MuStrategy"
+            label "Mu Strategy"
             type ordinal
-            default { "2" }
+            default { "1" }
             menu {
-                "none" "None"
-                "incompletejacobi" "Incomplete Jacobi"
-                "approximatejacobi" "Approximate Jacobi"
+                "monotone" "Monotone"
+                "adaptive" "Adaptive"
             }
-            hidewhen "{ solvertype == ipopt }"
         }
 
         parm {
-            name "timeintegration"
-            cppname "TimeIntegration"
-            label "Time Integration"
-            type ordinal
-            default { "0" }
-            menu {
-                "be" "Backward Euler (BE)"
-                "tr" "Trapezoidal Rule (TR)"
-                "bdf2" "BDF2"
-                "trbdf2" "TR-BDF2"
-                "trbdf2u" "TR-BDF2-Uneven"
-                "sdirk2" "SDIRK2"
-            }
-            hidewhen "{ solvertype == ipopt }"
-        }
-        parm {
-            name "velocityclearfrequency"
-            cppname "VelocityClearFrequency"
-            label "Velocity Clear Frequency"
-            type float
-            default { "0.0" }
-            range { 0 100000 }
-        }
-
-        parm {
-            name "innertolerance"
-            cppname "InnerTolerance"
-            label "Inner Error Tolerance"
+            name "maxgradientscaling"
+            cppname "MaxGradientScaling"
+            label "Max Gradient Scaling"
             type log
-            default { "0.0" }
-            range { 0.0 1.0 }
+            default { "1.0" }
+            range { 0.0 100.0 }
         }
+
         parm {
-            name "maxinneriterations"
-            cppname "MaxInnerIterations"
-            label "Max Inner Iterations"
+            name "printlevel"
+            cppname "PrintLevel"
+            label "Print Level"
             type integer
             default { "0" }
-            range { 0 1000 }
-        }
-
-        parm {
-            name "outertolerance"
-            cppname "OuterTolerance"
-            label "Outer Error Tolerance"
-            type log
-            default { "1e-5" }
-            range { 0.0 1.0 }
-            hidewhen "{ solvertype != ipopt }"
-        }
-        parm {
-            name    "residualcriterion"
-            cppname "ResidualCriterion"
-            label ""
-            nolabel
-            type    toggle
-            joinnext
-            default { "on" }
-            hidewhen "{ solvertype == ipopt }"
-        }
-        parm {
-            name    "residualtolerance"
-            cppname "ResidualTolerance"
-            label   "Residual Tolerance"
-            type log
-            default { "1e-5" }
-            range { 0.0 1.0 }
-            hidewhen "{ solvertype == ipopt }"
-            disablewhen "{ residualcriterion == 0 }"
-        }
-        parm {
-            name    "accelerationcriterion"
-            cppname "AccelerationCriterion"
-            label ""
-            nolabel
-            type    toggle
-            joinnext
-            default { "off" }
-            hidewhen "{ solvertype == ipopt }"
-        }
-        parm {
-            name    "accelerationtolerance"
-            cppname "AccelerationTolerance"
-            label   "Acceleration Tolerance"
-            type log
-            default { "1e-5" }
-            range { 0.0 1.0 }
-            hidewhen "{ solvertype == ipopt }"
-            disablewhen "{ accelerationcriterion == 0 }"
-        }
-        parm {
-            name    "velocitycriterion"
-            cppname "VelocityCriterion"
-            label ""
-            nolabel
-            type    toggle
-            joinnext
-            default { "on" }
-            hidewhen "{ solvertype == ipopt }"
-        }
-        parm {
-            name "velocitytolerance"
-            cppname "VelocityTolerance"
-            label   "Velocity Tolerance"
-            type log
-            default { "1e-5" }
-            range { 0.0 1.0 }
-            hidewhen "{ solvertype == ipopt }"
-            disablewhen "{ velocitycriterion == 0 }"
-        }
-
-        parm {
-            name "maxouteriterations"
-            cppname "MaxOuterIterations"
-            label "Max Outer Iterations"
-            type integer
-            default { "50" }
-            range { 0 1000 }
-        }
-
-        parm {
-            name "derivativetest"
-            cppname "DerivativeTest"
-            label "Derivative Test"
-            type integer
-            default { "0" }
-            range { 0! 3 }
-        }
-
-        parm {
-            name "frictiontolerance"
-            cppname "FrictionTolerance"
-            label "Friction Tolerance"
-            type log
-            default { "1e-5" }
-            range { 0.0 1.0 }
-            hidewhen "{ solvertype == ipopt }"
-        }
-
-        parm {
-            name "contacttolerance"
-            cppname "ContactTolerance"
-            label "Contact Tolerance"
-            type log
-            default { "1e-5" }
-            range { 0.0 1.0 }
-            hidewhen "{ solvertype == ipopt }"
-        }
-        parm {
-            name "contactiterations"
-            cppname "ContactIterations"
-            label "Contact Iterations"
-            type integer
-            default { "5" }
-            range { 0 50 }
-            hidewhen "{ solvertype == ipopt }"
-        }
-        parm {
-            name "frictionprofile"
-            cppname "FrictionProfile"
-            label "Friction Profile"
-            type ordinal
-            default { "0" }
-            menu {
-                "stabilized" "Stabilized"
-                "quadratic" "Quadratic"
-            }
-        }
-        parm {
-            name "laggedfriction"
-            cppname "LaggedFriction"
-            label "Lagged Friction"
-            type toggle
-            default { "off" }
-        }
-        parm {
-            name "projecthessians"
-            cppname "ProjectHessians"
-            label "Project Element Hessians"
-            type toggle
-            default { "off" }
-        }
-
-        groupcollapsible {
-            name    "ipoptoptions"
-            label   "Ipopt Options"
-            grouptag { "group_type" "collapsible" }
-            disablewhen "{ solvertype != ipopt }"
-            hidewhen "{ solvertype != ipopt }"
-
-            parm {
-                name "mustrategy"
-                cppname "MuStrategy"
-                label "Mu Strategy"
-                type ordinal
-                default { "1" }
-                menu {
-                    "monotone" "Monotone"
-                    "adaptive" "Adaptive"
-                }
-            }
-
-            parm {
-                name "maxgradientscaling"
-                cppname "MaxGradientScaling"
-                label "Max Gradient Scaling"
-                type log
-                default { "1.0" }
-                range { 0.0 100.0 }
-            }
-
-            parm {
-                name "printlevel"
-                cppname "PrintLevel"
-                label "Print Level"
-                type integer
-                default { "0" }
-                range { 0! 12! }
-            }
+            range { 0! 12! }
         }
     }
+}
 
 }
 )THEDSFILE";

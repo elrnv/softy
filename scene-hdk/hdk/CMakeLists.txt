@@ -54,7 +54,7 @@ target_link_libraries( ${library_name}
 
 if(WIN32)
     # Add Rust specific Windows system dependencies.
-    target_link_libraries( ${library_name} PRIVATE Ws2_32 userenv )
+    target_link_libraries( ${library_name} PRIVATE Ws2_32 userenv bcrypt )
 endif(WIN32)
 
 message(STATUS "${hdkrs_INCLUDE_DIRS}")

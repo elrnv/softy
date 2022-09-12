@@ -6,6 +6,7 @@ use std::time::Instant;
 use accelerate::*;
 use lazycell::LazyCell;
 #[cfg(not(target_os = "macos"))]
+#[cfg(feature = "mkl")]
 use mkl_corrode as mkl;
 #[cfg(not(target_os = "macos"))]
 use rayon::prelude::*;
@@ -101,8 +102,11 @@ pub enum SparseDirectSolveError {
     #[error("Matrix released")]
     Released,
     #[cfg(not(target_os = "macos"))]
+    #[cfg(feature = "mkl")]
     #[error("MKL error")]
     MKLError(#[from] mkl::dss::Error),
+    #[error("No direct solver available")]
+    NotAvailable,
 }
 
 impl SparseDirectSolveError {
@@ -251,18 +255,33 @@ impl SparseIterativeSolver {
 ///
 /// This is done via third party libraries like MKL or Accelerate.
 /// This struct also helps isolate conditionally compiled code from the rest of the solver.
+#[cfg(not(target_os = "macos"))]
+#[cfg(feature = "mkl")]
 pub struct SparseDirectSolver {
     r64: Vec<f64>,
-    #[cfg(target_os = "macos")]
-    mtx: SparseMatrixF64<'static>,
-    #[cfg(target_os = "macos")]
-    factorization: Factorization,
-    #[cfg(not(target_os = "macos"))]
     solver: mkl::dss::Solver<f64>,
-    #[cfg(not(target_os = "macos"))]
     buf: Vec<f64>,
-    #[cfg(not(target_os = "macos"))]
     sol: Vec<f64>,
+}
+
+/// Placeholder for a direct solver.
+///
+/// Currently without MKL there are no direct solvers supported on non macOS systems.
+#[cfg(not(target_os = "macos"))]
+#[cfg(not(feature = "mkl"))]
+pub struct SparseDirectSolver {
+    r64: Vec<f64>,
+}
+
+/// Solver solely responsible for the sparse direct linear solve.
+///
+/// This is done via third party libraries like MKL or Accelerate.
+/// This struct also helps isolate conditionally compiled code from the rest of the solver.
+#[cfg(target_os = "macos")]
+pub struct SparseDirectSolver {
+    r64: Vec<f64>,
+    mtx: SparseMatrixF64<'static>,
+    factorization: Factorization,
 }
 
 #[cfg(target_os = "macos")]
@@ -339,6 +358,14 @@ impl SparseDirectSolver {
     }
 
     #[cfg(not(target_os = "macos"))]
+    #[cfg(not(feature = "mkl"))]
+    pub fn new<T: Real>(_: DSMatrixView<T>) -> Option<Self> {
+        log::warn!("No direct solver available");
+        None
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[cfg(feature = "mkl")]
     pub fn new<T: Real>(m: DSMatrixView<T>) -> Option<Self> {
         let num_variables = m.num_rows();
         let m = m.into_data();
@@ -389,6 +416,19 @@ impl SparseDirectSolver {
     }
 
     #[cfg(not(target_os = "macos"))]
+    #[cfg(not(feature = "mkl"))]
+    pub fn solve_with_values<T: Real>(
+        &mut self,
+        _: &[T],
+        _: &[T],
+    ) -> Result<&[f64], SparseDirectSolveError> {
+        // No direct solver available without mkl, so just spit out a warning and do nothing.
+        // This function can probably never be called since new no direct solver struct can be created.
+        Err(SparseDirectSolveError::NotAvailable)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[cfg(feature = "mkl")]
     pub fn solve_with_values<T: Real>(
         &mut self,
         r: &[T],

@@ -22,7 +22,7 @@ fn cell_vertex_attributes() {
         max_iterations: 1,
         gravity: [0.0f32; 3],
         time_step: Some(0.01),
-        ..static_nl_params(0)
+        ..static_nl_params(2)
     };
 
     let mut mesh = TriMesh::from(

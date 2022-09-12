@@ -6,11 +6,11 @@ SimParams(
     //acceleration_tolerance: Some(1e-7),
     velocity_clear_frequency: 0,
     max_iterations: 50,
-    linsolve: Direct,
-    //linsolve: Iterative(
-    //  tolerance: 0.00001,
-    //  max_iterations: 200,
-    //),
+    //linsolve: Direct,
+    linsolve: Iterative(
+      tolerance: 0.01,
+      max_iterations: 200,
+    ),
     line_search: BackTracking(c: 1e-4, rho: 0.9),
     derivative_test: 0,
     friction_tolerance: 1e-5,

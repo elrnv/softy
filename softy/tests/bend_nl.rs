@@ -17,7 +17,7 @@ fn soft_shell_material() -> Result<Material, LoadConfigError> {
 #[test]
 fn equilibrium() {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let params = SimParams {
             max_iterations: 1,
             gravity: [0.0f32; 3],
@@ -52,7 +52,7 @@ fn equilibrium() {
 #[test]
 fn simple_quasi_static_two_tri() -> Result<(), Error> {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         log::info!("Running config {}", config_name(config_idx));
         let mesh = make_two_tri_mesh();
 
@@ -91,7 +91,7 @@ fn simple_quasi_static_two_tri() -> Result<(), Error> {
 fn quasi_static_deformed() -> Result<(), Error> {
     init_logger();
     let mut results = Vec::new();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let mesh = make_three_tri_mesh();
         let mut solver = SolverBuilder::new(SimParams {
             velocity_clear_frequency: 20.0,
@@ -154,7 +154,7 @@ fn quasi_static_deformed() -> Result<(), Error> {
 #[test]
 fn dynamic_deformed() -> Result<(), Error> {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let mesh = make_three_tri_mesh();
         let mut solver = SolverBuilder::new(SimParams {
             time_step: Some(0.05),

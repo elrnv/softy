@@ -29,9 +29,10 @@ cargo hdk --release
 
 ### Windows
 
-Building on Windows requires a few extra steps.
+Building on Windows requires a few extra steps. These instructions are written specifically for Houdini 19.x. Other versions may require
+different versions for Visual Studio and Intel MKL.
 
-1. Install Houdini 19.0 or later.
+1. Install Houdini 19.x.
 
 2. Launch Houdini to install an appropriate license. If this step is skipped the command-line steps below may faily or hang indefinitely.
 
@@ -39,7 +40,7 @@ Building on Windows requires a few extra steps.
 
 4. Install CMake. This needs to be at a newer version (3.24.1 or higher) than provided by Visual Studio 2019.
 
-5. Download and install [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl-download.html).
+5. Download and install Intel MKL version 2020 (since (https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl-download.html).
 
 6. Install `cargo-hdk` as above by running
 ```

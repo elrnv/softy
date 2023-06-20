@@ -249,11 +249,6 @@ pub(crate) mod test_utils {
         ]
     }
 
-    #[cfg(feature = "optsolver")]
-    pub(crate) fn test_rigid_trimeshes() -> Vec<TriMesh> {
-        vec![make_one_tet_trimesh()]
-    }
-
     fn random_displacement(n: usize) -> Vec<F> {
         use rand::distributions::Uniform;
         use rand::prelude::*;
@@ -266,15 +261,11 @@ pub(crate) mod test_utils {
     #[derive(Copy, Clone, Debug, PartialEq)]
     pub(crate) enum EnergyType {
         Position,
-        #[cfg(feature = "optsolver")]
-        Velocity,
     }
 
     /// Construct a step in autodiff format given a set of initial positions. This function returns
     /// initial and current values for the independent variable determined by `ty`.
     fn autodiff_step(pos: &[f64], ty: EnergyType, dt: f64) -> (Vec<F>, Vec<F>, Vec<F>) {
-        #[cfg(feature = "optsolver")]
-        let dx0 = vec![F::cst(0.0); pos.len()]; // previous disp
         let dx = random_displacement(pos.len()); // current disp
         let x0: Vec<F> = pos.iter().map(|&x| F::cst(x)).collect();
         let x: Vec<F> = x0
@@ -285,8 +276,6 @@ pub(crate) mod test_utils {
 
         match ty {
             EnergyType::Position => (x0, x, dx),
-            #[cfg(feature = "optsolver")]
-            EnergyType::Velocity => (x0, dx0, dx),
         }
     }
 

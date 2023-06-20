@@ -8,11 +8,6 @@ use crate::attrib_defines::*;
 use crate::Error;
 
 pub mod material;
-#[cfg(feature = "optsolver")]
-pub mod shell;
-#[cfg(feature = "optsolver")]
-pub mod solid;
-pub mod tetmesh_surface;
 pub mod tetsolid;
 pub mod trishell;
 

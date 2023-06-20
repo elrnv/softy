@@ -14,43 +14,6 @@ pub mod complex_tests {
     }
 
     #[test]
-    #[cfg(feature = "optsolver")]
-    fn torus_medium_test() -> Result<(), Error> {
-        use softy::fem::opt;
-        init_logger();
-        let mesh = geo::io::load_tetmesh("assets/torus_tets.vtk").unwrap();
-        let mut solver = opt::SolverBuilder::new(opt::SimParams {
-            print_level: 0,
-            ..DYNAMIC_OPT_PARAMS
-        })
-        .add_solid(mesh, stiff_material())
-        .build()
-        .unwrap();
-        solver.step()?;
-        Ok(())
-    }
-
-    #[test]
-    #[cfg(feature = "optsolver")]
-    fn torus_long_test() -> Result<(), Error> {
-        use softy::fem::opt;
-        init_logger();
-        let mesh = geo::io::load_tetmesh("assets/torus_tets.vtk")?;
-        let mut solver = opt::SolverBuilder::new(DYNAMIC_OPT_PARAMS)
-            .add_solid(mesh, stiff_material())
-            .build()?;
-
-        for _i in 0..10 {
-            //geo::io::save_tetmesh_ascii(
-            //    &solver.borrow_mesh(),
-            //    &format!("./out/mesh_{}.vtk", 1),
-            //    ).unwrap();
-            solver.step()?;
-        }
-        Ok(())
-    }
-
-    #[test]
     fn torus_medium_nl_test() -> Result<(), Error> {
         init_logger();
         let mesh = geo::io::load_tetmesh("assets/torus_tets.vtk")?;

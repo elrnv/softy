@@ -61,8 +61,8 @@ where
         debug_assert_eq!(b.len(), x.len());
         debug_assert_eq!(p.len(), x.len());
 
-        let mut x: na::DVectorSliceMut<T> = x.into();
-        let mut r: na::DVectorSliceMut<T> = b.into();
+        let mut x: na::DVectorViewMut<T> = x.into();
+        let mut r: na::DVectorViewMut<T> = b.into();
 
         let b_norm_sq = r.norm_squared().to_f64().unwrap();
 

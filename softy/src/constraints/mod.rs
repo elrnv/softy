@@ -1,11 +1,7 @@
 pub mod penalty_point_contact;
 pub mod point_contact;
-#[cfg(feature = "optsolver")]
-pub mod volume;
 pub mod volume_change_penalty;
 
-#[cfg(feature = "optsolver")]
-use crate::attrib_defines::*;
 use num_traits::Zero;
 
 use crate::constraint::*;
@@ -16,8 +12,6 @@ use crate::Real;
 //pub use self::linearized_point_contact::*;
 pub use self::penalty_point_contact::*;
 pub use self::point_contact::*;
-#[cfg(feature = "optsolver")]
-pub use self::volume::*;
 pub use self::volume_change_penalty::*;
 use tensr::*;
 
@@ -63,50 +57,6 @@ impl<M, T> ContactSurface<M, T> {
         }
     }
 }
-
-/// Construct a new contact constraint based on the given parameters.
-#[cfg(feature = "optsolver")]
-pub fn build_contact_constraint<T: Real, VP: geo::mesh::VertexMesh<f64>>(
-    object: ContactSurface<&crate::TriMesh, f64>,
-    collider: ContactSurface<&VP, f64>,
-    params: FrictionalContactParams,
-) -> Result<std::cell::RefCell<PointContactConstraint<T>>, crate::Error> {
-    Ok(std::cell::RefCell::new(PointContactConstraint::new(
-        object,
-        collider,
-        params.kernel,
-        params.friction_params,
-        params.contact_offset,
-        params.contact_type == ContactType::LinearizedPoint,
-    )?))
-}
-
-// // TODO: move to a designated contact constraint.
-// pub fn compute_contact_penalty<S: Real>(d: S, delta: f32) -> S {
-//     if d.to_f32().unwrap() >= delta {
-//         S::zero()
-//     } else {
-//         let delta = S::from(delta).unwrap();
-//         let dd = delta - d;
-//         (dd * dd) / delta
-//     }
-// }
-//pub fn compute_contact_penalty<S: Real>(
-//    // Input distance & Output force magnitude
-//    lambda: &mut [S],
-//    delta: f32,
-//) {
-//    lambda.iter_mut().for_each(|lambda| {
-//        let d = *lambda;
-//        *lambda = if d.to_f32().unwrap() >= delta {
-//            S::zero()
-//        } else {
-//            let delta = S::from(delta).unwrap();
-//            let dd = delta - d;
-//            (dd * dd * dd) / delta
-//        }
-//    });
-//}
 
 /// A common pattern occurring with contact constraints becoming active and inactive is remapping
 /// values computed in a simulation step to the values available in the next step with a different

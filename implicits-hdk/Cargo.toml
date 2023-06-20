@@ -9,7 +9,7 @@ name = "implicitshdk"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-geo = { path = "../geo" }
+geo = { workspace = true }
 implicits = { path = "../implicits" }
 cimplicits = { path = "../cimplicits", features = ["cxx"] }
 hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }

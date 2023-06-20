@@ -47,8 +47,6 @@ pub type TriMeshExt = geo::mesh::TriMeshExt<f64>;
 pub use self::constraints::FrictionProfile;
 pub use self::contact::*;
 pub use self::fem::nl as nl_fem;
-#[cfg(feature = "optsolver")]
-pub use self::fem::opt as opt_fem;
 pub use self::friction::*;
 pub use self::objects::init_mesh_source_index_attribute;
 pub use self::objects::material::*;
@@ -89,36 +87,6 @@ pub enum Error {
     InvertedReferenceElement { inverted: Vec<usize> },
     #[error("Error during main non-linear solve step: {result:?}")]
     NLSolveError { result: nl_fem::SolveResult },
-    #[error("Error during main optimization solve step: Status: {status:?}; Result: {result:?}")]
-    #[cfg(feature = "optsolver")]
-    /// This reports iterations, objective value and max inner iterations.
-    OptSolveError {
-        status: ipopt::SolveStatus,
-        result: opt_fem::SolveResult,
-    },
-    #[error("Error during an inner solve step: {status:?}; Objective: {objective_value}; Iterations": {iterations})]
-    #[cfg(feature = "optsolver")]
-    /// This reports iterations and objective value.
-    InnerOptSolveError {
-        status: ipopt::SolveStatus,
-        objective_value: f64,
-        iterations: u32,
-    },
-    #[error("Friction solve error: {status:?}")]
-    #[cfg(feature = "optsolver")]
-    FrictionSolveError {
-        status: ipopt::SolveStatus,
-        result: FrictionSolveResult,
-    },
-    #[error("Contact solve error: {status}")]
-    #[cfg(feature = "optsolver")]
-    ContactSolveError { status: ipopt::SolveStatus },
-    #[error("Solver create error: {source}")]
-    #[cfg(feature = "optsolver")]
-    SolverCreateError {
-        #[from]
-        source: ipopt::CreateError,
-    },
     #[error("Invalid parameter: {name}")]
     InvalidParameter { name: String },
     #[error("Missing source index")]
@@ -190,30 +158,6 @@ impl From<Error> for SimResult {
         match err {
             Error::SizeMismatch => SimResult::Error(format!("{}", err)),
             Error::AttribError { source } => SimResult::Error(format!("{}", source)),
-            #[cfg(feature = "optsolver")]
-            Error::OptSolveError { status, result } => match status {
-                ipopt::SolveStatus::MaximumIterationsExceeded => {
-                    SimResult::Warning(format!("Maximum iterations exceeded \n{}", result))
-                }
-                status => SimResult::Error(format!("Solve failed: {:?}\n{}", status, result)),
-            },
-            #[cfg(feature = "optsolver")]
-            Error::InnerOptSolveError {
-                status,
-                objective_value,
-                iterations,
-            } => SimResult::Error(format!(
-                "Inner Solve failed: {:?}\nobjective value: {:?}\niterations: {:?}",
-                status, objective_value, iterations
-            )),
-            #[cfg(feature = "optsolver")]
-            Error::FrictionSolveError { status, .. } => {
-                SimResult::Error(format!("Friction Solve failed: {:?}", status))
-            }
-            #[cfg(feature = "optsolver")]
-            Error::ContactSolveError { status } => {
-                SimResult::Error(format!("Contact Solve failed: {:?}", status))
-            }
             Error::MissingSourceIndex => {
                 SimResult::Error("Missing source index vertex attribute".to_string())
             }
@@ -228,10 +172,6 @@ impl From<Error> for SimResult {
             }
             Error::NoSimulationMesh => SimResult::Error("Missing simulation mesh".to_string()),
             Error::NoKinematicMesh => SimResult::Error("Missing kinematic mesh".to_string()),
-            #[cfg(feature = "optsolver")]
-            Error::SolverCreateError { source } => {
-                SimResult::Error(format!("Failed to create a solver: {:?}", source))
-            }
             Error::InvalidParameter { name } => {
                 SimResult::Error(format!("Invalid parameter: {:?}", name))
             }
@@ -261,49 +201,6 @@ impl From<Result<nl_fem::StepResult, Error>> for SimResult {
             Ok(solve_result) => SimResult::Success(format!("{}", solve_result)),
             Err(err) => err.into(),
         }
-    }
-}
-
-#[cfg(feature = "optsolver")]
-impl Into<SimResult> for Result<opt_fem::SolveResult, Error> {
-    fn into(self) -> SimResult {
-        match self {
-            Ok(solve_result) => SimResult::Success(format!("{}", solve_result)),
-            Err(err) => err.into(),
-        }
-    }
-}
-
-/// Simulate one step.
-///
-/// This function also serves as an example of how one may construct a solver using a solver builder and run one step.
-#[cfg(feature = "optsolver")]
-pub fn sim(
-    tetmesh: Option<TetMesh>,
-    material: SolidMaterial,
-    polymesh: Option<PolyMesh>,
-    sim_params: crate::fem::opt::SimParams,
-    interrupter: Option<Box<dyn FnMut() -> bool>>,
-) -> SimResult {
-    if let Some(mesh) = tetmesh {
-        let mut builder = fem::opt::SolverBuilder::new(sim_params);
-        builder.add_solid(mesh, material);
-        if let Some(shell_mesh) = polymesh {
-            // The fixed shell is a distinct material
-            let material_id = material.id + 1;
-            builder.add_fixed(shell_mesh, material_id);
-        }
-        match builder.build() {
-            Ok(mut engine) => {
-                if let Some(interrupter) = interrupter {
-                    engine.set_interrupter(interrupter);
-                }
-                engine.step().into()
-            }
-            Err(e) => e.into(),
-        }
-    } else {
-        SimResult::Error("Tetmesh not found".into())
     }
 }
 

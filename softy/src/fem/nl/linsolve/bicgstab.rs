@@ -10,14 +10,14 @@ trait Axpy<T: Real, R> {
     }
 }
 
-impl<'a, T: Real> Axpy<T, na::DVectorSlice<'a, T>> for na::DVector<T> {
-    fn axpy(&mut self, x: &na::DVectorSlice<'a, T>, a: T) {
+impl<'a, T: Real> Axpy<T, na::DVectorView<'a, T>> for na::DVector<T> {
+    fn axpy(&mut self, x: &na::DVectorView<'a, T>, a: T) {
         self.axpy(a, x, T::one());
     }
 }
 
-impl<'a, T: Real> Axpy<T, na::DVectorSlice<'a, T>> for na::DVectorSliceMut<'_, T> {
-    fn axpy(&mut self, x: &na::DVectorSlice<'a, T>, a: T) {
+impl<'a, T: Real> Axpy<T, na::DVectorView<'a, T>> for na::DVectorViewMut<'_, T> {
+    fn axpy(&mut self, x: &na::DVectorView<'a, T>, a: T) {
         self.axpy(a, x, T::one());
     }
 }
@@ -127,8 +127,8 @@ where
         rhs.as_mut_slice().copy_from_slice(b);
         let b_norm_sq = rhs.norm_squared().to_f64().unwrap();
 
-        let mut x: na::DVectorSliceMut<T> = x.into();
-        let mut r: na::DVectorSliceMut<T> = b.into();
+        let mut x: na::DVectorViewMut<T> = x.into();
+        let mut r: na::DVectorViewMut<T> = b.into();
 
         // Return if b is zero --- the solution is trivial.
         if b_norm_sq == 0.0 {
@@ -206,9 +206,9 @@ where
             };
 
         // Reset r0s if needed.
-        let reset_r0s = |x: &na::DVectorSliceMut<T>,
+        let reset_r0s = |x: &na::DVectorViewMut<T>,
                          r_norm_sq: f64,
-                         r: &mut na::DVectorSliceMut<T>,
+                         r: &mut na::DVectorViewMut<T>,
                          r0s_norm_sq: &mut f64,
                          r0s: &mut na::DVector<T>,
                          rho_new: &mut T,
@@ -284,7 +284,7 @@ where
             }
 
             // z = K^{-1} s (reusing r for s)
-            let zn: na::DVectorSlice<T> = precond_solve(r.as_slice(), z.as_mut_slice()).into();
+            let zn: na::DVectorView<T> = precond_solve(r.as_slice(), z.as_mut_slice()).into();
 
             // Compute new t = Az
             if !matvec(zn.as_slice(), t.as_mut_slice()) {

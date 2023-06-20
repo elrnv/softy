@@ -5,23 +5,15 @@ use tensr::{Matrix2, Matrix2x3, Matrix3, Vector3};
 //mod tet_inv_nh;
 mod tet_nh;
 mod tet_snh;
-#[cfg(feature = "optsolver")]
-mod tetmesh_nh;
 mod tetsolid_nh;
 mod tri_nh;
-#[cfg(feature = "optsolver")]
-mod trimesh_nh;
 mod trishell_nh;
 
 pub use tet_nh::*;
 pub use tet_snh::*;
 //pub use tet_inv_nh::*;
-#[cfg(feature = "optsolver")]
-pub use tetmesh_nh::*;
 pub use tetsolid_nh::*;
 pub use tri_nh::*;
-#[cfg(feature = "optsolver")]
-pub use trimesh_nh::*;
 pub use trishell_nh::*;
 
 /// Element energy interface.

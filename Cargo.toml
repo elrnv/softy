@@ -1,7 +1,6 @@
 [workspace]
 
 members = [
-    "geo",
     "utils",
     "softy",
     "softy-eval",
@@ -18,8 +17,12 @@ debug = true # Change this to true to enable debug symbols in release mode
 rpath = false
 
 [patch.crates-io]
-meshx = { version = "0.5", git = "https://github.com/elrnv/meshx.git" }
-vtkio = { git = "https://github.com/elrnv/vtkio.git", branch = "no-lzma" }
+# vtkio = { git = "https://github.com/elrnv/vtkio.git", branch = "no-lzma" }
+# Ensure that downstream dependencies on meshx are the same as what we use for compatibility.
+meshx = { version = "0.6", git = "https://github.com/elrnv/meshx.git", branch = "vtkio-0.7" }
 
 #[patch.'https://github.com/Andlon/mkl-sys']
 #mkl-sys = { git = "https://github.com/elrnv/mkl-sys.git" }
+
+[workspace.dependencies]
+geo = { package = "meshx", version = "0.6", git = "https://github.com/elrnv/meshx.git", branch = "vtkio-0.7", features = ["io", "serde_all"] }

@@ -2,8 +2,6 @@ use tensr::{IntoData, Vector3};
 
 use crate::attrib_defines::*;
 use crate::fem::nl::{state::VertexType, SimParams as NLParams};
-#[cfg(feature = "optsolver")]
-use crate::fem::opt::{MuStrategy, SimParams as OptParams};
 use crate::objects::*;
 use crate::{PolyMesh, TetMesh, TriMesh};
 use geo::attrib::*;
@@ -12,23 +10,6 @@ use geo::mesh::topology::{CellIndex, FaceIndex, NumCells, NumFaces, VertexIndex}
 use geo::mesh::VertexPositions;
 use geo::ops::*;
 use geo::topology::{CellVertex, CellVertexIndex};
-
-#[cfg(feature = "optsolver")]
-pub const STATIC_OPT_PARAMS: OptParams = OptParams {
-    gravity: [0.0f32, -9.81, 0.0],
-    time_step: None,
-    clear_velocity: false,
-    tolerance: 1e-10,
-    max_iterations: 300,
-    max_outer_iterations: 1,
-    friction_iterations: 0,
-    outer_tolerance: 0.001,
-    print_level: 0,
-    derivative_test: 0,
-    mu_strategy: MuStrategy::Adaptive,
-    max_gradient_scaling: 5e-6,
-    log_file: None,
-};
 
 /// Returns the total number of configurations availble.
 pub fn num_static_configs() -> u32 {
@@ -86,20 +67,6 @@ pub fn vertex_types_from_fixed(fixed: &[FixedIntType]) -> Vec<VertexType> {
         })
         .collect()
 }
-
-//pub(crate) const QUASI_STATIC_PARAMS: OptParams = OptParams {
-//    gravity: [0.0f32, 0.0, 0.0],
-//    time_step: Some(0.01),
-//    clear_velocity: true,
-//    ..STATIC_PARAMS
-//};
-
-#[cfg(feature = "optsolver")]
-pub const DYNAMIC_OPT_PARAMS: OptParams = OptParams {
-    gravity: [0.0f32, 0.0, 0.0],
-    time_step: Some(0.01),
-    ..STATIC_OPT_PARAMS
-};
 
 // Note: The key to getting reliable simulations here is to keep bulk_modulus, shear_modulus
 // (mu) and density in the same range of magnitude. Higher stiffnesses compared to density will

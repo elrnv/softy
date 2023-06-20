@@ -1,16 +1,9 @@
 pub mod nl;
-#[cfg(feature = "optsolver")]
-pub mod opt;
-#[cfg(feature = "optsolver")]
-pub mod state;
 
 use geo::prim::{Tetrahedron, Triangle};
 use tensr::Vector3;
 
 use crate::Real;
-
-// pub use self::nl::problem::*;
-// pub use self::nl::solver::*;
 
 /// Get reference tetrahedron.
 ///

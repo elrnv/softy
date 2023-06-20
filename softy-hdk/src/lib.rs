@@ -56,7 +56,6 @@ mod ffi {
 
     #[derive(Debug)]
     pub enum SolverType {
-        Ipopt,
         Newton,
         NewtonBacktracking,
         NewtonAssistedBacktracking,

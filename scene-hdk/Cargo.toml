@@ -9,13 +9,13 @@ name = "scenehdk"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-geo = { path = "../geo" }
+geo = { workspace = true }
 utils = { path = "../utils" }
 softy = { path = "../softy" }
 libc = "*"
 hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }
 log = "0.4"
-env_logger = "0.9"
+env_logger = "0.10"
 cxx = "1.0"
 thiserror = "1.0.16"
 

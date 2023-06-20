@@ -7,8 +7,6 @@ use geo::{attrib::*, topology::*, VertexPositions};
 use hdkrs::interop::CookResult;
 use softy::nl_fem::LinearSolver;
 use softy::{self, fem, Mesh, PointCloud, Pos64Type, POSITION64_ATTRIB};
-#[cfg(feature = "optsolver")]
-use softy::{PolyMesh, TetMesh, TetMeshExt};
 
 use crate::{ElasticityModel, MaterialProperties, SimParams};
 
@@ -53,18 +51,12 @@ pub(crate) enum Error {
     RegistryFull,
     #[error("Missing solver and mesh")]
     MissingSolverAndMesh,
-    #[error("Object type ({object_type:?}) does not match material {material_id}")]
-    #[cfg(feature = "optsolver")]
-    MaterialObjectMismatch {
-        material_id: u32,
-        object_type: ObjectType,
-    },
     #[error("Failed to create solver: {0}")]
     SolverCreate(#[from] softy::Error),
     #[error("Missing required mesh attribute: {0}")]
     RequiredMeshAttribute(#[from] geo::attrib::Error),
-    #[error("Specified solver is unsupported")]
-    UnsupportedSolver,
+    // #[error("Specified solver is unsupported")]
+    // UnsupportedSolver,
 }
 
 pub(crate) fn get_solver(
@@ -215,58 +207,6 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
     }
 }
 
-#[cfg(feature = "optsolver")]
-impl<'a> Into<fem::opt::SimParams> for &'a SimParams {
-    fn into(self) -> fem::opt::SimParams {
-        let SimParams {
-            time_step,
-            gravity,
-            ref log_file,
-
-            friction_iterations,
-
-            velocity_clear_frequency,
-            tolerance,
-            max_iterations,
-            outer_tolerance,
-            max_outer_iterations,
-
-            print_level,
-            derivative_test,
-            mu_strategy,
-            max_gradient_scaling,
-            ..
-        } = *self;
-        fem::opt::SimParams {
-            time_step: if time_step > 0.0 {
-                Some(time_step)
-            } else {
-                None
-            },
-            gravity: [0.0, -gravity, 0.0],
-            clear_velocity: velocity_clear_frequency * time_step > 1.0,
-            tolerance,
-            max_iterations,
-            outer_tolerance,
-            max_outer_iterations,
-            friction_iterations,
-            print_level,
-            derivative_test,
-            mu_strategy: match mu_strategy {
-                MuStrategy::Monotone => fem::opt::MuStrategy::Monotone,
-                MuStrategy::Adaptive => fem::opt::MuStrategy::Adaptive,
-                i => panic!("Unrecognized mu strategy: {:?}", i),
-            },
-            max_gradient_scaling,
-            log_file: if log_file.is_empty() {
-                None
-            } else {
-                Some(std::path::PathBuf::from(log_file))
-            },
-        }
-    }
-}
-
 /// Build a material from the given parameters and set it to the specified id.
 fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
     let SimParams {
@@ -333,99 +273,8 @@ fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
     material_library
 }
 
-/// Build a material from the given parameters and set it to the specified id.
-#[cfg(feature = "optsolver")]
-fn get_solid_material(params: &SimParams, material_id: u32) -> Result<softy::SolidMaterial, Error> {
-    let SimParams {
-        ref materials,
-        volume_constraint,
-        time_step,
-        ..
-    } = *params;
-
-    // Material 0 is reserved for default
-    if material_id <= 0 {
-        return Ok(softy::SolidMaterial::new(0));
-    }
-
-    match materials.as_slice().get((material_id - 1) as usize) {
-        Some(&MaterialProperties {
-            object_type,
-            elasticity_model,
-            bulk_modulus,
-            shear_modulus,
-            density,
-            damping,
-            .. // bending stiffness is ignored
-        }) => {
-            if object_type != ObjectType::Solid {
-                return Err(Error::MaterialObjectMismatch {
-                    material_id: material_id as u32,
-                    object_type,
-                });
-            }
-            Ok(softy::SolidMaterial::new(material_id as usize)
-                .with_elasticity(softy::ElasticityParameters::from_bulk_shear_with_model(
-                    bulk_modulus,
-                    shear_modulus,
-                    elasticity_model.into(),
-                ))
-                .with_volume_preservation(volume_constraint)
-                .with_density(density)
-                .with_damping(damping, time_step))
-        }
-        None => Ok(softy::SolidMaterial::new(material_id as usize)),
-    }
-}
-
-/// Build a shell material from the given parameters and set it to the specified id.
-#[cfg(feature = "optsolver")]
-fn get_shell_material(params: &SimParams, material_id: u32) -> Result<softy::ShellMaterial, Error> {
-    let SimParams {
-        ref materials,
-        time_step,
-        ..
-    } = *params;
-
-    // Material 0 is reserved for default
-    if material_id <= 0 {
-        return Ok(softy::ShellMaterial::new(0));
-    }
-
-    match materials.as_slice().get((material_id - 1) as usize) {
-        Some(&MaterialProperties {
-            object_type,
-            bending_stiffness,
-            bulk_modulus,
-            shear_modulus,
-            density,
-            damping,
-            ..
-        }) => match object_type {
-            ObjectType::Shell => Ok(softy::ShellMaterial::new(material_id as usize)
-                .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
-                    bulk_modulus,
-                    shear_modulus,
-                ))
-                .with_bending_stiffness(bending_stiffness)
-                .with_density(density)
-                .with_damping(damping, time_step)),
-            ObjectType::Rigid => {
-                Ok(softy::ShellMaterial::new(material_id as usize).with_density(density))
-            }
-            _ => Err(Error::MaterialObjectMismatch {
-                material_id: material_id as u32,
-                object_type,
-            }),
-        },
-        None => Ok(softy::ShellMaterial::new(material_id as usize)),
-    }
-}
-
 #[derive(Copy, Clone, PartialEq)]
 enum GenericFrictionalContactParams {
-    #[cfg(feature = "optsolver")]
-    Ipopt(softy::FrictionalContactParams),
     NL(softy::constraints::penalty_point_contact::FrictionalContactParams),
 }
 
@@ -493,78 +342,6 @@ fn get_frictional_contacts<'a>(
         })
         .collect()
 }
-
-#[cfg(feature = "optsolver")]
-fn get_frictional_contacts_ipopt<'a>(
-    params: &'a SimParams,
-) -> Vec<(GenericFrictionalContactParams, (usize, &'a [u32]))> {
-    params
-        .frictional_contacts
-        .as_slice()
-        .iter()
-        .map(|frictional_contact| {
-            let FrictionalContactParams {
-                object_material_id,
-                ref collider_material_ids,
-                kernel,
-                contact_type,
-                radius_multiplier,
-                smoothness_tolerance,
-                contact_offset,
-                use_fixed,
-                smoothing_weight,
-                friction_forwarding,
-                dynamic_cof,
-                friction_tolerance,
-                friction_inner_iterations,
-                ..
-            } = *frictional_contact;
-            let radius_multiplier = f64::from(radius_multiplier);
-            let tolerance = f64::from(smoothness_tolerance);
-            (
-                GenericFrictionalContactParams::Ipopt(softy::FrictionalContactParams {
-                    kernel: match kernel {
-                        Kernel::Smooth => softy::KernelType::Smooth {
-                            tolerance,
-                            radius_multiplier,
-                        },
-                        Kernel::Approximate => softy::KernelType::Approximate {
-                            tolerance,
-                            radius_multiplier,
-                        },
-                        Kernel::Cubic => softy::KernelType::Cubic { radius_multiplier },
-                        Kernel::Global => softy::KernelType::Global { tolerance },
-                        i => panic!("Unrecognized kernel: {:?}", i),
-                    },
-                    contact_type: match contact_type {
-                        ContactType::LinearizedPoint => softy::ContactType::LinearizedPoint,
-                        ContactType::Point => softy::ContactType::Point,
-                        i => panic!("Unrecognized contact type: {:?}", i),
-                    },
-                    contact_offset: f64::from(contact_offset),
-                    use_fixed,
-                    friction_params: if dynamic_cof == 0.0 || friction_inner_iterations == 0 {
-                        None
-                    } else {
-                        Some(softy::FrictionParams {
-                            smoothing_weight: f64::from(smoothing_weight),
-                            friction_forwarding: f64::from(friction_forwarding),
-                            dynamic_friction: f64::from(dynamic_cof),
-                            inner_iterations: friction_inner_iterations as usize,
-                            tolerance: f64::from(friction_tolerance),
-                            print_level: 0,
-                        })
-                    },
-                }),
-                (
-                    object_material_id as usize,
-                    collider_material_ids.as_slice(),
-                ),
-            )
-        })
-        .collect()
-}
-
 trait SolverBuilder {
     fn set_mesh(&mut self, mesh: Mesh, params: &SimParams) -> Result<(), Error>;
     fn set_volume_zone_coefficients(
@@ -579,82 +356,6 @@ trait SolverBuilder {
         indices: (usize, usize),
     );
     fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error>;
-}
-#[cfg(feature = "optsolver")]
-impl SolverBuilder for fem::opt::SolverBuilder {
-    fn set_mesh(&mut self, mesh: Mesh, params: &SimParams) -> Result<(), Error> {
-        use geo::algo::{split::TypedMesh, SplitIntoConnectedComponents};
-        let meshes = mesh.split_into_typed_meshes();
-        for mesh in meshes.into_iter() {
-            match mesh {
-                TypedMesh::Tet(mut tetmesh) => {
-                    softy::init_mesh_source_index_attribute(&mut tetmesh)?;
-                    for mesh in TetMeshExt::from(tetmesh).split_into_connected_components() {
-                        let material_id = mesh
-                            .attrib_as_slice::<i32, CellIndex>("mtl_id")
-                            .map(|slice| {
-                                utils::mode_u32(slice.iter().map(|&x| {
-                                    if x < 0 {
-                                        0u32
-                                    } else {
-                                        x as u32
-                                    }
-                                }))
-                                .0
-                            })
-                            .unwrap_or(0);
-                        let solid_material = get_solid_material(params, material_id)?;
-                        fem::opt::SolverBuilder::add_solid(
-                            self,
-                            TetMesh::from(mesh),
-                            solid_material,
-                        );
-                    }
-                }
-                TypedMesh::Tri(mut trimesh) => {
-                    let mut mesh = PolyMesh::from(trimesh);
-                    softy::init_mesh_source_index_attribute(&mut mesh)?;
-                    for mesh in mesh.reversed().split_into_connected_components() {
-                        let material_id = mesh
-                            .attrib_as_slice::<i32, FaceIndex>("mtl_id")
-                            .map(|slice| {
-                                utils::mode_u32(slice.iter().map(|&x| {
-                                    if x < 0 {
-                                        0u32
-                                    } else {
-                                        x as u32
-                                    }
-                                }))
-                                .0
-                            })
-                            .unwrap_or(0);
-                        let shell_material = get_shell_material(params, material_id)?;
-                        fem::opt::SolverBuilder::add_shell(self, mesh, shell_material);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-    fn set_volume_zone_coefficients(
-        &mut self,
-        zone_pressurizations: Vec<f32>,
-        compression_coefficients: Vec<f32>,
-        hessian_approximation: Vec<bool>,
-    ) {
-    }
-    fn add_frictional_contact(
-        &mut self,
-        fc: GenericFrictionalContactParams,
-        indices: (usize, usize),
-    ) {
-        if let GenericFrictionalContactParams::Ipopt(fc) = fc {
-            fem::opt::SolverBuilder::add_frictional_contact(self, fc, indices);
-        }
-    }
-    fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error> {
-        Ok(Arc::new(Mutex::new(fem::opt::SolverBuilder::build(self)?)))
-    }
 }
 
 impl SolverBuilder for fem::nl::SolverBuilder {
@@ -682,17 +383,8 @@ impl SolverBuilder for fem::nl::SolverBuilder {
         fc: GenericFrictionalContactParams,
         indices: (usize, usize),
     ) {
-        #[cfg(feature = "optsolver")]
-        {
-            if let GenericFrictionalContactParams::NL(fc) = fc {
-                fem::nl::SolverBuilder::add_frictional_contact(self, fc, indices);
-            }
-        }
-        #[cfg(not(feature = "optsolver"))]
-        {
-            let GenericFrictionalContactParams::NL(fc) = fc;
-            fem::nl::SolverBuilder::add_frictional_contact(self, fc, indices);
-        }
+        let GenericFrictionalContactParams::NL(fc) = fc;
+        fem::nl::SolverBuilder::add_frictional_contact(self, fc, indices);
     }
     fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error> {
         Ok(Arc::new(Mutex::new(fem::nl::SolverBuilder::build(self)?)))
@@ -711,17 +403,10 @@ pub(crate) fn register_new_solver(
     }
 
     // Build a basic solver with a solid material.
-    let mut solver_builder: Box<dyn SolverBuilder> = match params.solver_type {
-        #[cfg(feature = "optsolver")]
-        SolverType::Ipopt => Box::new(fem::opt::SolverBuilder::new((&params).into())),
-        #[cfg(not(feature = "optsolver"))]
-        SolverType::Ipopt => return Err(Error::UnsupportedSolver),
-        // All other solvers are custom nonlinear system solvers.
-        _ => {
-            let mut builder = Box::new(fem::nl::SolverBuilder::new((&params).into()));
-            builder.set_materials(build_material_library(&params));
-            builder
-        }
+    let mut solver_builder: Box<dyn SolverBuilder> = {
+        let mut builder = Box::new(fem::nl::SolverBuilder::new((&params).into()));
+        builder.set_materials(build_material_library(&params));
+        builder
     };
 
     if let Some(mut mesh) = mesh {
@@ -744,11 +429,7 @@ pub(crate) fn register_new_solver(
         solver_builder.set_mesh(mesh, &params)?;
     }
 
-    let frictional_contact_params = match params.solver_type {
-        #[cfg(feature = "optsolver")]
-        SolverType::Ipopt => get_frictional_contacts_ipopt(&params),
-        _ => get_frictional_contacts(&params),
-    };
+    let frictional_contact_params = get_frictional_contacts(&params);
 
     for (frictional_contact, indices) in frictional_contact_params.into_iter() {
         for &collider_index in indices.1.iter() {

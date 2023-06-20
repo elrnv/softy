@@ -8,7 +8,6 @@ use tensr::*;
 
 use super::newton::{Newton, NewtonParams};
 use super::problem::{ContactViolation, MixedComplementarityProblem, NonLinearProblem};
-use super::trust_region::{TrustRegion, TrustRegionParams};
 use super::NLSolver;
 use super::{Callback, SolveResult};
 use crate::Real;
@@ -20,9 +19,9 @@ pub struct MCPSolver<S> {
 
 /// A wrapper around an MCP that makes it look like a regular NonLinearProblem to the Newton solver.
 pub struct MCP<P> {
-    problem: P,
-    bounds: RefCell<(Vec<f64>, Vec<f64>)>,
-    workspace_seen: RefCell<Vec<bool>>,
+    pub(crate) problem: P,
+    pub(crate) bounds: RefCell<(Vec<f64>, Vec<f64>)>,
+    pub(crate) workspace_seen: RefCell<Vec<bool>>,
 }
 
 impl<T, P> NonLinearProblem<T> for MCP<P>
@@ -91,24 +90,6 @@ where
     fn objective(&self, x: &[T]) -> T {
         self.problem.objective(x)
     }
-    #[inline]
-    fn assist_line_search_for_contact(&self, alpha: T, x: &[T], r_cur: &[T], r_next: &[T]) -> T {
-        self.problem
-            .assist_line_search_for_contact(alpha, x, r_cur, r_next)
-    }
-    #[inline]
-    fn assist_line_search_for_friction(
-        &self,
-        alpha: T,
-        x: &[T],
-        p: &[T],
-        r_cur: &[T],
-        r_next: &[T],
-    ) -> T {
-        self.problem
-            .assist_line_search_for_friction(alpha, x, p, r_cur, r_next)
-    }
-
     #[inline]
     fn converged(
         &self,
@@ -300,35 +281,5 @@ where
         let newton = Newton::new(mcp, params, outer_callback, inner_callback);
 
         MCPSolver { solver: newton }
-    }
-}
-impl<T, P> MCPSolver<TrustRegion<MCP<P>, T>>
-where
-    T: Real + na::RealField,
-    P: MixedComplementarityProblem<T>,
-{
-    pub fn trust_region(
-        problem: P,
-        params: TrustRegionParams,
-        outer_callback: Callback<T>,
-        inner_callback: Callback<T>,
-    ) -> Self {
-        let n = problem.num_variables();
-        // Create bounds.
-        let (l, u) = problem.initial_bounds();
-        assert_eq!(l.len(), n);
-        assert_eq!(u.len(), n);
-
-        let mcp = MCP {
-            problem,
-            bounds: RefCell::new((l, u)),
-            workspace_seen: RefCell::new(vec![false; n]),
-        };
-
-        let trust_region = TrustRegion::new(mcp, params, outer_callback, inner_callback);
-
-        MCPSolver {
-            solver: trust_region,
-        }
     }
 }

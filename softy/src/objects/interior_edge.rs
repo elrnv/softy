@@ -673,105 +673,8 @@ pub(crate) fn compute_interior_edge_topology_from_mesh(
     Ok(interior_edges)
 }
 
-/// Compute a set of interior edges of a given triangle mesh.
-///
-/// Interior edges are edges which have exactly two adjacent faces.
-#[unroll_for_loops]
-#[cfg(feature = "optsolver")]
-pub(crate) fn compute_interior_edge_topology(trimesh: &crate::TriMesh) -> Vec<InteriorEdge> {
-    // TODO: Move this algorithm to gut.
-    // An edge is actually defined by a pair of vertices.
-    // We iterate through all the faces and register each half edge (sorted by vertex index)
-    // into a hashmap along with the originating face index.
-    #[cfg(test)]
-    let mut edges = {
-        // We want our tests to be deterministic, so we opt for hardcoding the seeds here.
-        let hash_builder = ahash::RandomState::with_seeds(7, 47, 271, 101);
-        HashMap::with_capacity_and_hasher(trimesh.num_faces(), hash_builder)
-    };
-    #[cfg(not(test))]
-    let mut edges = HashMap::with_capacity(trimesh.num_faces());
-
-    let add_face_edges = |(face_idx, face): (usize, &[usize; 3])| {
-        for i in 0..3 {
-            let [v0, v1] = [face[i], face[(i + 1) % 3]];
-
-            let key = if v0 < v1 { [v0, v1] } else { [v1, v0] }; // Sort edge
-            edges
-                .entry(key)
-                .and_modify(|e: &mut EdgeData| {
-                    match &mut e.topo {
-                        EdgeTopo::Boundary(i) => e.topo = EdgeTopo::Manifold([*i, face_idx]),
-                        EdgeTopo::Manifold([a, b]) => {
-                            e.topo = EdgeTopo::NonManifold(vec![*a, *b, face_idx])
-                        }
-                        EdgeTopo::NonManifold(v) => {
-                            v.push(face_idx);
-                        }
-                    };
-                })
-                .or_insert(EdgeData::new([v0, v1], face_idx));
-        }
-    };
-
-    trimesh.face_iter().enumerate().for_each(add_face_edges);
-
-    let mut interior_edges = Vec::with_capacity(trimesh.num_faces()); // Estimate capacity
-
-    // Given a pair of verts marking an edge, find which of v0, v1 and v2 corresponds to
-    // one of the verts such that the next face vertex is also an edge vertex.
-    let find_triangle_edge_start = |verts: [usize; 2], &[v0, v1, v2]: &[usize; 3]| {
-        if v0 == verts[0] {
-            if v1 == verts[1] {
-                Some(0)
-            } else if v2 == verts[1] {
-                Some(2)
-            } else {
-                None
-            }
-        } else if v1 == verts[0] {
-            if v2 == verts[1] {
-                Some(1)
-            } else if v0 == verts[1] {
-                Some(0)
-            } else {
-                None
-            }
-        } else if v2 == verts[0] {
-            if v0 == verts[1] {
-                Some(2)
-            } else if v1 == verts[1] {
-                Some(1)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-        .unwrap_or_else(|| unreachable!("Corrupt edge adjacency detected"))
-    };
-
-    for edge in edges.values() {
-        // We only consider manifold edges with strictly two adjacent faces.
-        // Boundary edges are ignored as are non-manifold edges.
-        if let Some((verts, faces)) = edge.to_manifold_edge() {
-            // Determine the source vertex for this edge in faces[0].
-            let edge_start = [
-                find_triangle_edge_start(verts, trimesh.face(faces[0])),
-                find_triangle_edge_start(verts, trimesh.face(faces[1])),
-            ];
-
-            interior_edges.push(InteriorEdge::new(faces, edge_start));
-        }
-    }
-
-    interior_edges
-}
-
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "optsolver")]
-    use ahash::AHashSet as HashSet;
     use approx::*;
     use autodiff::F1;
 
@@ -1038,9 +941,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "optsolver")]
     fn compute_interior_edge_topology_small_test() {
         use crate::TriMesh;
+        use std::collections::HashSet;
+
         // Make a test mesh.
 
         let pos = vec![
@@ -1067,12 +971,15 @@ mod tests {
         ];
 
         let trimesh = TriMesh::new(pos, verts);
+        let vertex_type = vec![VertexType::Free; trimesh.num_vertices()];
 
-        let interior_edges: HashSet<_> = compute_interior_edge_topology(&trimesh)
-            .into_iter()
-            .collect();
+        let interior_edges: HashSet<InteriorEdge> =
+            compute_interior_edge_topology_from_mesh(&Mesh::from(trimesh), &vertex_type)
+                .unwrap()
+                .into_iter()
+                .collect();
 
-        let expected_interior_edges: HashSet<_> = vec![
+        let expected_interior_edges: HashSet<InteriorEdge> = vec![
             InteriorEdge {
                 faces: [1, 4],
                 edge_start: [1, 0],
@@ -1113,9 +1020,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "optsolver")]
     fn compute_interior_edge_topology_large_test() {
         use crate::TriMesh;
+        use std::collections::HashSet;
+
         // Make a test mesh.
 
         let pos = vec![
@@ -1159,12 +1067,15 @@ mod tests {
         ];
 
         let trimesh = TriMesh::new(pos, verts);
+        let vertex_type = vec![VertexType::Free; trimesh.num_vertices()];
 
-        let interior_edges: HashSet<_> = compute_interior_edge_topology(&trimesh)
-            .into_iter()
-            .collect();
+        let interior_edges: HashSet<InteriorEdge> =
+            compute_interior_edge_topology_from_mesh(&Mesh::from(trimesh), &vertex_type)
+                .unwrap()
+                .into_iter()
+                .collect();
 
-        let expected_interior_edges: HashSet<_> = vec![
+        let expected_interior_edges: HashSet<InteriorEdge> = vec![
             InteriorEdge {
                 faces: [3, 5],
                 edge_start: [0, 2],

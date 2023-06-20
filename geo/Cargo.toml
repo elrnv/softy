@@ -1,8 +1,0 @@
-[package]
-name = "geo"
-version = "0.1.0"
-authors = ["Egor Larionov <egor.larionov@gmail.com>"]
-edition = "2018"
-
-[dependencies]
-meshx = { version = "0.5", git = "https://github.com/elrnv/meshx.git", features = ["io", "serde_all"] }

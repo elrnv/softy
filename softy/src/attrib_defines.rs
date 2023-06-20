@@ -28,29 +28,6 @@ pub(crate) const ORIGINAL_VERTEX_INDEX_ATTRIB: &str = "__softy_internal_orig_ver
 pub const RESIDUAL_ATTRIB: &str = "residual";
 pub(crate) const POTENTIAL_ATTRIB: &str = "potential";
 
-#[cfg(feature = "optsolver")]
-mod optsolver_defines {
-    use tensr::{Matrix2, Matrix3};
-    pub(crate) const REFERENCE_VOLUME_ATTRIB: &str = "ref_volume";
-    pub(crate) const REFERENCE_AREA_ATTRIB: &str = "ref_area";
-    pub(crate) const REFERENCE_SHAPE_MATRIX_INV_ATTRIB: &str = "ref_shape_mtx_inv";
-    pub(crate) const PRESSURE_ATTRIB: &str = "pressure";
-
-    pub(crate) const TETMESH_VERTEX_INDEX_ATTRIB: &str = "_i";
-
-    pub(crate) type RigidRefPosType = [f64; 3];
-    pub(crate) type RefVolType = f64;
-    pub(crate) type RefAreaType = f64;
-    pub(crate) type RefTetShapeMtxInvType = Matrix3<f64>;
-    pub(crate) type RefTriShapeMtxInvType = Matrix2<f64>;
-    pub(crate) type PressureType = f64;
-
-    pub(crate) type TetMeshVertexIndexType = usize;
-}
-
-#[cfg(feature = "optsolver")]
-use optsolver_defines::*;
-
 pub(crate) type StrainEnergyType = f64;
 pub type SourceIndexType = usize;
 pub type StateIndexType = i32;

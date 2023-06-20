@@ -12,8 +12,6 @@ const NUM_HESSIAN_DIAGONAL_TRIPLETS: usize = 6;
 
 pub(crate) struct RigidShellInertia {
     pub mass: f64,
-    #[cfg(feature = "optsolver")]
-    pub cm: Vector3<f64>,
     pub inertia: Matrix3<f64>,
 }
 
@@ -173,53 +171,5 @@ impl<T: Real> EnergyHessian<T> for RigidShellInertia {
                     .iter(),
             )
             .for_each(|(out, &input)| *out += input);
-    }
-}
-
-#[cfg(test)]
-#[cfg(feature = "optsolver")]
-mod tests {
-    use crate::objects::shell::*;
-
-    use super::*;
-    use crate::energy_models::{inertia::*, test_utils::*, Either};
-    use crate::objects::*;
-
-    fn rigid_shell_material() -> RigidMaterial {
-        RigidMaterial::new(0, 1000.0)
-    }
-
-    fn test_shells() -> Vec<TriMeshShell> {
-        test_rigid_trimeshes()
-            .into_iter()
-            .map(|trimesh| {
-                // Prepare attributes relevant for elasticity computations.
-                let mut shell = TriMeshShell::rigid(trimesh, rigid_shell_material());
-                shell.init_density_attribute().unwrap();
-                shell
-            })
-            .collect()
-    }
-
-    fn build_energies(shells: &[TriMeshShell]) -> Vec<(RigidShellInertia, &[[f64; 3]])> {
-        shells
-            .iter()
-            .map(|shell| match shell.inertia().unwrap() {
-                Either::Left(_) => unreachable!(),
-                Either::Right(inertia) => (inertia, &[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]][..]),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn gradient() {
-        let shells = test_shells();
-        gradient_tester(build_energies(&shells), EnergyType::Velocity);
-    }
-
-    #[test]
-    fn hessian() {
-        let shells = test_shells();
-        hessian_tester(build_energies(&shells), EnergyType::Velocity);
     }
 }

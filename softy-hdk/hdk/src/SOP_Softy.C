@@ -95,7 +95,6 @@ parm {
     type ordinal
     default { "0" }
     menu {
-        "ipopt" "IPOPT (Optimization)"
         "newton" "Newton"
         "newtonbt" "Newton with Backtracking"
         "newtonassistbt" "Newton with Assisted Backtracking"
@@ -113,7 +112,7 @@ parm {
     type float
     default { "0.9" }
     range { 0 1 }
-    hidewhen "{ solvertype == ipopt } { solvertype == newton } { solvertype == trustregion }"
+    hidewhen "{ solvertype == newton } { solvertype == trustregion }"
 }
 
 group {
@@ -284,7 +283,6 @@ group {
         label "Enable Volume Constraint"
         type toggle
         default { "off" }
-        hidewhen "{ solvertype != ipopt }"
     }
 
     parm {
@@ -444,7 +442,6 @@ group {
             "incompletejacobi" "Incomplete Jacobi"
             "approximatejacobi" "Approximate Jacobi"
         }
-        hidewhen "{ solvertype == ipopt }"
     }
 
     parm {
@@ -461,7 +458,6 @@ group {
             "trbdf2u" "TR-BDF2-Uneven"
             "sdirk2" "SDIRK2"
         }
-        hidewhen "{ solvertype == ipopt }"
     }
     parm {
         name "velocityclearfrequency"
@@ -488,16 +484,6 @@ group {
         default { "0" }
         range { 0 1000 }
     }
-
-    parm {
-        name "outertolerance"
-        cppname "OuterTolerance"
-        label "Outer Error Tolerance"
-        type log
-        default { "1e-5" }
-        range { 0.0 1.0 }
-        hidewhen "{ solvertype != ipopt }"
-    }
     parm {
         name    "residualcriterion"
         cppname "ResidualCriterion"
@@ -506,7 +492,6 @@ group {
         type    toggle
         joinnext
         default { "on" }
-        hidewhen "{ solvertype == ipopt }"
     }
     parm {
         name    "residualtolerance"
@@ -515,7 +500,6 @@ group {
         type log
         default { "1e-5" }
         range { 0.0 1.0 }
-        hidewhen "{ solvertype == ipopt }"
         disablewhen "{ residualcriterion == 0 }"
     }
     parm {
@@ -526,7 +510,6 @@ group {
         type    toggle
         joinnext
         default { "off" }
-        hidewhen "{ solvertype == ipopt }"
     }
     parm {
         name    "accelerationtolerance"
@@ -535,7 +518,6 @@ group {
         type log
         default { "1e-5" }
         range { 0.0 1.0 }
-        hidewhen "{ solvertype == ipopt }"
         disablewhen "{ accelerationcriterion == 0 }"
     }
     parm {
@@ -546,7 +528,6 @@ group {
         type    toggle
         joinnext
         default { "on" }
-        hidewhen "{ solvertype == ipopt }"
     }
     parm {
         name "velocitytolerance"
@@ -555,7 +536,6 @@ group {
         type log
         default { "1e-5" }
         range { 0.0 1.0 }
-        hidewhen "{ solvertype == ipopt }"
         disablewhen "{ velocitycriterion == 0 }"
     }
 
@@ -584,7 +564,6 @@ group {
         type log
         default { "1e-5" }
         range { 0.0 1.0 }
-        hidewhen "{ solvertype == ipopt }"
     }
 
     parm {
@@ -594,7 +573,6 @@ group {
         type log
         default { "1e-5" }
         range { 0.0 1.0 }
-        hidewhen "{ solvertype == ipopt }"
     }
     parm {
         name "contactiterations"
@@ -603,7 +581,6 @@ group {
         type integer
         default { "5" }
         range { 0 50 }
-        hidewhen "{ solvertype == ipopt }"
     }
     parm {
         name "frictionprofile"
@@ -629,44 +606,6 @@ group {
         label "Project Element Hessians"
         type toggle
         default { "off" }
-    }
-
-    groupcollapsible {
-        name    "ipoptoptions"
-        label   "Ipopt Options"
-        grouptag { "group_type" "collapsible" }
-        disablewhen "{ solvertype != ipopt }"
-        hidewhen "{ solvertype != ipopt }"
-
-        parm {
-            name "mustrategy"
-            cppname "MuStrategy"
-            label "Mu Strategy"
-            type ordinal
-            default { "1" }
-            menu {
-                "monotone" "Monotone"
-                "adaptive" "Adaptive"
-            }
-        }
-
-        parm {
-            name "maxgradientscaling"
-            cppname "MaxGradientScaling"
-            label "Max Gradient Scaling"
-            type log
-            default { "1.0" }
-            range { 0.0 100.0 }
-        }
-
-        parm {
-            name "printlevel"
-            cppname "PrintLevel"
-            label "Print Level"
-            type integer
-            default { "0" }
-            range { 0! 12! }
-        }
     }
 }
 
@@ -843,9 +782,6 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
     case SOP_SoftyEnums::SolverType::TRUSTREGION:
         sim_params.solver_type = softy::SolverType::TrustRegion;
         break;
-    case SOP_SoftyEnums::SolverType::IPOPT:
-        sim_params.solver_type = softy::SolverType::Ipopt;
-        break;
     }
     switch (static_cast<SOP_SoftyEnums::TimeIntegration>(sopparms.getTimeIntegration()))
     {
@@ -883,7 +819,6 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
     sim_params.velocity_clear_frequency = sopparms.getVelocityClearFrequency();
     sim_params.tolerance = sopparms.getInnerTolerance();
     sim_params.max_iterations = sopparms.getMaxInnerIterations();
-    sim_params.outer_tolerance = sopparms.getOuterTolerance();
     sim_params.residual_criterion = sopparms.getResidualCriterion();
     sim_params.residual_tolerance = sopparms.getResidualTolerance();
     sim_params.acceleration_criterion = sopparms.getAccelerationCriterion();
@@ -989,23 +924,10 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
     }
 
     sim_params.project_element_hessians = sopparms.getProjectHessians();
-    sim_params.print_level = sopparms.getPrintLevel();
     sim_params.derivative_test = sopparms.getDerivativeTest();
     sim_params.friction_tolerance = sopparms.getFrictionTolerance();
     sim_params.contact_tolerance = sopparms.getContactTolerance();
     sim_params.contact_iterations = sopparms.getContactIterations();
-
-    switch (static_cast<SOP_SoftyEnums::MuStrategy>(sopparms.getMuStrategy()))
-    {
-    case SOP_SoftyEnums::MuStrategy::MONOTONE:
-        sim_params.mu_strategy = softy::MuStrategy::Monotone;
-        break;
-    case SOP_SoftyEnums::MuStrategy::ADAPTIVE:
-        sim_params.mu_strategy = softy::MuStrategy::Adaptive;
-        break;
-    }
-
-    sim_params.max_gradient_scaling = sopparms.getMaxGradientScaling();
 
     return std::make_pair(sim_params, collider_material_id_parse_error);
 }

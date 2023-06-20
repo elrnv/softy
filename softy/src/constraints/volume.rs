@@ -188,21 +188,6 @@ fn tri_at<T: Copy>(slice: &[T], tri: &[usize; 3]) -> [T; 3] {
 }
 
 impl VolumeConstraint {
-    /// Compute the indices of the sparse matrix entries of the constraint Jacobian.
-    #[cfg(feature = "optsolver")]
-    fn constraint_jacobian_indices_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
-        self.surface_topo.iter().flat_map(|tri| {
-            (0..3).flat_map(move |vi| {
-                (0..3).map(move |j| MatrixElementIndex {
-                    row: 0,
-                    col: 3 * tri[vi] + j,
-                })
-            })
-        })
-    }
-
     /// Compute the values of the constraint Jacobian.
     fn constraint_jacobian_values_iter<'a, T: Real>(
         &'a self,

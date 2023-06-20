@@ -504,16 +504,6 @@ pub(crate) struct TripletContactJacobian<T> {
 }
 
 impl<T: Real> TripletContactJacobian<T> {
-    #[cfg(feature = "optsolver")]
-    pub fn new() -> TripletContactJacobian<T> {
-        TripletContactJacobian {
-            block_indices: Vec::new(),
-            blocks: Chunked3::from_flat(Chunked3::from_flat(Vec::new())),
-            num_rows: 0,
-            num_cols: 0,
-        }
-    }
-
     /// Full contact jacobian including collider part.
     pub fn from_selection_reindexed_full<'a>(
         surf: &implicits::QueryTopo<T>,
@@ -600,88 +590,6 @@ impl<T: Real> TripletContactJacobian<T> {
             num_rows,
             num_cols,
         }
-    }
-
-    /// Append a set of triplets to the current contact Jacobian set of triplets.
-    ///
-    /// This includes the Jacobian with respect to object vertices as well as collider vertices.
-    ///
-    /// Note that this function does *not* update `num_rows` and `num_cols` automatically.
-    ///
-    /// Along with the necessary data for constructing the contact jacobian, this function accepts
-    /// three offsets intended to position this jacobian inside the global contact jacobian matrix.
-    ///
-    /// The columns of the contact jacobian are indexed by surface vertex indices in the entire
-    /// surface (as opposed to a subset) for objects and colliders.
-    #[cfg(feature = "optsolver")]
-    pub fn append_selection<'a>(
-        &mut self,
-        surf: &implicits::QueryTopo<T>,
-        active_contact_points: SelectView<'a, Chunked3<&'a [T]>>,
-        contact_offset: usize,
-        object_offset: usize,
-        collider_offset: usize,
-    ) {
-        let TripletContactJacobian {
-            block_indices,
-            blocks,
-            ..
-        } = self;
-
-        // First we append the contact jacobian with respect to object vertices.
-
-        let mut orig_cj_matrices = vec![[[T::zero(); 3]; 3]; surf.num_contact_jacobian_matrices()];
-        let query_points = active_contact_points.target;
-        surf.contact_jacobian_matrices(query_points.into(), &mut orig_cj_matrices);
-
-        // Build a reverse map for mapping to active contacts
-        let mut active_contact_point_indices = vec![Index::INVALID; query_points.len()];
-        for (i, &acpi) in active_contact_points.index_iter().enumerate() {
-            active_contact_point_indices[acpi] = Index::new(i);
-        }
-
-        let orig_cj_indices_iter = surf.contact_jacobian_matrix_indices_iter();
-
-        let mut cj_matrices: Vec<_> = orig_cj_indices_iter
-            .clone()
-            .zip(orig_cj_matrices.into_iter())
-            .filter_map(|((row, _), matrix)| {
-                active_contact_point_indices[row]
-                    .into_option()
-                    .map(|_| matrix)
-            })
-            .collect();
-
-        // Remap rows to match active constraints. This means that some entries of the raw Jacobian
-        // will not have a valid entry in the pruned Jacobian.
-        block_indices.extend(orig_cj_indices_iter.filter_map(move |(row, col)| {
-            active_contact_point_indices[row]
-                .into_option()
-                .map(|idx| (contact_offset + idx, object_offset + col))
-        }));
-
-        // Lastly we append the contact Jacobian with respect to collider vertices.
-
-        block_indices.extend(
-            active_contact_points
-                .index_iter()
-                .enumerate()
-                .map(|(i, &acp)| (i, collider_offset + acp)),
-        );
-
-        cj_matrices
-            .extend((0..active_contact_points.len()).map(|_| Matrix3::<T>::identity().into_data()));
-
-        // Convert blocks into Chunked types.
-        // TODO: make this type of conversion more ergonomic in flatk.
-
-        let chunked_matrices = Chunked3::from_flat(Chunked3::from_array_vec(
-            Chunked3::from_array_vec(cj_matrices).into_storage(),
-        ));
-
-        blocks
-            .storage_mut()
-            .extend(chunked_matrices.into_storage().into_iter());
     }
 }
 
@@ -795,22 +703,6 @@ pub type MassMatrixView<'a, T = f64> = DiagonalBlockMatrix3View<'a, T>;
 
 pub type Delassus<T = f64> = DSBlockMatrix3<T>;
 pub type DelassusView<'a, T = f64> = DSBlockMatrix3View<'a, T>;
-
-#[cfg(feature = "optsolver")]
-pub(crate) type EffectiveMassInv<T = f64> = DSBlockMatrix3<T>;
-#[cfg(feature = "optsolver")]
-pub(crate) type EffectiveMassInvView<'a, T = f64> = DSBlockMatrix3View<'a, T>;
-
-/// Global effective mass inverse.
-///
-/// The dimensions in order are as follows
-/// D D -> Dense object contact coupling (only active couplings are included)
-/// D D -> For each coupling only active contacts are considered.
-/// 3 3 -> Each vertex mass is a 3x3 block.
-#[cfg(feature = "optsolver")]
-pub(crate) type GlobalEffectiveMassInv<T = f64> = Tensor![T; D D D D 3 3];
-#[cfg(feature = "optsolver")]
-pub(crate) type GlobalEffectiveMassInvView<'a, T = f64> = Tensor![T; &'a D D D D 3 3];
 
 #[cfg(test)]
 mod tests {

@@ -15,7 +15,7 @@ use tensr::*;
 use thiserror::Error;
 
 use super::linsolve::*;
-use super::problem::NonLinearProblem;
+use super::problem::{AssistedNonLinearProblem, NonLinearProblem};
 use super::{Callback, CallbackArgs, NLSolver, SolveResult, Status};
 use crate::nl_fem::Timings;
 use crate::Index;
@@ -132,6 +132,7 @@ impl SparseDirectSolveError {
             SparseDirectSolveError::InternalError => SparseStatus::InternalError,
             SparseDirectSolveError::ParameterError => SparseStatus::ParameterError,
             SparseDirectSolveError::Released => SparseStatus::Released,
+            SparseDirectSolveError::NotAvailable => SparseStatus::InternalError,
         }
     }
 }
@@ -790,7 +791,7 @@ fn rescale_jacobian_values<T: Real>(precond: &[T], rows: &[usize], vals: &mut [T
 impl<T, P> NLSolver<P, T> for Newton<P, T>
 where
     T: Real,
-    P: NonLinearProblem<T>,
+    P: AssistedNonLinearProblem<T>,
 {
     /// Gets a reference to the outer callback function.
     ///
@@ -2004,7 +2005,7 @@ fn dense_solve_mut<T: Real + na::ComplexField>(A: DSMatrixView<T>, b: &mut [T]) 
         }
     }
 
-    let mut b_vec: na::DVectorSliceMut<T> = b.into();
+    let mut b_vec: na::DVectorViewMut<T> = b.into();
     dense.lu().solve_mut(&mut b_vec)
 }
 
@@ -2236,7 +2237,7 @@ pub enum LineSearch {
 
 impl Default for LineSearch {
     fn default() -> LineSearch {
-        LineSearch::default_assisted_backtracking()
+        LineSearch::default_backtracking()
     }
 }
 

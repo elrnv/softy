@@ -16,11 +16,16 @@ use std::io::Write;
 use tensr::Vector3;
 pub use test_utils::*;
 
-fn fc_params(mu: f64, lagged: bool) -> FrictionParams {
+fn fc_params(mu: f64, lagged: bool, incomplete_jacobian: bool) -> FrictionParams {
     FrictionParams {
         dynamic_friction: mu,
+        static_friction: mu,
+        viscous_friction: 0.0,
+        stribeck_velocity: 0.0,
+        epsilon: 0.001,
         friction_profile: FrictionProfile::default(),
         lagged,
+        incomplete_jacobian,
     }
 }
 
@@ -309,14 +314,16 @@ fn sliding_tet_on_implicit_lagged() -> Result<(), Error> {
         ElasticityModel::StableNeoHookean,
     ));
 
+    let contact_tolerance = 0.001;
+
     let fc_params = FrictionalContactParams {
         kernel: KernelType::Approximate {
             radius_multiplier: 20.5,
             tolerance: 0.001,
         },
-        contact_offset: 0.0,
-        use_fixed: true,
-        friction_params: Some(fc_params(0.5, true)),
+        friction_params: fc_params(0.5, true, false),
+        tolerance: contact_tolerance,
+        ..Default::default()
     };
 
     let tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
@@ -374,14 +381,16 @@ fn fully_deformable_lagged_friction_coupling() -> Result<(), Error> {
 fn box_slide_experiment() -> Result<(), Error> {
     let material = default_solid().with_elasticity(Elasticity::from_young_poisson(1e9, 0.0));
 
+    let contact_tolerance = 0.001;
+
     let fc_params = FrictionalContactParams {
         kernel: KernelType::Approximate {
             radius_multiplier: 1.5,
             tolerance: 0.001,
         },
-        contact_offset: 0.0,
-        use_fixed: true,
-        friction_params: Some(fc_params(0.177, false)),
+        friction_params: fc_params(0.177, false, false),
+        tolerance: contact_tolerance,
+        ..Default::default()
     };
 
     for config_idx in 0..num_static_configs() {
@@ -399,7 +408,7 @@ fn box_slide_experiment() -> Result<(), Error> {
         }
         .build();
 
-        let offset = params.contact_tolerance as f64;
+        let offset = contact_tolerance as f64;
 
         surface.scale([3.0, 1.0, 1.5]);
         surface.translate([-1.5, -0.5 - offset, 0.0]);

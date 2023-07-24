@@ -21,7 +21,7 @@
             preconditioner: ApproximateJacobi,
             log_file: None,
             project_element_hessians: false,
-            adaptive_newton: false,
+            solver_type: Newton,
         ),
         materials: [
             Fixed((
@@ -92,6 +92,7 @@
                     dynamic_friction: 1.0,
                     friction_profile: Quadratic,
                     lagged: false,
+                    incomplete_jacobian: false,
                 )),
             ), (0, 1)),
         ],

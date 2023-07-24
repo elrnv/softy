@@ -297,6 +297,7 @@ where
                             bump_ratio,
                             violation: contact_violation,
                             largest_penalty,
+                            violating_constraint_index,
                             ..
                         } = self
                             .solver
@@ -304,7 +305,7 @@ where
                             .contact_violation(self.solution.as_slice());
 
                         log::debug!("Bump ratio: {}", bump_ratio);
-                        log::debug!("Kappa: {}", self.solver.problem().kappa);
+                        log::debug!("Largest penalty: {}", largest_penalty);
                         log::debug!("Contact violation: {}", contact_violation);
 
                         // Save results for future reporting and analysis.
@@ -336,7 +337,12 @@ where
 
                         if contact_violation > 0.0 {
                             stage_result.contact_violations += 1;
-                            self.solver.problem_mut().kappa *= bump_ratio.max(2.0);
+                            self.solver.problem_mut().frictional_contact_constraints
+                                [violating_constraint_index]
+                                .constraint
+                                .borrow_mut()
+                                .params
+                                .stiffness *= bump_ratio.max(2.0) as f32;
                         }
 
                         let max_step_violation = self.solver.problem().max_step_violation();
@@ -358,11 +364,18 @@ where
                             continue;
                         } else {
                             // Relax kappa
-                            if largest_penalty == 0.0
-                                && self.solver.problem().kappa
-                                    > 1.0e2 / self.sim_params.contact_tolerance as f64
-                            {
-                                self.solver.problem_mut().kappa /= 2.0;
+                            if largest_penalty == 0.0 {
+                                for fc in self
+                                    .solver
+                                    .problem_mut()
+                                    .frictional_contact_constraints
+                                    .iter_mut()
+                                {
+                                    let mut fc = fc.constraint.borrow_mut();
+                                    if fc.params.stiffness > 1.0e2 / fc.params.tolerance {
+                                        fc.params.stiffness /= 2.0;
+                                    }
+                                }
                             }
                             self.commit_solution(false);
                             // Kill velocities if needed.

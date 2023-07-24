@@ -47,74 +47,6 @@ static const char *theDsFile = R"THEDSFILE(
 {
 name softy
 
-parm {
-    name "clearlogs"
-    label "Clear Logs"
-    type button
-    default { "0" }
-    range { 0 1 }
-}
-
-parm {
-    name "clearcache"
-    label "Clear Cache"
-    type button
-    default { "0" }
-    range { 0 1 }
-}
-
-parm {
-    name "timestep"
-    cppname "TimeStep"
-    label "Time Step"
-    type float
-    default { "1.0/$FPS" }
-    range { 0 10 }
-}
-
-parm {
-    name "gravity"
-    label "Gravity"
-    type float
-    default { "9.81" }
-    range { 0 20 }
-}
-
-parm {
-    name "logfile"
-    cppname "LogFile"
-    label "Log File"
-    type file
-    default { "" }
-}
-
-parm {
-    name "solvertype"
-    cppname "SolverType"
-    label "Solver Type"
-    type ordinal
-    default { "0" }
-    menu {
-        "newton" "Newton"
-        "newtonbt" "Newton with Backtracking"
-        "newtonassistbt" "Newton with Assisted Backtracking"
-        "newtoncontactassistbt" "Newton with Contact Assisted Backtracking"
-        "adaptnewtonbt" "Adaptive Newton with Backtracking"
-        "adaptnewtonassistbt" "Adaptive Newton with Assisted Backtracking"
-        "adaptnewtoncontactassistbt" "Adaptive Newton with Contact Assisted Backtracking"
-        "trustregion" "Trust Region"
-    }
-}
-parm {
-    name "backtrackingcoeff"
-    cppname "BacktrackingCoeff"
-    label "Backtracking Coefficient"
-    type float
-    default { "0.9" }
-    range { 0 1 }
-    hidewhen "{ solvertype == newton } { solvertype == trustregion }"
-}
-
 group {
     name "material"
     label "Material"
@@ -389,24 +321,31 @@ group {
             hidewhen "{ friction# == 0 }"
 
             parm {
-                name "frictionforwarding#"
-                label "Friction Forwarding"
-                type float
-                default { "1.0" }
-                range { 0! 1 }
-            }
-            parm {
-                name "smoothingweight#"
-                label "Smoothing Weight"
-                type float
-                default { "0.0" }
-                range { 0! 1 }
-            }
-            parm {
                 name "dynamiccof#"
                 label "Dynamic Coefficient"
                 type float
                 default { "0.2" }
+                range { 0 2 }
+            }
+            parm {
+                name "staticcof#"
+                label "Static Coefficient"
+                type float
+                default { "0.2" }
+                range { 0 2 }
+            }
+            parm {
+                name "viscousfriction#"
+                label "Viscous Friction"
+                type float
+                default { "0.0" }
+                range { 0 0.5 }
+            }
+            parm {
+                name "stribeckvelocity#"
+                label "Stribeck Velocity"
+                type float
+                default { "0.0" }
                 range { 0 2 }
             }
             parm {
@@ -431,6 +370,85 @@ group {
 group {
     name "solver"
     label "Solver"
+
+    parm {
+        name "clearlogs"
+        label "Clear Logs"
+        type button
+        default { "0" }
+        range { 0 1 }
+    }
+
+    parm {
+        name "clearcache"
+        label "Clear Cache"
+        type button
+        default { "0" }
+        range { 0 1 }
+    }
+
+    parm {
+        name "timestep"
+        cppname "TimeStep"
+        label "Time Step"
+        type float
+        default { "1.0/$FPS" }
+        range { 0 10 }
+    }
+
+    parm {
+        name "gravity"
+        label "Gravity"
+        type float
+        default { "9.81" }
+        range { 0 20 }
+    }
+
+    parm {
+        name "logfile"
+        cppname "LogFile"
+        label "Log File"
+        type file
+        default { "" }
+    }
+
+    parm {
+        name "solvertype"
+        cppname "SolverType"
+        label "Solver Type"
+        type ordinal
+        default { "0" }
+        menu {
+            "newton" "Newton"
+            "adaptivenewton" "Adaptive Newton"
+            "trustregion" "Trust Region"
+        }
+    }
+
+    parm {
+        name "linesearch"
+        cppname "LineSearch"
+        label "Line Search"
+        type ordinal
+        default { "1" }
+        menu {
+            "none" "None"
+            "bt" "Backtracking"
+            "assistedbt" "Assisted Backtracking"
+            "contactassistedbt" "Contact Assisted Backtracking"
+        }
+        hidewhen "{ solvertype == trustregion }"
+    }
+
+    parm {
+        name "backtrackingcoeff"
+        cppname "BacktrackingCoeff"
+        label "Backtracking Coefficient"
+        type float
+        default { "0.9" }
+        range { 0 1 }
+        hidewhen "{ linesearch == none } { solvertype == trustregion }"
+    }
 
     parm {
         name "preconditioner"
@@ -591,12 +609,20 @@ group {
         menu {
             "stabilized" "Stabilized"
             "quadratic" "Quadratic"
+            "stribeck" "Stribeck"
         }
     }
     parm {
         name "laggedfriction"
         cppname "LaggedFriction"
         label "Lagged Friction"
+        type toggle
+        default { "off" }
+    }
+    parm {
+        name "incompletefrictionjacobian"
+        cppname "IncompleteFrictionJacobian"
+        label "Incomplete Friction Jacobian (ADD)"
         type toggle
         default { "off" }
     }
@@ -743,17 +769,20 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
         sim_params.materials.push_back(mtl_props);
     }
 
-    switch (static_cast<SOP_SoftyEnums::SolverType>(sopparms.getSolverType())) {
-        case SOP_SoftyEnums::SolverType::NEWTONBT:
-        case SOP_SoftyEnums::SolverType::NEWTONASSISTBT:
-        case SOP_SoftyEnums::SolverType::NEWTONCONTACTASSISTBT:
-        case SOP_SoftyEnums::SolverType::ADAPTNEWTONBT:
-        case SOP_SoftyEnums::SolverType::ADAPTNEWTONASSISTBT:
-        case SOP_SoftyEnums::SolverType::ADAPTNEWTONCONTACTASSISTBT:
+    switch (static_cast<SOP_SoftyEnums::LineSearch>(sopparms.getLineSearch())) {
+        case SOP_SoftyEnums::LineSearch::BT:
+            sim_params.line_search = softy::LineSearch::Backtracking;
+            // FALLTHROUGH
+        case SOP_SoftyEnums::LineSearch::ASSISTEDBT:
+            sim_params.line_search = softy::LineSearch::AssistedBacktracking;
+            // FALLTHROUGH
+        case SOP_SoftyEnums::LineSearch::CONTACTASSISTEDBT:
+            sim_params.line_search = softy::LineSearch::ContactAssistedBacktracking;
             sim_params.backtracking_coeff = sopparms.getBacktrackingCoeff();
             break;
         default:
-            sim_params.backtracking_coeff = 0.9;
+            sim_params.line_search = softy::LineSearch::None;
+            sim_params.backtracking_coeff = 0.5; // Dummy value
     }
 
     switch (static_cast<SOP_SoftyEnums::SolverType>(sopparms.getSolverType()))
@@ -761,23 +790,8 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
     case SOP_SoftyEnums::SolverType::NEWTON:
         sim_params.solver_type = softy::SolverType::Newton;
         break;
-    case SOP_SoftyEnums::SolverType::NEWTONBT:
-        sim_params.solver_type = softy::SolverType::NewtonBacktracking;
-        break;
-    case SOP_SoftyEnums::SolverType::NEWTONASSISTBT:
-        sim_params.solver_type = softy::SolverType::NewtonAssistedBacktracking;
-        break;
-    case SOP_SoftyEnums::SolverType::NEWTONCONTACTASSISTBT:
-        sim_params.solver_type = softy::SolverType::NewtonContactAssistedBacktracking;
-        break;
-    case SOP_SoftyEnums::SolverType::ADAPTNEWTONBT:
-        sim_params.solver_type = softy::SolverType::AdaptiveNewtonBacktracking;
-        break;
-    case SOP_SoftyEnums::SolverType::ADAPTNEWTONASSISTBT:
-        sim_params.solver_type = softy::SolverType::AdaptiveNewtonAssistedBacktracking;
-        break;
-    case SOP_SoftyEnums::SolverType::ADAPTNEWTONCONTACTASSISTBT:
-        sim_params.solver_type = softy::SolverType::AdaptiveNewtonContactAssistedBacktracking;
+    case SOP_SoftyEnums::SolverType::ADAPTIVENEWTON:
+        sim_params.solver_type = softy::SolverType::AdaptiveNewton;
         break;
     case SOP_SoftyEnums::SolverType::TRUSTREGION:
         sim_params.solver_type = softy::SolverType::TrustRegion;
@@ -899,9 +913,10 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
         fc_params.use_fixed = sop_fc.usefixed;
         if (sop_fc.friction)
         {
-            fc_params.smoothing_weight = sop_fc.smoothingweight;
-            fc_params.friction_forwarding = sop_fc.frictionforwarding;
             fc_params.dynamic_cof = sop_fc.dynamiccof;
+            fc_params.static_cof = sop_fc.staticcof;
+            fc_params.viscous_friction = sop_fc.viscousfriction;
+            fc_params.stribeck_velocity = sop_fc.stribeckvelocity;
             fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
             switch (static_cast<SOP_SoftyEnums::FrictionProfile>(sopparms.getFrictionProfile()))
             {
@@ -911,8 +926,12 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
                 case SOP_SoftyEnums::FrictionProfile::QUADRATIC:
                     fc_params.friction_profile = softy::FrictionProfile::Quadratic;
                     break;
+                case SOP_SoftyEnums::FrictionProfile::STRIBECK:
+                    fc_params.friction_profile = softy::FrictionProfile::Stribeck;
+                    break;
             }
             fc_params.lagged_friction = sopparms.getLaggedFriction();
+            fc_params.incomplete_friction_jacobian = sopparms.getIncompleteFrictionJacobian();
         }
         else
         {

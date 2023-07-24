@@ -136,15 +136,6 @@ pub struct NLProblem<T: Real> {
     ///
     /// This vector is useful for debugging and optimization.
     pub state_vertex_indices: Vec<Index>,
-    /// Contact penalty multiplier.
-    ///
-    /// This quantity is used to dynamically enforce non-penetration.
-    pub kappa: f64,
-    /// Contact tolerance.
-    // TODO: move this to FrictionalContactConstraint.
-    pub delta: f64,
-    // Friction tolerance
-    pub epsilon: f64,
     pub frictional_contact_constraints: Vec<FrictionalContactConstraint<T>>,
     pub frictional_contact_constraints_ad: Vec<FrictionalContactConstraint<ad::FT<T>>>,
     // pub self_contact_constraint: SelfContactConstraint<T>,
@@ -406,32 +397,53 @@ impl<T: Real64> NLProblem<T> {
         })
     }
 
-    fn epsilon(&self) -> f64 {
-        self.epsilon
+    fn epsilon_iter(&self) -> Box<dyn Iterator<Item = f64> + '_> {
+        Box::new(
+            self.frictional_contact_constraints
+                .iter()
+                .map(|fc| fc.constraint.borrow().params.friction_params.epsilon),
+        )
     }
-    fn epsilon_mut(&mut self) -> &mut f64 {
-        &mut self.epsilon
+
+    fn epsilon_iter_mut(&mut self) -> Box<dyn Iterator<Item = RefMut<'_, f64>> + '_> {
+        Box::new(self.frictional_contact_constraints.iter_mut().map(|fc| {
+            RefMut::map(fc.constraint.borrow_mut(), |m| {
+                &mut m.params.friction_params.epsilon
+            })
+        }))
     }
+
     fn contact_violation(&self, x: &[T]) -> ContactViolation {
-        let constraint = self.contact_constraint(x).into_storage();
-        let deepest = constraint
+        let constraint = self.contact_constraint(x);
+        let constraint_index = self.contact_constraint_index();
+        let (deepest, deepest_constraint_index) = constraint
             .iter()
-            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
-            .copied()
-            .unwrap_or_else(T::zero)
-            .to_f64()
-            .unwrap();
+            .zip(constraint_index.iter())
+            .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+            .map(|(&a, &i)| (a, Some(i)))
+            .unwrap_or_else(|| (T::zero(), None));
 
-        let delta = self.delta;
-        let largest_penalty = ContactPenalty::new(delta).b(deepest);
-        let bump_ratio: f64 =
-            ContactPenalty::new(delta).db(deepest) / ContactPenalty::new(delta).db(0.5 * delta);
+        if let Some(deepest_constraint_index) = deepest_constraint_index {
+            let deepest = deepest.to_f64().unwrap();
 
-        ContactViolation {
-            bump_ratio,
-            violation: 0.0_f64.max(-deepest),
-            penetration: deepest,
-            largest_penalty,
+            let delta = self.frictional_contact_constraints[deepest_constraint_index]
+                .constraint
+                .borrow()
+                .params
+                .tolerance as f64;
+            let largest_penalty = ContactPenalty::new(delta).b(deepest);
+            let bump_ratio: f64 =
+                ContactPenalty::new(delta).db(deepest) / ContactPenalty::new(delta).db(0.5 * delta);
+
+            ContactViolation {
+                bump_ratio,
+                violation: 0.0_f64.max(-deepest),
+                penetration: deepest,
+                largest_penalty,
+                violating_constraint_index: deepest_constraint_index,
+            }
+        } else {
+            ContactViolation::default()
         }
     }
 
@@ -509,13 +521,12 @@ impl<T: Real64> NLProblem<T> {
                 let mut fc_constraint = fc.constraint.borrow_mut();
                 fc_constraint.update_state(Chunked3::from_flat(next.pos));
                 fc_constraint.update_distance_potential();
-                fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32);
+                fc_constraint.update_multipliers();
 
                 fc_constraint.subtract_constraint_force_par(contact_force.view_mut());
                 fc_constraint.subtract_friction_force(
                     friction_force.view_mut(),
                     Chunked3::from_flat(next.vel),
-                    self.epsilon as f32,
                     false,
                 );
 
@@ -697,9 +708,6 @@ impl<T: Real64> NLProblem<T> {
 
         let dt = self.time_step();
 
-        let kappa = self.kappa as f32;
-        let delta = self.delta as f32;
-
         let NLProblem {
             ref mut frictional_contact_constraints,
             ref mut frictional_contact_constraints_ad,
@@ -722,18 +730,16 @@ impl<T: Real64> NLProblem<T> {
             let new_max_step = fc.constraint.borrow_mut().compute_max_step(vel, dt);
             fc.constraint.borrow_mut().set_max_step(new_max_step);
             fc_ad.constraint.borrow_mut().set_max_step(new_max_step);
-            changed |=
-                fc.constraint
-                    .borrow_mut()
-                    .update_neighbors(pos, delta, kappa, and_contact_hessian);
+            changed |= fc
+                .constraint
+                .borrow_mut()
+                .update_neighbors(pos, and_contact_hessian);
 
             if and_autodiff {
-                changed |= fc_ad.constraint.borrow_mut().update_neighbors(
-                    pos_ad.view(),
-                    delta,
-                    kappa,
-                    and_contact_hessian,
-                );
+                changed |= fc_ad
+                    .constraint
+                    .borrow_mut()
+                    .update_neighbors(pos_ad.view(), and_contact_hessian);
             }
         }
 
@@ -992,22 +998,16 @@ impl<T: Real64> NLProblem<T> {
             for fc in self.frictional_contact_constraints.iter() {
                 // Add friction jacobian counts
                 let mut constraint = fc.constraint.borrow_mut();
-                let delta = self.delta as f32;
-                let kappa = self.kappa as f32;
-                let epsilon = self.epsilon as f32;
                 // constraint.update_state(vtx.cur.pos.view());
                 // constraint.update_distance_potential();
                 // constraint.update_constraint_gradient();
-                constraint.update_multipliers(delta, kappa);
+                constraint.update_multipliers();
                 // TODO: Refactor this to just compute the count.
                 let dt = T::from(self.time_step()).unwrap();
                 let State { vtx, .. } = &*self.state.borrow();
                 let f_jac_count = constraint
                     .friction_jacobian_indexed_value_iter(
                         vtx.next.vel.view(),
-                        delta,
-                        kappa,
-                        epsilon,
                         dt,
                         num_active_coords / 3,
                     )
@@ -1058,6 +1058,19 @@ impl<T: Real64> NLProblem<T> {
         constraint
     }
 
+    // Index of the contact constraint for every constraint value returned by `contact_constraint`.
+    pub fn contact_constraint_index(&self) -> Vec<usize> {
+        let State { vtx, .. } = &*self.state.borrow_mut();
+        let pos = vtx.next.pos.view();
+        let mut constraint_index = Vec::new();
+        for (i, _) in self.frictional_contact_constraints.iter().enumerate() {
+            for _ in 0..pos.len() {
+                constraint_index.push(i);
+            }
+        }
+        constraint_index
+    }
+
     fn inertia(
         &self,
         state: ResidualState<&[T], &[T], &mut [T]>,
@@ -1090,23 +1103,15 @@ impl<T: Real64> NLProblem<T> {
             energy += vc.borrow().compute_penalty(cur.pos, next.pos);
         }
 
-        let delta = self.delta as f32;
-        let kappa = self.kappa as f32;
-        let epsilon = self.epsilon as f32;
-
         // Compute contact potential and lagged friction potential
         let ResidualState { next, .. } = state;
         for fc in frictional_contacts.iter() {
             let fc_constraint = fc.constraint.borrow();
             // fc_constraint.update_state(Chunked3::from_flat(next.pos));
             // fc_constraint.update_distance_potential();
-            energy += fc_constraint.contact_constraint(delta, kappa);
+            energy += fc_constraint.contact_constraint();
 
-            energy += fc_constraint.lagged_friction_potential(
-                Chunked3::from_flat(next.vel),
-                epsilon,
-                dqdv,
-            );
+            energy += fc_constraint.lagged_friction_potential(Chunked3::from_flat(next.vel), dqdv);
         }
 
         energy
@@ -1189,7 +1194,6 @@ impl<T: Real64> NLProblem<T> {
             fc_constraint.subtract_friction_force(
                 Chunked3::from_flat(r),
                 Chunked3::from_flat(vel),
-                self.epsilon as f32,
                 lagged,
             );
             timings.friction_force += *fc_constraint.friction_timings.borrow();
@@ -1622,9 +1626,6 @@ impl<T: Real64> NLProblem<T> {
             // Add Non-symmetric friction Jacobian entries.
             for fc in self.frictional_contact_constraints.iter() {
                 let mut constraint = fc.constraint.borrow_mut();
-                let delta = self.delta as f32;
-                let kappa = self.kappa as f32;
-                let epsilon = self.epsilon as f32;
                 // constraint.update_state(vtx.cur.pos.view());
                 // constraint.update_distance_potential();
                 // constraint.update_constraint_gradient();
@@ -1635,9 +1636,6 @@ impl<T: Real64> NLProblem<T> {
                 let f_jac_count = constraint
                     .friction_jacobian_indexed_value_iter(
                         vtx.next.vel.view(),
-                        delta,
-                        kappa,
-                        epsilon,
                         dt,
                         num_active_coords / 3,
                     )
@@ -1900,8 +1898,6 @@ impl<T: Real64> NLProblem<T> {
             // Add contact constraint jacobian entries here.
             for fc in self.frictional_contact_constraints.iter() {
                 let constraint = fc.constraint.borrow_mut();
-                let delta = self.delta as f32;
-                let kappa = self.kappa as f32;
                 // constraint.update_state_with_rebuild(Chunked3::from_flat(next.pos), false);
                 //constraint.update_distance_potential();
                 // constraint.update_constraint_gradient();
@@ -1910,7 +1906,7 @@ impl<T: Real64> NLProblem<T> {
                 // let bcount = count;
 
                 count += constraint
-                    .constraint_hessian_indexed_values_iter(delta, kappa, num_active_coords / 3)
+                    .constraint_hessian_indexed_values_iter(num_active_coords / 3)
                     .zip(vals[count..].iter_mut())
                     .map(|((_, val), out_val)| {
                         // if idx.row == 10 && idx.col == 10 {
@@ -1958,9 +1954,6 @@ impl<T: Real64> NLProblem<T> {
             // let n = num_active_coords;
             for fc in self.frictional_contact_constraints.iter() {
                 let mut constraint = fc.constraint.borrow_mut();
-                let delta = self.delta as f32;
-                let kappa = self.kappa as f32;
-                let epsilon = self.epsilon as f32;
                 // constraint.update_state(Chunked3::from_flat(cur.pos.view()));
                 // constraint.update_distance_potential();
                 // constraint.update_constraint_gradient();
@@ -1973,9 +1966,6 @@ impl<T: Real64> NLProblem<T> {
                 let f_jac_count = constraint
                     .friction_jacobian_indexed_value_iter(
                         Chunked3::from_flat(next.vel),
-                        delta,
-                        kappa,
-                        epsilon,
                         dqdv,
                         num_active_coords / 3,
                     )
@@ -2156,9 +2146,6 @@ impl<T: Real64> NLProblem<T> {
         // Then map it to vertices via sliding basis mapping.
 
         let nvert_dofs = v.len() / 3;
-        let delta = self.delta;
-        let kappa = T::from(self.kappa as f32).unwrap();
-        let epsilon = T::from(self.epsilon as f32).unwrap();
 
         // self.integrate_step(v);
         // self.state.borrow_mut().update_vertices(v);
@@ -2169,6 +2156,9 @@ impl<T: Real64> NLProblem<T> {
         for fc in self.frictional_contact_constraints.iter() {
             // {
             let constraint = &mut *fc.constraint.borrow_mut();
+
+            let delta = constraint.params.tolerance;
+            let kappa = T::from(constraint.params.stiffness).unwrap();
 
             let pot = constraint.contact_state.distance_potential.as_slice();
             let lambda = constraint.contact_state.lambda.as_slice();
@@ -2214,10 +2204,10 @@ impl<T: Real64> NLProblem<T> {
                 });
             }
 
-            if constraint.friction_params.is_none() {
+            if constraint.params.friction_params.is_none() {
                 continue;
             }
-            let friction_params = constraint.friction_params.unwrap();
+            let friction_params = constraint.params.friction_params;
             // }
 
             // Friction
@@ -2267,10 +2257,11 @@ impl<T: Real64> NLProblem<T> {
                 let vc = contact_basis.to_contact_coordinates(*scale_contact, contact_idx);
                 let lambda = -ContactPenalty::new(delta).db(d);
                 let v2 = Vector2::from([vc[1], vc[2]]);
-                let mtx = friction_params
-                    .friction_profile
-                    .jacobian(v2, lambda, epsilon)
-                    * (kappa * mu * h * h);
+                let mtx = friction_params.friction_profile.jacobian(
+                    v2,
+                    lambda,
+                    T::from(friction_params.epsilon).unwrap(),
+                ) * (kappa * mu * h * h);
                 let eta_jac = [
                     [T::zero(); 3],
                     [T::zero(), mtx[0][0], mtx[0][1]],
@@ -2451,18 +2442,20 @@ impl<T: Real64> NLProblem<T> {
             add_time!(timings.update_state; fc_constraint.update_state_with_rebuild(pos, rebuild_tree));
             add_time!(timings.update_distance_potential; fc_constraint.update_distance_potential() );
             add_time!(timings.update_constraint_gradient; fc_constraint.update_constraint_gradient() );
-            add_time!(timings.update_multipliers; fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32));
+            add_time!(timings.update_multipliers; fc_constraint.update_multipliers());
             add_time!(timings.update_sliding_basis; fc_constraint.update_sliding_basis(false, false, pos.len()));
             timings.update_constraint_details += *fc_constraint.update_timings.borrow();
         }
     }
 }
 
+#[derive(Copy, Clone, Debug, Default)]
 pub struct ContactViolation {
     pub bump_ratio: f64,
     pub violation: f64,
     pub penetration: f64,
     pub largest_penalty: f64,
+    pub violating_constraint_index: usize,
 }
 
 /// An api for a non-linear problem.
@@ -2495,11 +2488,11 @@ pub trait NonLinearProblem<T: Real> {
     /// Returns a vector of lumped vertex stiffnesses.
     fn lumped_stiffness(&self) -> Ref<'_, [T]>;
 
-    /// Returns the friction tolerance.
-    fn epsilon(&self) -> f64;
+    /// Returns an iterator of epsilons for each constraint.
+    fn epsilon_iter(&self) -> Box<dyn Iterator<Item = f64> + '_>;
 
-    /// Returns the mutable reference to the friction tolerance.
-    fn epsilon_mut(&mut self) -> &mut f64;
+    /// Returns a mutable iterator of epsilons for each constraint.
+    fn epsilon_iter_mut(&mut self) -> Box<dyn Iterator<Item = RefMut<'_, f64>> + '_>;
 
     /// Computes the global maximum contact violation
     fn contact_violation(&self, x: &[T]) -> ContactViolation;
@@ -2729,12 +2722,12 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         NLProblem::lumped_stiffness(self)
     }
     #[inline]
-    fn epsilon(&self) -> f64 {
-        NLProblem::epsilon(self)
+    fn epsilon_iter(&self) -> Box<dyn Iterator<Item = f64> + '_> {
+        NLProblem::epsilon_iter(self)
     }
     #[inline]
-    fn epsilon_mut(&mut self) -> &mut f64 {
-        NLProblem::epsilon_mut(self)
+    fn epsilon_iter_mut(&mut self) -> Box<dyn Iterator<Item = RefMut<'_, f64>> + '_> {
+        NLProblem::epsilon_iter_mut(self)
     }
     #[inline]
     fn contact_violation(&self, x: &[T]) -> ContactViolation {
@@ -2813,11 +2806,12 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
 
     fn use_obj_merit(&self) -> bool {
         self.frictional_contact_constraints.iter().all(|fc| {
-            fc.constraint
-                .borrow()
-                .friction_params
-                .map(|fp| fp.lagged)
-                .unwrap_or(true)
+            let params = fc.constraint.borrow().params.friction_params;
+            if params.is_some() {
+                params.lagged
+            } else {
+                true
+            }
         }) && self.project_element_hessians
     }
 
@@ -2890,7 +2884,7 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             add_time!(timings.update_state; fc_constraint.update_state_with_rebuild(pos, rebuild_tree));
             add_time!(timings.update_distance_potential; fc_constraint.update_distance_potential() );
             add_time!(timings.update_constraint_gradient; fc_constraint.update_constraint_gradient() );
-            add_time!(timings.update_multipliers; fc_constraint.update_multipliers(self.delta as f32, self.kappa as f32));
+            add_time!(timings.update_multipliers; fc_constraint.update_multipliers());
             add_time!(timings.update_sliding_basis; fc_constraint.update_sliding_basis(explicit_jacobian, stash_sliding_basis, pos.len()));
             timings.update_constraint_details += *fc_constraint.update_timings.borrow();
         }
@@ -2962,9 +2956,6 @@ impl<T: Real64> NLProblem<T> {
         let Self {
             state,
             state_vertex_indices,
-            kappa,
-            delta,
-            epsilon,
             volume_constraints,
             frictional_contact_constraints,
             gravity,
@@ -3013,9 +3004,6 @@ impl<T: Real64> NLProblem<T> {
         NLProblem {
             state,
             state_vertex_indices,
-            kappa,
-            delta,
-            epsilon,
             volume_constraints,
             frictional_contact_constraints,
             frictional_contact_constraints_ad,
@@ -3365,14 +3353,12 @@ mod tests {
             linsolve: LinearSolver::Direct,
             line_search: LineSearch::default_backtracking(),
             derivative_test: 2,
-            contact_tolerance: 0.001,
-            friction_tolerance: 0.001,
             time_integration: TimeIntegration::default(),
             preconditioner: Preconditioner::default(),
             contact_iterations: 5,
             log_file: None,
             project_element_hessians: false,
-            adaptive_newton: false,
+            solver_type: SolverType::Newton,
         }
     }
 }

@@ -565,6 +565,7 @@ pub struct NewtonWorkspace<T: Real> {
     r_next_unscaled: Vec<T>,
     // r_lagged: Vec<T>,
     precond: Vec<T>,
+    orig_epsilon: Vec<f64>,
 }
 
 unsafe impl<T: Real> Send for NewtonWorkspace<T> {}
@@ -695,6 +696,7 @@ where
                 r_next_unscaled,
                 // r_lagged,
                 precond,
+                orig_epsilon: Vec::new(),
             }),
             prev_iteration_count: 1,
         }
@@ -865,15 +867,25 @@ where
         self.problem.residual_timings().clear();
         let t_begin_solve = Instant::now();
 
-        let max_epsilon = 1.0;
-        let orig_epsilon = self.problem.epsilon();
-        let count_f64 = self.prev_iteration_count as f64 - 3.0;
-        let base = (max_epsilon / orig_epsilon).powf(1.0 / count_f64).max(1.0); //.min(2.0);
-        let mut epsilon_factor = 1.0 / base;
-        if self.params.adaptive_epsilon {
-            log::debug!("epsilon: factor initialized to {:?}", epsilon_factor);
-            *self.problem.epsilon_mut() = orig_epsilon * base.powf(count_f64);
-            log::debug!("epsilon: initialized to {:?}", self.problem.epsilon());
+        {
+            let orig_epsilon = &mut self.workspace.borrow_mut().orig_epsilon;
+            orig_epsilon.clear();
+            orig_epsilon.extend(self.problem.epsilon_iter());
+            let count_f64 = self.prev_iteration_count as f64 - 3.0;
+            let adaptive_epsilon = self.params.adaptive_epsilon;
+            orig_epsilon
+                .iter()
+                .zip(self.problem.epsilon_iter_mut())
+                .for_each(|(&orig_epsilon, mut epsilon)| {
+                    let max_epsilon = 1.0;
+                    let base = (max_epsilon / orig_epsilon).powf(1.0 / count_f64).max(1.0); //.min(2.0);
+                    let epsilon_factor = 1.0 / base;
+                    if adaptive_epsilon {
+                        log::debug!("epsilon: factor initialized to {:?}", epsilon_factor);
+                        *epsilon = orig_epsilon * base.powf(count_f64);
+                        log::debug!("epsilon: initialized to {:?}", *epsilon);
+                    }
+                });
         }
 
         if update_jacobian_indices && !self.update_jacobian_indices() {
@@ -912,6 +924,7 @@ where
             r_next,
             r_next_unscaled,
             precond,
+            orig_epsilon,
             ..
         } = &mut *workspace.borrow_mut();
 
@@ -1755,8 +1768,6 @@ where
             log::debug!("{}", &info);
             stats.push(info);
 
-            let do_update = problem.epsilon() > orig_epsilon;
-
             // Check the convergence condition.
             if problem.converged(
                 x_prev,
@@ -1768,14 +1779,21 @@ where
                 params.r_tol,
                 params.a_tol,
             ) {
-                if problem.epsilon() == orig_epsilon {
+                if problem
+                    .epsilon_iter()
+                    .zip(orig_epsilon.iter())
+                    .all(|(eps, &orig)| eps == orig)
+                {
                     break (iterations, Status::Success);
                 } else {
-                    log::debug!(
-                        "epsilon: converged but epsilon not small enough: {:?} vs original {:?}",
-                        problem.epsilon(),
-                        orig_epsilon
-                    );
+                    log::debug!("epsilon: converged but epsilon not small enough:");
+                    problem
+                        .epsilon_iter()
+                        .zip(orig_epsilon.iter())
+                        .enumerate()
+                        .for_each(|(idx, (eps, &orig))| {
+                            log::debug!("{:?}: {:?} vs original {:?}", idx, eps, orig);
+                        });
                     // Converged with weaker epsilon, set to orig and solve the desired problem.
                     // epsilon_factor *= epsilon_factor;
                 }
@@ -1795,11 +1813,23 @@ where
 
             // Reduce epsilon.
             if params.adaptive_epsilon {
-                epsilon_factor = (merit_cur / merit_prev).sqrt().min(1.0 / base);
-                // epsilon_factor = 2.0 * (merit_cur/merit_prev).sqrt() * (1.0 - iterations as f64 / count_f64);
-                log::debug!("epsilon: factor set to {:?}", epsilon_factor);
-                *problem.epsilon_mut() = orig_epsilon.max(problem.epsilon() * epsilon_factor);
-                log::debug!("epsilon: updated to {:?}", problem.epsilon());
+                let count_f64 = *prev_iteration_count as f64 - 3.0;
+
+                let do_update = orig_epsilon
+                    .iter()
+                    .zip(problem.epsilon_iter_mut())
+                    .enumerate()
+                    .fold(false, |acc, (idx, (&orig_epsilon, mut epsilon))| {
+                        let max_epsilon = 1.0;
+                        let base = (max_epsilon / orig_epsilon).powf(1.0 / count_f64).max(1.0); //.min(2.0);
+                        let epsilon_factor = (merit_cur / merit_prev).sqrt().min(1.0 / base);
+                        // epsilon_factor = 2.0 * (merit_cur/merit_prev).sqrt() * (1.0 - iterations as f64 / count_f64);
+                        log::debug!("epsilon {:?}: factor set to {:?}", idx, epsilon_factor);
+                        let do_update = *epsilon > orig_epsilon;
+                        *epsilon = orig_epsilon.max(*epsilon * epsilon_factor);
+                        log::debug!("epsilon {:?}: updated to {:?}", idx, *epsilon);
+                        acc || do_update // Do update if any of the epsilons is still not at its max
+                    });
 
                 // Compute the residual with the new epsilon
                 if do_update {
@@ -2209,6 +2239,21 @@ pub enum LinearSolver {
         max_iterations: u32,
     },
     Direct,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub enum SolverType {
+    /// Newton-Raphson solver.
+    Newton,
+    /// Newton-Raphson solver with an incomplete Jacobian.
+    IncompleteNewton,
+    /// Adaptive Newton-Raphson solver.
+    ///
+    /// Adjusts friction epsilon between Newton steps to improve convergence
+    /// rate.
+    AdaptiveNewton,
+    /// Trust region solver.
+    TrustRegion,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]

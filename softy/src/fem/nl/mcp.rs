@@ -67,12 +67,12 @@ where
         self.problem.lumped_stiffness()
     }
     #[inline]
-    fn epsilon(&self) -> f64 {
-        self.problem.epsilon()
+    fn epsilon_iter(&self) -> Box<dyn Iterator<Item = f64> + '_> {
+        self.problem.epsilon_iter()
     }
     #[inline]
-    fn epsilon_mut(&mut self) -> &mut f64 {
-        self.problem.epsilon_mut()
+    fn epsilon_iter_mut(&mut self) -> Box<dyn Iterator<Item = RefMut<'_, f64>> + '_> {
+        self.problem.epsilon_iter_mut()
     }
     #[inline]
     fn contact_violation(&self, x: &[T]) -> ContactViolation {

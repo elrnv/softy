@@ -112,7 +112,6 @@ fn compute_distance_potential(
 //            tolerance: 0.001,
 //        },
 //        contact_offset: 0.0,
-//        use_fixed: true,
 //        friction_params: None,
 //    };
 //
@@ -152,7 +151,6 @@ fn compute_distance_potential(
 //            tolerance: 0.001,
 //        },
 //        contact_offset: 0.0,
-//        use_fixed: true,
 //        friction_params: None,
 //    };
 //
@@ -211,6 +209,8 @@ fn single_tri_push() -> Result<(), Error> {
         tolerance: 0.001,
     };
 
+    let contact_tolerance = 0.001;
+
     for config_idx in 0..num_static_configs() {
         let params = static_nl_params(config_idx);
         let mut solver = SolverBuilder::new(params.clone())
@@ -219,9 +219,8 @@ fn single_tri_push() -> Result<(), Error> {
             .add_frictional_contact(
                 FrictionalContactParams {
                     kernel,
-                    contact_offset: 0.0,
-                    use_fixed: true,
-                    friction_params: None,
+                    tolerance: contact_tolerance,
+                    ..Default::default()
                 },
                 (1, 0),
             )
@@ -279,7 +278,7 @@ fn single_tri_push() -> Result<(), Error> {
         // dbg!(obj.vertex_positions());
         let constraint = compute_distance_potential(&coll, &obj, kernel, false);
         assert!(
-            constraint.iter().all(|&x| x >= -params.contact_tolerance),
+            constraint.iter().all(|&x| x >= -contact_tolerance),
             "Distance potential still negative after push: {:?} ",
             &constraint
         );
@@ -321,6 +320,8 @@ fn tet_push() -> Result<(), Error> {
         tolerance: 0.001,
     };
 
+    let contact_tolerance = 1e-5;
+
     compute_distance_potential_tetmesh(&orig_trimesh, &orig_tetmesh, kernel);
 
     for config_idx in 0..num_static_configs() {
@@ -335,9 +336,8 @@ fn tet_push() -> Result<(), Error> {
             .add_frictional_contact(
                 FrictionalContactParams {
                     kernel,
-                    contact_offset: 0.0,
-                    use_fixed: true,
-                    friction_params: None,
+                    tolerance: contact_tolerance,
+                    ..Default::default()
                 },
                 (1, 0),
             )
@@ -408,7 +408,7 @@ fn tet_push() -> Result<(), Error> {
         // Verify constraint, should be positive after push
         let constraint = compute_distance_potential_tetmesh(&trimesh, &tetmesh, kernel);
         assert!(
-            constraint.iter().all(|&x| x >= -params.contact_tolerance),
+            constraint.iter().all(|&x| x >= -contact_tolerance),
             "Distance potential still negative after push: {:?} ",
             &constraint
         );
@@ -488,9 +488,8 @@ fn ball_tri_push_plain() -> Result<(), Error> {
             radius_multiplier: 19.812,
             tolerance: 0.07,
         },
-        contact_offset: 0.0,
-        use_fixed: true,
-        friction_params: None,
+        tolerance: 0.001,
+        ..Default::default()
     };
 
     ball_tri_push_tester(material, fc_params)
@@ -505,9 +504,8 @@ fn sliding_tet_on_points() -> Result<(), Error> {
             radius_multiplier: 2.5,
             tolerance: 0.001,
         },
-        contact_offset: 0.0,
-        use_fixed: true,
-        friction_params: None,
+        tolerance: 0.001,
+        ..Default::default()
     };
 
     let mut tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
@@ -540,9 +538,8 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
             radius_multiplier: 1.5,
             tolerance: 0.001,
         },
-        contact_offset: 0.0,
-        use_fixed: true,
-        friction_params: None,
+        tolerance: 0.001,
+        ..Default::default()
     };
 
     let tetmesh = PlatonicSolidBuilder::new().build_tetrahedron();
@@ -581,7 +578,6 @@ fn fully_deformable_contact() -> Result<(), Error> {
 //            tolerance: 0.07,
 //        },
 //        contact_offset: 0.0,
-//        use_fixed: true,
 //        friction_params: None,
 //    };
 //
@@ -649,7 +645,6 @@ fn fully_deformable_contact() -> Result<(), Error> {
 //            tolerance: 0.01,
 //        },
 //        contact_offset: 0.0,
-//        use_fixed: true,
 //        friction_params: None,
 //    };
 //
@@ -671,7 +666,6 @@ fn fully_deformable_contact() -> Result<(), Error> {
 //            tolerance: 0.01,
 //        },
 //        contact_offset: 0.0,
-//        use_fixed: true,
 //        friction_params: None,
 //    };
 //
@@ -694,7 +688,6 @@ fn fully_deformable_contact() -> Result<(), Error> {
 //            tolerance: 0.0001,
 //        },
 //        contact_offset: 0.0,
-//        use_fixed: true,
 //        friction_params: None,
 //    };
 //
@@ -716,7 +709,6 @@ fn fully_deformable_contact() -> Result<(), Error> {
 //            tolerance: 0.0001,
 //        },
 //        contact_offset: 0.0,
-//        use_fixed: true,
 //        friction_params: None,
 //    };
 //
@@ -739,7 +731,6 @@ fn fully_deformable_contact() -> Result<(), Error> {
 //            tolerance: 0.0001,
 //        },
 //        contact_offset: 0.0,
-//        use_fixed: true,
 //        friction_params: None,
 //    };
 //
@@ -784,7 +775,6 @@ fn fully_deformable_contact() -> Result<(), Error> {
 //                contact_type: ContactType::Point,
 //                kernel,
 //                contact_offset: 0.0,
-//                use_fixed: true,
 //                friction_params: None,
 //            },
 //            (0, 1),

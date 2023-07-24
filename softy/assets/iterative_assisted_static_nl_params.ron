@@ -19,5 +19,5 @@ SimParams(
     time_integration: BE,
     preconditioner: ApproximateJacobi,
     project_element_hessians: false,
-    adaptive_newton: false,
+    solver_type: Newton,
 )

@@ -111,6 +111,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
     fn into(self) -> softy::nl_fem::SimParams {
         let SimParams {
             solver_type,
+            line_search,
             backtracking_coeff,
             time_step,
             gravity,
@@ -134,24 +135,18 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             ref log_file,
             ..
         } = *self;
-        let adaptive_newton = matches!(solver_type, SolverType::AdaptiveNewtonAssistedBacktracking)
-            || matches!(
-                solver_type,
-                SolverType::AdaptiveNewtonContactAssistedBacktracking
-            )
-            || matches!(solver_type, SolverType::AdaptiveNewtonBacktracking);
-        let line_search = match solver_type {
-            SolverType::AdaptiveNewtonAssistedBacktracking
-            | SolverType::NewtonAssistedBacktracking => {
+        let solver_type = match solver_type {
+            SolverType::AdaptiveNewton => fem::nl::SolverType::AdaptiveNewton,
+            _ => fem::nl::SolverType::Newton,
+        };
+        let line_search = match line_search {
+            LineSearch::AssistedBacktracking => {
                 fem::nl::LineSearch::default_assisted_backtracking()
             }
-            SolverType::AdaptiveNewtonContactAssistedBacktracking
-            | SolverType::NewtonContactAssistedBacktracking => {
+            LineSearch::ContactAssistedBacktracking => {
                 fem::nl::LineSearch::default_contact_assisted_backtracking()
             }
-            SolverType::AdaptiveNewtonBacktracking | SolverType::NewtonBacktracking => {
-                fem::nl::LineSearch::default_backtracking()
-            }
+            LineSearch::Backtracking => fem::nl::LineSearch::default_backtracking(),
             _ => fem::nl::LineSearch::None,
         }
         .with_step_factor(backtracking_coeff);
@@ -190,7 +185,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
                 LinearSolver::Direct
             },
             line_search,
-            adaptive_newton,
+            solver_type,
             derivative_test: derivative_test as u8,
             friction_tolerance,
             contact_tolerance,
@@ -295,8 +290,12 @@ fn get_frictional_contacts<'a>(
                 contact_offset,
                 use_fixed,
                 dynamic_cof,
+                static_cof,
+                viscous_friction,
+                stribeck_velocity,
                 friction_profile,
                 lagged_friction,
+                incomplete_friction_jacobian,
                 friction_inner_iterations,
                 ..
             } = *frictional_contact;
@@ -320,16 +319,24 @@ fn get_frictional_contacts<'a>(
                         },
                         contact_offset: f64::from(contact_offset),
                         use_fixed,
-                        friction_params: if dynamic_cof == 0.0 || friction_inner_iterations == 0 {
+                        friction_params: if dynamic_cof == 0.0
+                            || static_cof == 0.0
+                            || friction_inner_iterations == 0
+                        {
                             None
                         } else {
                             Some(softy::constraints::penalty_point_contact::FrictionParams {
                                 dynamic_friction: f64::from(dynamic_cof),
+                                static_friction: f64::from(static_cof),
+                                viscous_friction: f64::from(viscous_friction),
+                                stribeck_velocity: f64::from(stribeck_velocity),
                                 friction_profile: match friction_profile {
                                     FrictionProfile::Quadratic => softy::FrictionProfile::Quadratic,
+                                    FrictionProfile::Stribeck => softy::FrictionProfile::Stribeck,
                                     _ => softy::FrictionProfile::Stabilized,
                                 },
                                 lagged: lagged_friction,
+                                incomplete_jacobian: incomplete_friction_jacobian,
                             })
                         },
                     },

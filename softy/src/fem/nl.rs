@@ -65,14 +65,9 @@ pub struct SimParams {
     pub max_iterations: u32,
     pub linsolve: LinearSolver,
     pub line_search: LineSearch,
-    /// Adjust friction epsilon between Newton steps to improve convergence rate.
-    pub adaptive_newton: bool,
+    pub solver_type: SolverType,
     /// Test that the problem Jacobian is correct.
     pub derivative_test: u8,
-    /// The velocity error tolerance for sticking between objects.
-    pub friction_tolerance: f32,
-    /// The distance tolerance between objects in contact.
-    pub contact_tolerance: f32,
     /// Number of contact iterations.
     pub contact_iterations: u32,
     pub time_integration: TimeIntegration,

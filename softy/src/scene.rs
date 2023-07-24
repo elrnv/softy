@@ -284,12 +284,30 @@ impl SceneData {
     }
 }
 
+fn default_use_fixed() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FrictionalContactConfig {
+    /// Parameters controlling the contact and friction models.
+    #[serde(default)]
+    pub params: FrictionalContactParams,
+    /// Ids of colliding objects.
+    ///
+    /// the
+    pub object_ids: (usize, usize),
+    /// Also uses fixed vertices for collision.
+    #[serde(default = "default_use_fixed")]
+    pub use_fixed: bool,
+}
+
 /// Configuration of the scene excluding mesh data.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SceneConfig {
     pub sim_params: SimParams,
     pub materials: Vec<Material>,
-    pub frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
+    pub frictional_contacts: Vec<FrictionalContactConfig>,
     pub volume_zones: ZoneParams,
 }
 
@@ -343,12 +361,17 @@ impl SceneConfig {
     pub fn add_frictional_contact(
         &mut self,
         params: FrictionalContactParams,
-        obj_ids: (usize, usize),
+        object_ids: (usize, usize),
+        use_fixed: bool,
     ) -> &mut Self {
         // We can already weed out frictional contacts for pure static sims
         // since we already have the `SimParams`.
         if params.friction_params.is_none() || self.sim_params.time_step.is_some() {
-            self.frictional_contacts.push((params, obj_ids));
+            self.frictional_contacts.push(FrictionalContactConfig {
+                params,
+                object_ids,
+                use_fixed,
+            });
         }
         self
     }
@@ -457,9 +480,11 @@ impl Scene {
     pub fn add_frictional_contact(
         &mut self,
         params: FrictionalContactParams,
-        obj_ids: (usize, usize),
+        object_ids: (usize, usize),
+        use_fixed: bool,
     ) -> &mut Self {
-        self.config.add_frictional_contact(params, obj_ids);
+        self.config
+            .add_frictional_contact(params, object_ids, use_fixed);
         self
     }
 
@@ -539,8 +564,13 @@ impl Scene {
             .set_mesh(mesh)
             .set_materials(self.config.materials.clone())
             .set_volume_zones(self.config.volume_zones.clone());
-        for (fc_params, (obj, col)) in self.config.frictional_contacts.iter() {
-            solver_builder.add_frictional_contact(*fc_params, (*obj, *col));
+        for FrictionalContactConfig {
+            params,
+            object_ids: (obj, col),
+            use_fixed,
+        } in self.config.frictional_contacts.iter()
+        {
+            solver_builder.add_frictional_contact_with_fixed(*params, (*obj, *col), *use_fixed);
         }
         let mut solver = solver_builder.build::<f64>()?;
 

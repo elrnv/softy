@@ -18,14 +18,12 @@
                 rho: 0.9,
             ),
             derivative_test: 3,
-            friction_tolerance: 0.001,
-            contact_tolerance: 0.001,
             contact_iterations: 5,
             time_integration: BE,
             preconditioner: None,
             log_file: None,
             project_element_hessians: false,
-            adaptive_newton: false,
+            solver_type: Newton,
         ),
         materials: [
             Fixed((
@@ -85,16 +83,18 @@
             )),
         ],
         frictional_contacts: [
-            ((
-                kernel: Approximate(
-                    radius_multiplier: 1.0,
-                    tolerance: 0.000009999999747378752,
+            (
+                params: (
+                    kernel: Approximate(
+                        radius_multiplier: 1.0,
+                        tolerance: 0.000009999999747378752,
+                    ),
+                    tolerance: 0.001,
+                    contact_type: Point,
+                    contact_offset: 0.0,
                 ),
-                contact_type: Point,
-                contact_offset: 0.0,
-                use_fixed: false,
-                friction_params: None,
-            ), (0, 1)),
+                object_ids: (0, 1),
+            ),
         ],
         volume_zones: (
             zone_pressurizations: [

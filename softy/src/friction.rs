@@ -27,15 +27,19 @@ pub struct FrictionParams {
     pub print_level: u8,
 }
 
-impl From<crate::constraints::penalty_point_contact::FrictionParams> for FrictionParams {
+impl From<crate::constraints::penalty_point_contact::FrictionParams> for Option<FrictionParams> {
     fn from(fp: crate::constraints::FrictionParams) -> Self {
-        FrictionParams {
-            smoothing_weight: 0.0,
-            friction_forwarding: 0.0,
-            dynamic_friction: fp.dynamic_friction,
-            inner_iterations: 0,
-            tolerance: 0.0,
-            print_level: 0,
+        if fp.is_none() {
+            None
+        } else {
+            Some(FrictionParams {
+                smoothing_weight: 0.0,
+                friction_forwarding: 0.0,
+                dynamic_friction: fp.dynamic_friction,
+                inner_iterations: 0,
+                tolerance: 0.0,
+                print_level: 0,
+            })
         }
     }
 }

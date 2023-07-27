@@ -6,4 +6,6 @@ Cargo.lock
 **/render
 **/backup
 .vscode
+.idea
 **/build_*
+**/*.hipnc

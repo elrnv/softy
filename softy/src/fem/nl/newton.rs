@@ -1348,6 +1348,7 @@ where
                         // print_dense(j_dense.view());
                         //log::debug!("J singular values: {:?}", svd_values(j_dense.view()));
                         //write_jacobian_img(j_dense.view(), iterations);
+                        log::trace!("Checking jacobian in for inner Newton iteration");
 
                         let mut success = true;
                         for i in 0..j_dense.len() {
@@ -1356,7 +1357,7 @@ where
                                 let b = j_dense_ad.view().at(j).at(i).to_f64().unwrap();
                                 if !approx::relative_eq!(a, b, max_relative = 1e-6, epsilon = 1e-3)
                                 {
-                                    eprintln!("({},{}): {} vs {}", i, j, a, b);
+                                    log::trace!("({},{}): {} vs {}", i, j, a, b);
                                     success = false;
                                 }
                             }

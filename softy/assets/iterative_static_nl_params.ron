@@ -13,8 +13,6 @@ SimParams(
     ),
     line_search: BackTracking(c: 1e-4, rho: 0.9),
     derivative_test: 3,
-    friction_tolerance: 1e-5,
-    contact_tolerance: 1e-5,
     contact_iterations: 5,
     time_integration: BE,
     preconditioner: ApproximateJacobi,

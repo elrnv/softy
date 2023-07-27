@@ -504,7 +504,7 @@ fn sliding_tet_on_points() -> Result<(), Error> {
             radius_multiplier: 2.5,
             tolerance: 0.001,
         },
-        tolerance: 0.001,
+        tolerance: 0.00001,
         ..Default::default()
     };
 

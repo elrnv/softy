@@ -337,12 +337,19 @@ where
 
                         if contact_violation > 0.0 {
                             stage_result.contact_violations += 1;
+                            let factor = bump_ratio.max(2.0) as f32;
                             self.solver.problem_mut().frictional_contact_constraints
                                 [violating_constraint_index]
                                 .constraint
                                 .borrow_mut()
                                 .params
-                                .stiffness *= bump_ratio.max(2.0) as f32;
+                                .stiffness *= factor;
+                            self.solver.problem_mut().frictional_contact_constraints_ad
+                                [violating_constraint_index]
+                                .constraint
+                                .borrow_mut()
+                                .params
+                                .stiffness *= factor;
                         }
 
                         let max_step_violation = self.solver.problem().max_step_violation();
@@ -365,15 +372,17 @@ where
                         } else {
                             // Relax kappa
                             if largest_penalty == 0.0 {
-                                for fc in self
-                                    .solver
-                                    .problem_mut()
+                                let problem = self.solver.problem_mut();
+                                for (fc, fc_ad) in problem
                                     .frictional_contact_constraints
                                     .iter_mut()
+                                    .zip(problem.frictional_contact_constraints_ad.iter_mut())
                                 {
                                     let mut fc = fc.constraint.borrow_mut();
+                                    let mut fc_ad = fc_ad.constraint.borrow_mut();
                                     if fc.params.stiffness > 1.0e2 / fc.params.tolerance {
                                         fc.params.stiffness /= 2.0;
+                                        fc_ad.params.stiffness /= 2.0;
                                     }
                                 }
                             }

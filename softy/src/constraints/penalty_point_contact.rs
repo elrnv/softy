@@ -2048,10 +2048,10 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
     pub fn subtract_constraint_force(&self, mut f: Chunked3<&mut [T]>) {
         self.distance_jacobian_blocks_iter()
             .for_each(|(row, col, j)| {
-                // if col == 0 {
+                // if row == 0 && col == 0 {
                 //     eprintln!(
-                //         "contact ({row},0): {:?}",
-                //         -*j.as_tensor() * self.lambda[row]
+                //         "contact ({row},{col}): {:?}",
+                //         -*j.as_tensor() * self.contact_state.lambda[row]
                 //     );
                 // }
                 *f[col].as_mut_tensor() -= *j.as_tensor() * self.contact_state.lambda[row];

@@ -1150,7 +1150,7 @@ impl<T: Real64> NLProblem<T> {
             let timings = &mut *self.timings.borrow_mut();
 
             add_time!(timings.contact_force; fc_constraint.subtract_constraint_force(Chunked3::from_flat(r)));
-            // add_time!(timings.contact_force; fc_constraint.subtract_constraint_force(Chunked3::from_flat(f.as_mut_slice())));
+            // fc_constraint.subtract_constraint_force(Chunked3::from_flat(f.as_mut_slice()));
             // fc_constraint.subtract_constraint_force(Chunked3::from_flat(dbgr.as_mut_slice()));
         }
         // eprintln!("f = {:?}", &f);
@@ -1909,13 +1909,13 @@ impl<T: Real64> NLProblem<T> {
                     .constraint_hessian_indexed_values_iter(num_active_coords / 3)
                     .zip(vals[count..].iter_mut())
                     .map(|((_, val), out_val)| {
-                        // if idx.row == 10 && idx.col == 10 {
-                        // eprintln!(
-                        //     "contact jac ({:?}, {:?}): {:?}",
-                        //     idx.row,
-                        //     idx.col,
-                        //     -dqdv * force_multiplier * factor * val
-                        // );
+                        // if idx.row == 0 && idx.col == 0 {
+                        //     eprintln!(
+                        //         "contact jac ({:?}, {:?}): {:?}",
+                        //         idx.row,
+                        //         idx.col,
+                        //         -dqdv * force_multiplier * factor * val
+                        //     );
                         // }
                         *out_val = -dqdv * force_multiplier * factor * val;
                         // jac[idx.row][idx.col] += out_val.to_f64().unwrap();

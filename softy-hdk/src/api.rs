@@ -126,8 +126,6 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             max_iterations,
             max_outer_iterations,
             derivative_test,
-            friction_tolerance,
-            contact_tolerance,
             contact_iterations,
             time_integration,
             preconditioner,
@@ -187,8 +185,6 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             line_search,
             solver_type,
             derivative_test: derivative_test as u8,
-            friction_tolerance,
-            contact_tolerance,
             contact_iterations,
             time_integration: time_integration.into(),
             preconditioner: preconditioner.into(),
@@ -275,7 +271,7 @@ enum GenericFrictionalContactParams {
 
 fn get_frictional_contacts<'a>(
     params: &'a SimParams,
-) -> Vec<(GenericFrictionalContactParams, (usize, &'a [u32]))> {
+) -> Vec<(GenericFrictionalContactParams, (usize, &'a [u32]), bool)> {
     params
         .frictional_contacts
         .as_slice()
@@ -296,7 +292,8 @@ fn get_frictional_contacts<'a>(
                 friction_profile,
                 lagged_friction,
                 incomplete_friction_jacobian,
-                friction_inner_iterations,
+                friction_tolerance,
+                contact_tolerance,
                 ..
             } = *frictional_contact;
             let radius_multiplier = f64::from(radius_multiplier);
@@ -318,33 +315,29 @@ fn get_frictional_contacts<'a>(
                             i => panic!("Unrecognized kernel: {:?}", i),
                         },
                         contact_offset: f64::from(contact_offset),
-                        use_fixed,
-                        friction_params: if dynamic_cof == 0.0
-                            || static_cof == 0.0
-                            || friction_inner_iterations == 0
-                        {
-                            None
-                        } else {
-                            Some(softy::constraints::penalty_point_contact::FrictionParams {
+                        tolerance: contact_tolerance,
+                        stiffness: 1.0 / contact_tolerance,
+                        friction_params:
+                            softy::constraints::penalty_point_contact::FrictionParams {
                                 dynamic_friction: f64::from(dynamic_cof),
                                 static_friction: f64::from(static_cof),
                                 viscous_friction: f64::from(viscous_friction),
                                 stribeck_velocity: f64::from(stribeck_velocity),
                                 friction_profile: match friction_profile {
                                     FrictionProfile::Quadratic => softy::FrictionProfile::Quadratic,
-                                    FrictionProfile::Stribeck => softy::FrictionProfile::Stribeck,
                                     _ => softy::FrictionProfile::Stabilized,
                                 },
+                                epsilon: friction_tolerance as f64,
                                 lagged: lagged_friction,
                                 incomplete_jacobian: incomplete_friction_jacobian,
-                            })
-                        },
+                            },
                     },
                 ),
                 (
                     object_material_id as usize,
                     collider_material_ids.as_slice(),
                 ),
+                use_fixed,
             )
         })
         .collect()
@@ -361,6 +354,7 @@ trait SolverBuilder {
         &mut self,
         fc: GenericFrictionalContactParams,
         indices: (usize, usize),
+        use_fixed: bool,
     );
     fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error>;
 }
@@ -389,9 +383,10 @@ impl SolverBuilder for fem::nl::SolverBuilder {
         &mut self,
         fc: GenericFrictionalContactParams,
         indices: (usize, usize),
+        use_fixed: bool,
     ) {
         let GenericFrictionalContactParams::NL(fc) = fc;
-        fem::nl::SolverBuilder::add_frictional_contact(self, fc, indices);
+        fem::nl::SolverBuilder::add_frictional_contact_with_fixed(self, fc, indices, use_fixed);
     }
     fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error> {
         Ok(Arc::new(Mutex::new(fem::nl::SolverBuilder::build(self)?)))
@@ -438,10 +433,13 @@ pub(crate) fn register_new_solver(
 
     let frictional_contact_params = get_frictional_contacts(&params);
 
-    for (frictional_contact, indices) in frictional_contact_params.into_iter() {
+    for (frictional_contact, indices, use_fixed) in frictional_contact_params.into_iter() {
         for &collider_index in indices.1.iter() {
-            solver_builder
-                .add_frictional_contact(frictional_contact, (indices.0, collider_index as usize));
+            solver_builder.add_frictional_contact(
+                frictional_contact,
+                (indices.0, collider_index as usize),
+                use_fixed,
+            );
         }
     }
 

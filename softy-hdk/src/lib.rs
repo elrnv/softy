@@ -123,7 +123,6 @@ mod ffi {
     pub enum FrictionProfile {
         Stabilized,
         Quadratic,
-        Stribeck,
     }
 
     #[derive(Debug)]
@@ -154,6 +153,7 @@ mod ffi {
         pub friction_profile: FrictionProfile,
         pub lagged_friction: bool,
         pub incomplete_friction_jacobian: bool,
+        pub contact_tolerance: f32,
         pub friction_tolerance: f32,
         pub friction_inner_iterations: u32,
     }
@@ -175,9 +175,7 @@ mod ffi {
         pub compression_coefficients: Vec<f32>,
         pub hessian_approximation: Vec<u8>,
 
-        // TODO: move these into FrictionalContactParams.
-        pub friction_tolerance: f32, // epsilon
-        pub contact_tolerance: f32,  // delta
+        // TODO: move this into FrictionalContactParams.
         pub contact_iterations: u32,
 
         // Solver params

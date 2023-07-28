@@ -609,7 +609,6 @@ group {
         menu {
             "stabilized" "Stabilized"
             "quadratic" "Quadratic"
-            "stribeck" "Stribeck"
         }
     }
     parm {
@@ -925,9 +924,6 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
                     break;
                 case SOP_SoftyEnums::FrictionProfile::QUADRATIC:
                     fc_params.friction_profile = softy::FrictionProfile::Quadratic;
-                    break;
-                case SOP_SoftyEnums::FrictionProfile::STRIBECK:
-                    fc_params.friction_profile = softy::FrictionProfile::Stribeck;
                     break;
             }
             fc_params.lagged_friction = sopparms.getLaggedFriction();

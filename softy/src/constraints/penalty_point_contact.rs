@@ -627,23 +627,142 @@ fn quadratic_sliding_profile_derivative<T: Real>(x: T, epsilon: T) -> T {
     }
 }
 
+/// Helper function to compute the falloff anti-derivative.
+///
+/// Input is assumed to be non-negative.
+///
+/// We use the compact cubic falloff, which approximates compact cosine
+/// falloff (see https://www.desmos.com/calculator/ra7t8ddwx6).
+#[allow(dead_code)]
+fn falloff_int<T: Real>(mut x: T, w: T) -> T {
+    let half = T::from(0.5).unwrap();
+    if x > w {
+        half
+    } else {
+        if w > T::zero() {
+            x /= w;
+            let x3 = x * x * x;
+            let x4 = x3 * x;
+            half * x4 - x3 + x
+        } else {
+            T::zero()
+        }
+    }
+}
+
+/// Helper function to compute the falloff.
+///
+/// Input is assumed to be non-negative.
+///
+/// We use the compact cubic falloff, which approximates compact cosine
+/// falloff (see https://www.desmos.com/calculator/ra7t8ddwx6).
+fn falloff<T: Real>(x: T, w: T) -> T {
+    if x > w {
+        T::zero()
+    } else {
+        let _2 = T::from(2.0).unwrap();
+        let xmw = x - w;
+        let w3 = w * w * w;
+        if w3 > T::zero() {
+            (_2 * x + w) * xmw * xmw / w3
+        } else {
+            T::one()
+        }
+    }
+}
+
+/// Derivative of the falloff function.
+///
+/// Input is assumed to be non-negative.
+///
+/// See https://www.desmos.com/calculator/mag1naq3vk .
+fn dfalloff<T: Real>(x: T, w: T) -> T {
+    let _1 = T::one();
+    if x > w {
+        T::zero()
+    } else {
+        let _6 = T::from(6.0).unwrap();
+        let w2 = w * w;
+        if w2 > T::zero() {
+            _6 * x * (x - w) / w2
+        } else {
+            T::zero()
+        }
+    }
+}
+
 /// The sliding potential.
 ///
 /// This is the antiderivative of the function eta in the paper.
 #[inline]
-pub fn eta_int<T: Real>(v: Vector2<T>, factor: T, epsilon: T, is: impl FnOnce(T, T) -> T) -> T {
-    factor * is(v.norm(), epsilon)
+pub fn eta_int<T: Real>(
+    v: Vector2<T>,
+    factor: T,
+    friction_params: &FrictionParams,
+    is: impl FnOnce(T, T) -> T,
+) -> T {
+    let &FrictionParams {
+        epsilon,
+        // dynamic_friction,
+        // static_friction,
+        // stribeck_velocity,
+        // viscous_friction,
+        ..
+    } = friction_params;
+
+    // v /= T::from(stribeck_velocity).unwrap();
+    let v_norm = v.norm();
+    // let v_norm2 = v_norm*v_norm;
+
+    let eps = T::from(epsilon).unwrap();
+    // let mu_d = T::from(dynamic_friction).unwrap();
+    // let mu_s = T::from(static_friction).unwrap();
+    // let k = T::from(viscous_friction).unwrap();
+    // let h = falloff(v_norm);
+
+    // let half = T::from(0.5).unwrap();
+
+    // TODO: optional: implement this for lagged friction.
+    // let static_part = (mu_s - mu_d) * h) * is(v_norm, eps)
+    // factor * is(v.norm(), eps) // Simplified model.
+    // factor * (mu_d * is(v_norm, eps)) + static_part) + half * k * v_norm2
+    factor * is(v_norm, eps) // Simplified model.
 }
 
 /// The full sliding profile including 1D direction.
 ///
 /// This is the function eta in the paper.
+///
+/// See [desmos plot](https://www.desmos.com/calculator/nniv0lnlol) for complete friction model.
 #[inline]
-pub fn eta<T: Real>(v: Vector2<T>, factor: T, epsilon: T, s: impl FnOnce(T, T) -> T) -> Vector2<T> {
+pub fn eta<T: Real>(
+    v: Vector2<T>,
+    factor: T,
+    friction_params: &FrictionParams,
+    s: impl FnOnce(T, T) -> T,
+) -> Vector2<T> {
     // This is similar to function s but with the norm of v multiplied through to avoid
     // degeneracies.
     // let s = |x| stabilized_sliding_profile(x, epsilon);
-    v * (factor * s(v.norm(), epsilon))
+    let &FrictionParams {
+        epsilon,
+        dynamic_friction,
+        static_friction,
+        stribeck_velocity,
+        viscous_friction,
+        ..
+    } = friction_params;
+
+    let vs = T::from(stribeck_velocity).unwrap();
+    let v_norm = v.norm();
+
+    let eps = T::from(epsilon).unwrap();
+    let mu_d = T::from(dynamic_friction).unwrap();
+    let mu_s = T::from(static_friction).unwrap();
+    let k = T::from(viscous_friction).unwrap();
+    let h = falloff(v_norm, vs);
+    //v * (factor * s(v_norm, epsilon)) // Simplified model.
+    v * (factor * (mu_d + (mu_s - mu_d) * h) * s(v_norm, eps) + k)
 }
 
 /// Jacobian of the full directional 1D sliding profile
@@ -651,16 +770,33 @@ pub fn eta<T: Real>(v: Vector2<T>, factor: T, epsilon: T, s: impl FnOnce(T, T) -
 pub fn eta_jac<T: Real>(
     v: Vector2<T>,
     factor: T,
-    epsilon: T,
+    friction_params: &FrictionParams,
     s: impl FnOnce(T, T) -> T,
     ds: impl FnOnce(T, T) -> T,
 ) -> Matrix2<T> {
-    let s = |x| s(x, epsilon);
-    let ds = |x| ds(x, epsilon);
-    let norm_v = v.norm();
-    let mut out = Matrix2::identity() * (s(norm_v) * factor);
-    if norm_v > T::zero() {
-        out += v * (ds(norm_v) / norm_v) * (v.transpose() * factor);
+    let &FrictionParams {
+        epsilon,
+        dynamic_friction,
+        static_friction,
+        stribeck_velocity,
+        viscous_friction,
+        ..
+    } = friction_params;
+
+    let eps = T::from(epsilon).unwrap();
+    let mu_d = T::from(dynamic_friction).unwrap();
+    let mu_s = T::from(static_friction).unwrap();
+    let k = T::from(viscous_friction).unwrap();
+    let vs = T::from(stribeck_velocity).unwrap();
+    let v_norm = v.norm();
+    let s = s(v_norm, eps);
+    let ds = ds(v_norm, eps);
+    let h = falloff(v_norm, vs);
+    let dh = dfalloff(v_norm, vs);
+    let mut out = Matrix2::identity() * (k + (mu_d + (mu_s - mu_d) * h) * s * factor);
+    if v_norm > T::zero() {
+        out +=
+            v * (mu_d * ds + (mu_s - mu_d) * (dh * s + h * ds)) * (v.transpose() * factor / v_norm);
     }
     out
 }
@@ -682,13 +818,21 @@ impl FrictionProfile {
     ///
     /// This is the antiderivative of the function eta in the paper.
     #[inline]
-    pub fn potential<T: Real>(self, v: Vector2<T>, factor: T, epsilon: T) -> T {
+    pub fn potential<T: Real>(
+        self,
+        v: Vector2<T>,
+        factor: T,
+        friction_params: &FrictionParams,
+    ) -> T {
         match self {
-            FrictionProfile::Stabilized => {
-                eta_int(v, factor, epsilon, stabilized_sliding_potential::<T>)
-            }
+            FrictionProfile::Stabilized => eta_int(
+                v,
+                factor,
+                friction_params,
+                stabilized_sliding_potential::<T>,
+            ),
             FrictionProfile::Quadratic => {
-                eta_int(v, factor, epsilon, quadratic_sliding_potential::<T>)
+                eta_int(v, factor, friction_params, quadratic_sliding_potential::<T>)
             }
         }
     }
@@ -696,29 +840,45 @@ impl FrictionProfile {
     /// The full sliding profile including 1D direction.
     ///
     /// This is the function eta in the paper.
+    ///
+    /// The complete friction model is illustrated on [Desmos](https://www.desmos.com/calculator/fpypkf9zsx).
     #[inline]
-    pub fn profile<T: Real>(self, v: Vector2<T>, factor: T, epsilon: T) -> Vector2<T> {
+    pub fn profile<T: Real>(
+        self,
+        v: Vector2<T>,
+        factor: T,
+        friction_params: &FrictionParams,
+    ) -> Vector2<T> {
         match self {
-            FrictionProfile::Stabilized => eta(v, factor, epsilon, stabilized_sliding_profile::<T>),
-            FrictionProfile::Quadratic => eta(v, factor, epsilon, quadratic_sliding_profile::<T>),
+            FrictionProfile::Stabilized => {
+                eta(v, factor, friction_params, stabilized_sliding_profile::<T>)
+            }
+            FrictionProfile::Quadratic => {
+                eta(v, factor, friction_params, quadratic_sliding_profile::<T>)
+            }
         }
     }
 
     /// Jacobian of the full directional 1D sliding profile
     #[inline]
-    pub fn jacobian<T: Real>(self, v: Vector2<T>, factor: T, epsilon: T) -> Matrix2<T> {
+    pub fn jacobian<T: Real>(
+        self,
+        v: Vector2<T>,
+        factor: T,
+        friction_params: &FrictionParams,
+    ) -> Matrix2<T> {
         match self {
             FrictionProfile::Stabilized => eta_jac(
                 v,
                 factor,
-                epsilon,
+                friction_params,
                 stabilized_sliding_profile::<T>,
                 stabilized_sliding_profile_derivative::<T>,
             ),
             FrictionProfile::Quadratic => eta_jac(
                 v,
                 factor,
-                epsilon,
+                friction_params,
                 quadratic_sliding_profile::<T>,
                 quadratic_sliding_profile_derivative::<T>,
             ),
@@ -2071,7 +2231,6 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
 
     pub fn lagged_friction_potential(&self, v: Chunked3<&[T]>, dqdv: T) -> T {
         // Compute friction potential.
-        let epsilon = self.params.friction_params.epsilon;
         let state_prev = &self.contact_state_prev;
         let lambda = &state_prev.lambda;
         let constrained_collider_vertices = state_prev.constrained_collider_vertices.as_slice();
@@ -2097,22 +2256,21 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         assert_eq!(lambda.len(), vc.len());
 
         // Compute sliding bases velocity product.
-        let params = self.params.friction_params;
+        let params = &self.params.friction_params;
 
         let eta = params.friction_profile;
-        let friction_potential = vc
+        let friction_potential: T = vc
             .iter()
             .zip(lambda.iter())
             .enumerate()
             .map(|(i, (vc, lambda))| {
                 let [_v1, v1, v2] = contact_basis.to_contact_coordinates(*vc, i);
                 let vc_t = [v1, v2].into_tensor();
-                eta.potential(vc_t, *lambda, T::from(epsilon).unwrap())
+                eta.potential(vc_t, *lambda, params)
             })
             .sum();
 
-        let mu = T::from(params.dynamic_friction).unwrap();
-        mu * friction_potential * dqdv
+        friction_potential * dqdv
     }
 
     pub fn subtract_constraint_force_par(&self, mut f: Chunked3<&mut [T]>) {
@@ -2231,7 +2389,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         collider_vertex_indices: &[usize],
         // Velocity
         v: Chunked3<&[T]>,
-        friction_params: FrictionParams,
+        friction_params: &FrictionParams,
     ) -> Chunked3<Vec<T>> {
         let lambda = &state.lambda;
 
@@ -2260,10 +2418,8 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             .for_each(|(i, (vc, lambda))| {
                 let [_v0, v1, v2] = state.contact_basis.to_contact_coordinates(*vc, i);
                 let vc_t = [v1, v2].into_tensor();
-                let vc_t_smoothed = eta
-                    .profile(vc_t, *lambda, T::from(friction_params.epsilon).unwrap())
-                    .into_data();
-                *vc = [T::zero(), vc_t_smoothed[0], vc_t_smoothed[1]];
+                let fc_smoothed = eta.profile(vc_t, *lambda, friction_params).into_data();
+                *vc = [T::zero(), fc_smoothed[0], fc_smoothed[1]];
             });
         vc
     }
@@ -2340,21 +2496,24 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             &self.implicit_surface_vertex_indices,
             &self.collider_vertex_indices,
             v,
-            params,
+            &params,
         );
 
         let t_vc = Instant::now();
 
         let jac = state.contact_jacobian.as_ref().unwrap();
-        let mu = T::from(params.dynamic_friction).unwrap();
 
         // Compute `vc <- -mu B(x) vc`.
         vc.view_mut().into_iter().enumerate().for_each(|(i, v)| {
             let vc = v.as_tensor();
-            *v = Vector3::from(state.contact_basis.from_contact_coordinates(*vc * (-mu), i))
-                //.cast::<f64>()
-                //.cast::<T>()
-                .into_data();
+            *v = Vector3::from(
+                state
+                    .contact_basis
+                    .from_contact_coordinates(*vc * (-T::one()), i),
+            )
+            //.cast::<f64>()
+            //.cast::<T>()
+            .into_data();
         });
 
         // Compute object force (compute `f = J'(x)vc`)
@@ -2667,8 +2826,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         let eta = params.friction_params.friction_profile;
         let kappa = T::from(params.stiffness).unwrap();
         let delta = T::from(params.tolerance).unwrap();
-        let mu = T::from(params.friction_params.dynamic_friction).unwrap();
-        let epsilon = T::from(params.friction_params.epsilon).unwrap();
+        let friction_params = &params.friction_params;
 
         assert_eq!(vc.len(), lambda.len());
 
@@ -2676,7 +2834,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         vc.view_mut().iter_mut().enumerate().for_each(|(i, vc)| {
             let [_, v1, v2] = contact_basis.to_contact_coordinates(*vc, i);
             let vc_t = [v1, v2].into_tensor();
-            let vc_t_smoothed = eta.profile(vc_t, mu, T::from(epsilon).unwrap()).into_data();
+            let vc_t_smoothed = eta.profile(vc_t, T::one(), friction_params).into_data();
             //dbg!(eta(vc_t, T::one(), T::from(1e-5).unwrap()).into_data());
             *vc = contact_basis
                 .from_contact_coordinates([T::zero(), vc_t_smoothed[0], vc_t_smoothed[1]], i)
@@ -2743,7 +2901,6 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
         dqdv: T,
         max_index: usize,
     ) -> Option<impl Iterator<Item = (usize, usize, T)> + 'a> {
-        let epsilon = self.params.friction_params.epsilon;
         let params = self.params.friction_params.into_option()?;
 
         let t_begin = Instant::now();
@@ -2774,11 +2931,11 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             &self.implicit_surface_vertex_indices,
             &self.collider_vertex_indices,
             v,
-            self.params.friction_params.into_option()?,
+            &self.params.friction_params.into_option()?,
         );
         assert_eq!(c.len(), num_constraints);
 
-        let mu = T::from(self.params.friction_params.dynamic_friction).unwrap();
+        let friction_params = &self.params.friction_params;
 
         let t_constraint_friction_force = Instant::now();
 
@@ -2859,8 +3016,6 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
             let surf = &state.point_constraint.implicit_surface;
             let query_points = &state.point_constraint.collider_vertex_positions;
 
-            // The following should be multiplied by mu.
-
             // eprintln!("Amult = {:?}", &self.friction_jacobian_workspace.bc.as_arrays());
 
             // Construct full change of basis matrix B
@@ -2878,7 +3033,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                     let [_, v1, v2] = state
                         .contact_basis
                         .to_contact_coordinates(*vc, constraint_idx);
-                    let mtx = eta.jacobian([v1, v2].into(), *lambda, T::from(epsilon).unwrap());
+                    let mtx = eta.jacobian([v1, v2].into(), *lambda, friction_params);
                     std::iter::once([T::zero(); 3])
                         .chain(std::iter::once([T::zero(), mtx[0][0], mtx[0][1]]))
                         .chain(std::iter::once([T::zero(), mtx[1][0], mtx[1][1]]))
@@ -2933,7 +3088,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                         .flat_map(move |(row_idx, row)| {
                             // (E)
                             row.into_iter().map(move |(col_idx, block)| {
-                                (row_idx, col_idx, *block.into_arrays().as_tensor() * mu)
+                                (row_idx, col_idx, *block.into_arrays().as_tensor())
                             })
                         })
                         // .inspect(|(i, j, m)| {
@@ -2988,7 +3143,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                                 .flat_map(move |(row_idx, row)| {
                                     // (E)
                                     row.into_iter().map(move |(col_idx, block)| {
-                                        (row_idx, col_idx, *block.into_arrays().as_tensor() * mu)
+                                        (row_idx, col_idx, *block.into_arrays().as_tensor())
                                     })
                                 }), // .inspect(|(i, j, m)| {
                                     //     if *i == 9 && *j == 9 {
@@ -3020,7 +3175,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                     .iter()
                     .enumerate()
                     .map(|(i, &v)| {
-                        (contact_basis.from_contact_coordinates(v, i).into_tensor() * (mu * dqdv))
+                        (contact_basis.from_contact_coordinates(v, i).into_tensor() * dqdv)
                             .into_data()
                     })
                     .collect();
@@ -3196,11 +3351,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                         .flat_map(move |(row_idx, row)| {
                             // (B)
                             row.into_iter().map(move |(col_idx, block)| {
-                                (
-                                    row_idx,
-                                    col_idx,
-                                    *block.into_arrays().as_tensor() * (mu * dqdv),
-                                )
+                                (row_idx, col_idx, *block.into_arrays().as_tensor() * dqdv)
                             })
                         }), //.inspect(|(i,j,m)| log::trace!("B:({},{}): {:?}", i,j,(*m).into_data())) ,
                 )
@@ -3212,11 +3363,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                         .flat_map(move |(row_idx, row)| {
                             // (C)
                             row.into_iter().map(move |(col_idx, block)| {
-                                (
-                                    row_idx,
-                                    col_idx,
-                                    *block.into_arrays().as_tensor() * (mu * dqdv),
-                                )
+                                (row_idx, col_idx, *block.into_arrays().as_tensor() * dqdv)
                             })
                         }), //.inspect(|(i,j,m)| log::trace!("C:({},{}): {:?}", i,j,(*m).into_data())) ,
                 )
@@ -3228,11 +3375,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                         .flat_map(move |(row_idx, row)| {
                             // (D)
                             row.into_iter().map(move |(col_idx, block)| {
-                                (
-                                    row_idx,
-                                    col_idx,
-                                    *block.into_arrays().as_tensor() * (mu * dqdv),
-                                )
+                                (row_idx, col_idx, *block.into_arrays().as_tensor() * dqdv)
                             })
                         }), //.inspect(|(i,j,m)| log::trace!("D:({},{}): {:?}", i,j,(*m).into_data())) ,
                 )
@@ -3244,7 +3387,7 @@ impl<T: Real> PenaltyPointContactConstraint<T> {
                         .flat_map(move |(row_idx, row)| {
                             // (E)
                             row.into_iter().map(move |(col_idx, block)| {
-                                (row_idx, col_idx, *block.into_arrays().as_tensor() * mu)
+                                (row_idx, col_idx, *block.into_arrays().as_tensor())
                             })
                         }), // .inspect(|(i, j, m)| {
                             //     if *i == 4 && *j == 4 {
@@ -3712,17 +3855,22 @@ mod tests {
     fn eta_potential_derivative() {
         let eta_jac_tester = |friction_profile: FrictionProfile, x: [f64; 2]| {
             let factor = 1.0;
-            let epsilon = 0.1;
+            let friction_params = FrictionParams {
+                dynamic_friction: 1.0,
+                static_friction: 1.0,
+                epsilon: 0.1,
+                ..Default::default()
+            };
             let x = x.into_tensor();
-            let df_dv = friction_profile.profile(x, factor, epsilon);
+            let df_dv = friction_profile.profile(x, factor, &friction_params);
             let mut v = x.mapd(|x| F1::cst(x));
             v[0] = F1::var(v[0]);
-            let f = friction_profile.potential(v, factor.into(), epsilon.into());
+            let f = friction_profile.potential(v, factor.into(), &friction_params);
             let df_dv0_ad = f.deriv();
             assert_relative_eq!(df_dv0_ad, df_dv[0], max_relative = 1e-8);
             v[0] = F1::cst(v[0]);
             v[1] = F1::var(v[1]);
-            let f = friction_profile.potential(v, factor.into(), epsilon.into());
+            let f = friction_profile.potential(v, factor.into(), &friction_params);
             let df_dv1_ad = f.deriv();
             assert_relative_eq!(df_dv1_ad, df_dv[1], max_relative = 1e-8);
         };
@@ -3743,18 +3891,23 @@ mod tests {
     fn eta_derivative() {
         let eta_jac_tester = |friction_profile: FrictionProfile| {
             let factor = 1.0;
-            let epsilon = 0.1;
+            let friction_params = FrictionParams {
+                dynamic_friction: 1.0,
+                static_friction: 1.0,
+                epsilon: 0.1,
+                ..Default::default()
+            };
             let x = [-0.1, 0.9].into_tensor();
-            let df_dv = friction_profile.jacobian(x, factor, epsilon);
+            let df_dv = friction_profile.jacobian(x, factor, &friction_params);
             let mut v = x.mapd(|x| F1::cst(x));
             v[0] = F1::var(v[0]);
-            let f = friction_profile.profile(v, factor.into(), epsilon.into());
+            let f = friction_profile.profile(v, factor.into(), &friction_params);
             let df_dv0_ad = f.mapd(|x| x.deriv());
             assert_relative_eq!(df_dv0_ad[0], df_dv[0][0]);
             assert_relative_eq!(df_dv0_ad[1], df_dv[1][0]);
             v[0] = F1::cst(v[0]);
             v[1] = F1::var(v[1]);
-            let f = friction_profile.profile(v, factor.into(), epsilon.into());
+            let f = friction_profile.profile(v, factor.into(), &friction_params);
             let df_dv1_ad = f.mapd(|x| x.deriv());
             assert_relative_eq!(df_dv1_ad[0], df_dv[0][1]);
             assert_relative_eq!(df_dv1_ad[1], df_dv[1][1]);
@@ -3767,20 +3920,25 @@ mod tests {
     #[test]
     fn eta_derivative_near_zero() {
         let factor = 1.0;
-        let epsilon = 0.1;
+        let friction_params = FrictionParams {
+            dynamic_friction: 1.0,
+            static_friction: 1.0,
+            epsilon: 0.1,
+            ..Default::default()
+        };
         let eta_jac_tester = |fp: FrictionProfile| {
             for i in 0..10 {
                 let x = [0.0 + 0.0001 * i as f64, 0.0].into_tensor();
-                let df_dv = fp.jacobian(x, factor, epsilon);
+                let df_dv = fp.jacobian(x, factor, &friction_params);
                 let mut v = x.mapd(|x| F1::cst(x));
                 v[0] = F1::var(v[0]);
-                let f = fp.profile(v, factor.into(), epsilon.into());
+                let f = fp.profile(v, factor.into(), &friction_params);
                 let df_dv0_ad = f.mapd(|x| x.deriv());
                 assert_relative_eq!(df_dv0_ad[0], df_dv[0][0]);
                 assert_relative_eq!(df_dv0_ad[1], df_dv[1][0]);
                 v[0] = F1::cst(v[0]);
                 v[1] = F1::var(v[1]);
-                let f = fp.profile(v, factor.into(), epsilon.into());
+                let f = fp.profile(v, factor.into(), &friction_params);
                 let df_dv1_ad = f.mapd(|x| x.deriv());
                 assert_relative_eq!(df_dv1_ad[0], df_dv[0][1]);
                 assert_relative_eq!(df_dv1_ad[1], df_dv[1][1]);

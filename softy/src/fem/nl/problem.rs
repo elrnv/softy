@@ -2238,7 +2238,6 @@ impl<T: Real64> NLProblem<T> {
                 .as_slice();
             let contact_basis = &constraint.contact_state.contact_basis;
 
-            let mu = T::from(friction_params.dynamic_friction).unwrap();
             let jac = constraint.contact_state.contact_jacobian.as_ref().unwrap();
             let mut vc = jac.mul(
                 vtx_vel,
@@ -2257,11 +2256,10 @@ impl<T: Real64> NLProblem<T> {
                 let vc = contact_basis.to_contact_coordinates(*scale_contact, contact_idx);
                 let lambda = -ContactPenalty::new(delta).db(d);
                 let v2 = Vector2::from([vc[1], vc[2]]);
-                let mtx = friction_params.friction_profile.jacobian(
-                    v2,
-                    lambda,
-                    T::from(friction_params.epsilon).unwrap(),
-                ) * (kappa * mu * h * h);
+                let mtx = friction_params
+                    .friction_profile
+                    .jacobian(v2, lambda, &friction_params)
+                    * (kappa * h * h);
                 let eta_jac = [
                     [T::zero(); 3],
                     [T::zero(), mtx[0][0], mtx[0][1]],

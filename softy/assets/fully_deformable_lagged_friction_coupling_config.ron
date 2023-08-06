@@ -81,20 +81,23 @@
             )),
         ],
         frictional_contacts: [
-            ((
-                kernel: Approximate(
-                    radius_multiplier: 1.0,
-                    tolerance: 0.000009999999747378752,
+            (
+                params: (
+                    kernel: Approximate(
+                        radius_multiplier: 1.0,
+                        tolerance: 0.000009999999747378752,
+                    ),
+                    contact_offset: 0.0,
+                    use_fixed: false,
+                    friction_params: Some((
+                        dynamic_friction: 1.0,
+                        friction_profile: Quadratic,
+                        lagged: true,
+                        incomplete_jacobian: false,
+                    )),
                 ),
-                contact_offset: 0.0,
-                use_fixed: false,
-                friction_params: Some((
-                    dynamic_friction: 1.0,
-                    friction_profile: Quadratic,
-                    lagged: true,
-                    incomplete_jacobian: false,
-                )),
-            ), (0, 1)),
+                object_ids: (0, 1)
+            ),
         ],
         volume_zones: (
             zone_pressurizations: [

@@ -1675,7 +1675,7 @@ mod tests {
             pub base_radius: f64,
             pub bg_field_params: super::BackgroundFieldParams,
             pub surface_topo: Vec<[usize; 3]>,
-            pub surface_vertex_positions: Vec<super::Vector3<f64>>,
+            pub surface_vertex_positions: Vec<[f64; 3]>,
             pub samples: super::Samples<f64>,
             pub max_step: f64,
             pub query_neighborhood: std::cell::RefCell<Neighborhood>,

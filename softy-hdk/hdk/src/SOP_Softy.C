@@ -299,6 +299,14 @@ group {
             default { "0.0" }
             range { 0.0 1.0 }
         }
+        parm {
+            name "contacttolerance#"
+            cppname "ContactTolerance"
+            label "Contact Tolerance"
+            type log
+            default { "" }
+            range { 0.0 1.0 }
+        }
 
         parm {
             name "usefixed#"
@@ -361,6 +369,31 @@ group {
                 type integer
                 default { "50" }
                 range { 0 10 }
+            }
+            parm {
+                name "frictionprofile#"
+                cppname "FrictionProfile"
+                label "Friction Profile"
+                type ordinal
+                default { "0" }
+                menu {
+                    "stabilized" "Stabilized"
+                    "quadratic" "Quadratic"
+                }
+            }
+            parm {
+                name "laggedfriction#"
+                cppname "LaggedFriction"
+                label "Lagged Friction"
+                type toggle
+                default { "off" }
+            }
+            parm {
+                name "incompletefrictionjacobian#"
+                cppname "IncompleteFrictionJacobian"
+                label "Incomplete Friction Jacobian (ADD)"
+                type toggle
+                default { "off" }
             }
         }
 
@@ -505,9 +538,9 @@ group {
     parm {
         name    "residualcriterion"
         cppname "ResidualCriterion"
-        label ""
-        nolabel
+        label "residualcriterion"
         type    toggle
+        nolabel
         joinnext
         default { "on" }
     }
@@ -523,9 +556,9 @@ group {
     parm {
         name    "accelerationcriterion"
         cppname "AccelerationCriterion"
-        label ""
-        nolabel
+        label   "accelerationcriterion"
         type    toggle
+        nolabel
         joinnext
         default { "off" }
     }
@@ -541,9 +574,9 @@ group {
     parm {
         name    "velocitycriterion"
         cppname "VelocityCriterion"
-        label ""
-        nolabel
+        label   "velocitycriterion"
         type    toggle
+        nolabel
         joinnext
         default { "on" }
     }
@@ -576,54 +609,12 @@ group {
     }
 
     parm {
-        name "frictiontolerance"
-        cppname "FrictionTolerance"
-        label "Friction Tolerance"
-        type log
-        default { "1e-5" }
-        range { 0.0 1.0 }
-    }
-
-    parm {
-        name "contacttolerance"
-        cppname "ContactTolerance"
-        label "Contact Tolerance"
-        type log
-        default { "1e-5" }
-        range { 0.0 1.0 }
-    }
-    parm {
         name "contactiterations"
         cppname "ContactIterations"
         label "Contact Iterations"
         type integer
         default { "5" }
         range { 0 50 }
-    }
-    parm {
-        name "frictionprofile"
-        cppname "FrictionProfile"
-        label "Friction Profile"
-        type ordinal
-        default { "0" }
-        menu {
-            "stabilized" "Stabilized"
-            "quadratic" "Quadratic"
-        }
-    }
-    parm {
-        name "laggedfriction"
-        cppname "LaggedFriction"
-        label "Lagged Friction"
-        type toggle
-        default { "off" }
-    }
-    parm {
-        name "incompletefrictionjacobian"
-        cppname "IncompleteFrictionJacobian"
-        label "Incomplete Friction Jacobian (ADD)"
-        type toggle
-        default { "off" }
     }
     parm {
         name "projecthessians"
@@ -909,6 +900,7 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
         fc_params.radius_multiplier = sop_fc.radiusmult;
         fc_params.smoothness_tolerance = sop_fc.smoothtol;
         fc_params.contact_offset = sop_fc.contactoffset;
+        fc_params.contact_tolerance = sop_fc.contacttolerance;
         fc_params.use_fixed = sop_fc.usefixed;
         if (sop_fc.friction)
         {
@@ -917,7 +909,7 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
             fc_params.viscous_friction = sop_fc.viscousfriction;
             fc_params.stribeck_velocity = sop_fc.stribeckvelocity;
             fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
-            switch (static_cast<SOP_SoftyEnums::FrictionProfile>(sopparms.getFrictionProfile()))
+            switch (static_cast<SOP_SoftyEnums::FrictionProfile>(sop_fc.frictionprofile))
             {
                 case SOP_SoftyEnums::FrictionProfile::STABILIZED:
                     fc_params.friction_profile = softy::FrictionProfile::Stabilized;
@@ -926,8 +918,8 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
                     fc_params.friction_profile = softy::FrictionProfile::Quadratic;
                     break;
             }
-            fc_params.lagged_friction = sopparms.getLaggedFriction();
-            fc_params.incomplete_friction_jacobian = sopparms.getIncompleteFrictionJacobian();
+            fc_params.lagged_friction = sop_fc.laggedfriction;
+            fc_params.incomplete_friction_jacobian = sop_fc.incompletefrictionjacobian;
         }
         else
         {
@@ -940,8 +932,6 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
 
     sim_params.project_element_hessians = sopparms.getProjectHessians();
     sim_params.derivative_test = sopparms.getDerivativeTest();
-    sim_params.friction_tolerance = sopparms.getFrictionTolerance();
-    sim_params.contact_tolerance = sopparms.getContactTolerance();
     sim_params.contact_iterations = sopparms.getContactIterations();
 
     return std::make_pair(sim_params, collider_material_id_parse_error);

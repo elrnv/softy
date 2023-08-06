@@ -196,11 +196,6 @@ mod ffi {
         pub time_integration: TimeIntegration,
         pub preconditioner: Preconditioner,
         pub project_element_hessians: bool,
-
-        // Ipopt
-        pub mu_strategy: MuStrategy,
-        pub max_gradient_scaling: f32,
-        pub print_level: u32,
         pub derivative_test: u32,
     }
 

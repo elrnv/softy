@@ -89,12 +89,12 @@
                     ),
                     contact_offset: 0.0,
                     use_fixed: false,
-                    friction_params: Some((
+                    friction_params: (
                         dynamic_friction: 1.0,
                         friction_profile: Quadratic,
                         lagged: true,
                         incomplete_jacobian: false,
-                    )),
+                    ),
                 ),
                 object_ids: (0, 1)
             ),

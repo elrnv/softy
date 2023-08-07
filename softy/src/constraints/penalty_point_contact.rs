@@ -1436,18 +1436,29 @@ fn distance_jacobian_blocks_iter_fn<'a, T: Real>(
         )
 }
 
+fn default_epsilon() -> f64 {
+    0.0001
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct FrictionParams {
     pub dynamic_friction: f64,
+    #[serde(default)]
     pub static_friction: f64,
+    #[serde(default)]
     pub viscous_friction: f64,
+    #[serde(default)]
     pub stribeck_velocity: f64,
     // Friction tolerance
+    #[serde(default = "default_epsilon")]
     pub epsilon: f64,
+    #[serde(default)]
     pub friction_profile: FrictionProfile,
     /// Use lagged friction.
+    #[serde(default)]
     pub lagged: bool,
     /// Use Jacobian approximation
+    #[serde(default)]
     pub incomplete_jacobian: bool,
 }
 
@@ -1467,6 +1478,10 @@ impl FrictionParams {
     }
 }
 
+fn default_tolerance() -> f32 {
+    0.0001
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FrictionalContactParams {
     pub kernel: implicits::KernelType,
@@ -1482,6 +1497,7 @@ pub struct FrictionalContactParams {
     /// Distance from the surface along which a non-zero contact penalty is applied.
     ///
     /// This is typically denoted by delta or dhat in literature involving contacts.
+    #[serde(default = "default_tolerance")]
     pub tolerance: f32,
     #[serde(skip_serializing_if = "FrictionParams::is_none", default)]
     pub friction_params: FrictionParams,

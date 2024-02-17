@@ -8,7 +8,7 @@ fn main() {
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
 
     let header_file = "cimplicits.h";
-    let output_file = target_dir().join(header_file.clone()).display().to_string();
+    let output_file = target_dir().join(header_file).display().to_string();
 
     let mut config: cbindgen::Config = Default::default();
 
@@ -23,7 +23,7 @@ fn main() {
         .write_to_file(&output_file);
 
     // Copy artifact to where CMake can find it easily.
-    fs::copy(&output_file, &cmake_target_dir().join(header_file.clone())).unwrap();
+    fs::copy(&output_file, &cmake_target_dir().join(header_file)).unwrap();
 
     if cfg!(target_os = "linux") {
         // Set soname on linux to make this lib more portable.

@@ -2,7 +2,7 @@
 name = "cimplicits"
 version = "0.3.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [lib]
 name = "cimplicits"

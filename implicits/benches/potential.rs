@@ -23,7 +23,7 @@ fn potential_benchmark(c: &mut Criterion) {
         outer_divs: 100,
         inner_divs: 100,
     }
-    .build();
+    .build_polymesh();
     let mut grid = GridBuilder {
         rows: 100,
         cols: 100,
@@ -44,10 +44,10 @@ fn potential_benchmark(c: &mut Criterion) {
 
     let jac1 = query_surf
         .surface_jacobian_indexed_block_par_iter(&mut pos)
-        .collect::<Vec<_>>();
+        .collect::<Vec<(_, _, [f64; 3])>>();
     let jac2 = query_surf
         .surface_jacobian_block_iter(&mut pos)
-        .collect::<Vec<_>>();
+        .collect::<Vec<[f64; 3]>>();
     for (j2, (_, _, j1)) in jac2.iter().zip(jac1.iter()) {
         assert!((j1[0] - j2[0]).abs() < 1e-10);
         assert!((j1[1] - j2[1]).abs() < 1e-10);

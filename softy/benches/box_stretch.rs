@@ -1,14 +1,16 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use softy::fem::opt::{SimParams, SolverBuilder};
+use softy::fem::nl::{SimParams, SolverBuilder};
 use softy::{test_utils::*, *};
 
-const STRETCH_PARAMS: SimParams = SimParams {
-    gravity: [0.0f32, 0.0, 0.0],
-    ..STATIC_OPT_PARAMS
-};
+fn stretch_params() -> SimParams {
+    SimParams {
+        gravity: [0.0f32, 0.0, 0.0],
+        ..static_nl_params(0)
+    }
+}
 
 fn stretch_material() -> SolidMaterial {
-    default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
+    default_solid().with_elasticity(Elasticity::from_bulk_shear(300e6, 100e6))
 }
 
 fn box_stretch(c: &mut Criterion) {
@@ -20,17 +22,19 @@ fn box_stretch(c: &mut Criterion) {
         let box_mesh = make_stretched_box(i);
 
         group.bench_function(BenchmarkId::new("Simple", i), |b| {
-            let mut engine = SolverBuilder::new(STRETCH_PARAMS)
-                .add_solid(box_mesh.clone(), stretch_material())
-                .build()
+            let mut engine = SolverBuilder::new(stretch_params())
+                .set_mesh(box_mesh.clone())
+                .set_material(stretch_material())
+                .build::<f64>()
                 .unwrap();
             b.iter(|| engine.step().is_ok())
         });
 
         group.bench_function(BenchmarkId::new("Const Volume", i), |b| {
-            let mut engine = SolverBuilder::new(STRETCH_PARAMS)
-                .add_solid(box_mesh.clone(), const_volume_stretch_material)
-                .build()
+            let mut engine = SolverBuilder::new(stretch_params())
+                .set_mesh(box_mesh.clone())
+                .set_material(const_volume_stretch_material)
+                .build::<f64>()
                 .unwrap();
             b.iter(|| engine.step().is_ok())
         });

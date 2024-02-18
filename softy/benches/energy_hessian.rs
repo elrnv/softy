@@ -5,7 +5,7 @@ use num_traits::Zero;
 use softy::energy_models::elasticity::{
     NeoHookeanTetEnergy, NeoHookeanTriEnergy, StableNeoHookeanTetEnergy, TetEnergy, TriEnergy,
 };
-use softy::objects::TriMeshShell;
+use softy::objects::trishell::TriangleElements;
 use tensr::*;
 
 /// Compute the tet energy hessian directly using the energy_hessian implementation.
@@ -79,7 +79,7 @@ pub(crate) fn tri_energy_hessian_direct<E: TriEnergy<f64>>() -> [[Matrix3<f64>; 
     let tri_x0 = Triangle::from_indexed_slice(&tri, &verts);
 
     let shape = Matrix2x3::new(tri_x0.clone().shape_matrix());
-    let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(shape)
+    let DX_inv = TriangleElements::isotropic_tri_shape_matrix(shape)
         .inverse()
         .unwrap();
     let Dx = Matrix2x3::new(tri_x0.clone().shape_matrix());
@@ -96,7 +96,7 @@ pub(crate) fn tri_energy_hessian_product<E: TriEnergy<f64>>() -> [[Matrix3<f64>;
     let tri_x0 = Triangle::from_indexed_slice(&tri, &verts);
 
     let shape = Matrix2x3::new(tri_x0.clone().shape_matrix());
-    let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(shape)
+    let DX_inv = TriangleElements::isotropic_tri_shape_matrix(shape)
         .inverse()
         .unwrap();
     let Dx = Matrix2x3::new(tri_x0.clone().shape_matrix());

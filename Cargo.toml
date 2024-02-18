@@ -12,6 +12,8 @@ members = [
     "benchmark",
 ]
 
+resolver = "2"
+
 [profile.release]
 debug = true # Change this to true to enable debug symbols in release mode
 rpath = false

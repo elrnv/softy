@@ -45,8 +45,11 @@ partition = "0.1" # Fast in-place slice partitioning.
 [target.'cfg(target_os = "macos")'.dependencies]
 accelerate = { package = "accelerate-framework", version = "0.2" }
 
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-mkl-corrode = { git = "https://github.com/elrnv/mkl-corrode.git", features = ["ilp64", "openmp"], optional = true }
+# [target.'cfg(target_os = "windows")'.dependencies]
+# mkl-corrode = { git = "https://github.com/elrnv/mkl-corrode.git", features = ["ilp64", "openmp"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+mkl-corrode = { git = "https://github.com/elrnv/mkl-corrode.git", features = ["ilp64", "tbb"], optional = true }
 
 [dev-dependencies]
 criterion = "0.3"

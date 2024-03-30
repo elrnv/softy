@@ -908,7 +908,6 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
             fc_params.static_cof = sop_fc.staticcof;
             fc_params.viscous_friction = sop_fc.viscousfriction;
             fc_params.stribeck_velocity = sop_fc.stribeckvelocity;
-            fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
             switch (static_cast<SOP_SoftyEnums::FrictionProfile>(sop_fc.frictionprofile))
             {
                 case SOP_SoftyEnums::FrictionProfile::STABILIZED:
@@ -924,7 +923,6 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
         else
         {
             fc_params.dynamic_cof = 0.0;
-            fc_params.friction_inner_iterations = 0;
         }
         fc_params.friction_tolerance = sop_fc.frictiontolerance;
         sim_params.frictional_contacts.push_back(fc_params);

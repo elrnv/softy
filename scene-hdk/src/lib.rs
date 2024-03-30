@@ -16,13 +16,16 @@ mod ffi {
     #[derive(Debug)]
     pub enum SolverType {
         Newton,
-        NewtonBacktracking,
-        NewtonAssistedBacktracking,
-        NewtonContactAssistedBacktracking,
-        AdaptiveNewtonBacktracking,
-        AdaptiveNewtonAssistedBacktracking,
-        AdaptiveNewtonContactAssistedBacktracking,
+        AdaptiveNewton,
         TrustRegion,
+    }
+
+    #[derive(Debug)]
+    pub enum LineSearch {
+        None,
+        Backtracking,
+        AssistedBacktracking,
+        ContactAssistedBacktracking,
     }
 
     #[derive(Debug)]
@@ -95,13 +98,15 @@ mod ffi {
         pub smoothness_tolerance: f32,
         pub contact_offset: f32,
         pub use_fixed: bool,
-        // pub smoothing_weight: f32,
-        // pub friction_forwarding: f32,
         pub dynamic_cof: f32,
-        // pub friction_tolerance: f32,
-        // pub friction_inner_iterations: u32,
+        pub static_cof: f32,
+        pub viscous_friction: f32,
+        pub stribeck_velocity: f32,
         pub friction_profile: FrictionProfile,
         pub lagged_friction: bool,
+        pub incomplete_friction_jacobian: bool,
+        pub contact_tolerance: f32,
+        pub friction_tolerance: f32,
     }
 
     #[derive(Debug)]
@@ -120,13 +125,11 @@ mod ffi {
         pub compression_coefficients: Vec<f32>,
         pub hessian_approximation: Vec<u8>,
 
-        // TODO: move these into FrictionalContactParams.
-        pub friction_tolerance: f32, // epsilon
-        pub contact_tolerance: f32,  // delta
         pub contact_iterations: u32,
 
         // Solver params
         pub solver_type: SolverType,
+        pub line_search: LineSearch,
         pub backtracking_coeff: f32,
         pub velocity_clear_frequency: f32,
         pub tolerance: f32,

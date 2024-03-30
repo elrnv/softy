@@ -155,7 +155,6 @@ mod ffi {
         pub incomplete_friction_jacobian: bool,
         pub contact_tolerance: f32,
         pub friction_tolerance: f32,
-        pub friction_inner_iterations: u32,
     }
 
     #[derive(Debug)]

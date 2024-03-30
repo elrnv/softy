@@ -269,7 +269,6 @@ impl SolverBuilder {
     ///
     /// This function also sets all ids that are out of bounds to 0, to avoid out of bounds errors.
     pub(crate) fn init_object_id_attribute(mesh: &mut Mesh) -> Result<(), Error> {
-        use std::convert::TryFrom;
         let clamp_id = move |id: ObjectIdType| id.max(0);
 
         // If there is already an attribute with the right type, normalize the ids.
@@ -314,7 +313,6 @@ impl SolverBuilder {
         mesh: &mut Mesh,
         num_materials: usize,
     ) -> Result<(), Error> {
-        use std::convert::TryFrom;
         let normalize_id = move |id: MaterialIdType| {
             if id >= MaterialIdType::try_from(num_materials).unwrap() {
                 0
@@ -459,7 +457,6 @@ impl SolverBuilder {
     }
     /// A helper function to initialize the fixed attribute if one doesn't already exist.
     pub(crate) fn init_fixed_attribute(mesh: &mut Mesh) -> Result<(), Error> {
-        use std::convert::TryFrom;
         let normalize_id = move |id: FixedIntType| {
             if id != FixedIntType::zero() {
                 FixedIntType::one()

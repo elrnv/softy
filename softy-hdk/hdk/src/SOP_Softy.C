@@ -217,15 +217,6 @@ group {
         default { "off" }
     }
 
-    parm {
-        name "frictioniterations"
-        cppname "FrictionIterations"
-        label "Friction Iterations"
-        type integer
-        default { "10" }
-        range { 0 50 }
-    }
-
     multiparm {
         name    "frictionalcontacts"
         cppname "FrictionalContacts"
@@ -257,18 +248,6 @@ group {
                 "approximate" "Local approximately interpolating"
                 "cubic" "Local cubic"
                 "global" "Global inverse squared distance"
-            }
-        }
-
-        parm {
-            name "contacttype#"
-            cppname "ContactType"
-            label "Contact Type"
-            type ordinal
-            default { "0" }
-            menu {
-                "linearized" "Linearized Point"
-                "point" "Point"
             }
         }
 
@@ -574,7 +553,7 @@ group {
     parm {
         name    "velocitycriterion"
         cppname "VelocityCriterion"
-        label   "velocitycriterion"
+        label   ""
         type    toggle
         nolabel
         joinnext
@@ -760,19 +739,29 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
     }
 
     switch (static_cast<SOP_SoftyEnums::LineSearch>(sopparms.getLineSearch())) {
-        case SOP_SoftyEnums::LineSearch::BT:
-            sim_params.line_search = softy::LineSearch::Backtracking;
-            // FALLTHROUGH
-        case SOP_SoftyEnums::LineSearch::ASSISTEDBT:
-            sim_params.line_search = softy::LineSearch::AssistedBacktracking;
-            // FALLTHROUGH
+        case SOP_SoftyEnums::LineSearch::BT: // FALLTHROUGH
+        case SOP_SoftyEnums::LineSearch::ASSISTEDBT: // FALLTHROUGH
         case SOP_SoftyEnums::LineSearch::CONTACTASSISTEDBT:
-            sim_params.line_search = softy::LineSearch::ContactAssistedBacktracking;
             sim_params.backtracking_coeff = sopparms.getBacktrackingCoeff();
             break;
         default:
-            sim_params.line_search = softy::LineSearch::None;
             sim_params.backtracking_coeff = 0.5; // Dummy value
+            break;
+    }
+
+    switch (static_cast<SOP_SoftyEnums::LineSearch>(sopparms.getLineSearch())) {
+        case SOP_SoftyEnums::LineSearch::BT:
+            sim_params.line_search = softy::LineSearch::Backtracking;
+            break;
+        case SOP_SoftyEnums::LineSearch::ASSISTEDBT:
+            sim_params.line_search = softy::LineSearch::AssistedBacktracking;
+            break;
+        case SOP_SoftyEnums::LineSearch::CONTACTASSISTEDBT:
+            sim_params.line_search = softy::LineSearch::ContactAssistedBacktracking;
+            break;
+        default:
+            sim_params.line_search = softy::LineSearch::None;
+            break;
     }
 
     switch (static_cast<SOP_SoftyEnums::SolverType>(sopparms.getSolverType()))
@@ -832,7 +821,6 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
     sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
 
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
-    sim_params.friction_iterations = sopparms.getFrictionIterations();
 
     bool collider_material_id_parse_error = false;
 
@@ -884,16 +872,6 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
             break;
         case SOP_SoftyEnums::Kernel::GLOBAL:
             fc_params.kernel = softy::Kernel::Global;
-            break;
-        }
-
-        switch (static_cast<SOP_SoftyEnums::ContactType>(sop_fc.contacttype))
-        {
-        case SOP_SoftyEnums::ContactType::LINEARIZED:
-            fc_params.contact_type = softy::ContactType::LinearizedPoint;
-            break;
-        case SOP_SoftyEnums::ContactType::POINT:
-            fc_params.contact_type = softy::ContactType::Point;
             break;
         }
 

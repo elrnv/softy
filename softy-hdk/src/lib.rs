@@ -141,7 +141,6 @@ mod ffi {
         pub object_material_id: u32,
         pub collider_material_ids: Vec<u32>,
         pub kernel: Kernel,
-        pub contact_type: ContactType,
         pub radius_multiplier: f32,
         pub smoothness_tolerance: f32,
         pub contact_offset: f32,
@@ -168,7 +167,6 @@ mod ffi {
 
         // Constraints
         pub volume_constraint: bool,
-        pub friction_iterations: u32,
         pub frictional_contacts: Vec<FrictionalContactParams>,
         pub zone_pressurizations: Vec<f32>,
         pub compression_coefficients: Vec<f32>,

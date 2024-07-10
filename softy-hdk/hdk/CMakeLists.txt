@@ -56,7 +56,7 @@ if(WIN32)
     # Add Rust specific Windows system dependencies.
     find_package( MKL REQUIRED )
     target_link_libraries( ${library_name} PRIVATE ${OMP_LIBRARY})
-    target_link_libraries( ${library_name} PRIVATE Ws2_32 userenv bcrypt )
+    target_link_libraries( ${library_name} PRIVATE Ws2_32 userenv bcrypt ntdll)
 endif(WIN32)
 
 message(STATUS "${hdkrs_INCLUDE_DIRS}")

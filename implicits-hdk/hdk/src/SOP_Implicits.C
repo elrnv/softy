@@ -16,7 +16,7 @@
 #include <OP/OP_Operator.h>
 #include <OP/OP_OperatorTable.h>
 
-const UT_StringHolder SOP_Implicits::theSOPTypeName("hdk_implicits"_sh);
+const UT_StringHolder SOP_Implicits::theSOPTypeName("hdk_implicits");
 
 // Register sop operator
 void
@@ -176,7 +176,7 @@ static const char *theDsFile = R"THEDSFILE(
 PRM_Template *
 SOP_Implicits::buildTemplates()
 {
-    static PRM_TemplateBuilder templ("SOP_Implicits.C"_sh, theDsFile);
+    static PRM_TemplateBuilder templ("SOP_Implicits.C", theDsFile);
     return templ.templates();
 }
 

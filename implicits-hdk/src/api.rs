@@ -36,6 +36,7 @@ fn project_vertices(
 pub fn cook<F>(
     query_mesh: &mut geo::mesh::PointCloud<f64>,
     surface: &mut geo::mesh::PolyMesh<f64>,
+    bg_samples: &mut geo::mesh::PointCloud<f64>,
     params: Params,
     check_interrupt: F,
 ) -> CookResult
@@ -55,50 +56,56 @@ where
     match params.action {
         Action::ComputePotential => {
             if params.debug {
-                let res = implicits::surface_from_polymesh(surface, params.into()).and_then(
-                    |mut surf| {
-                        surf.reverse_par(); // reverse polygons for compatibility with hdk
-                        surf.compute_potential_on_mesh(query_mesh, interrupt)
-                    },
-                );
+                let res = implicits::surface_from_polymesh_with_samples(
+                    surface,
+                    bg_samples,
+                    params.into(),
+                )
+                .and_then(|mut surf| {
+                    surf.reverse_par(); // reverse polygons for compatibility with hdk
+                    surf.compute_potential_on_mesh(query_mesh, interrupt)
+                });
                 convert_to_cookresult(res.map(|_| true))
             } else {
-                let res = implicits::surface_from_polymesh(surface, params.into()).and_then(
-                    |mut surf| {
-                        surf.reverse_par(); // reverse polygons for compatibility with hdk
-                                            // Get or create a new potential attribute.
-                        let potential_attrib = query_mesh
-                            .remove_attrib::<VertexIndex>("potential")
-                            .ok()
-                            .unwrap_or_else(|| {
-                                Attribute::direct_from_vec(vec![0.0f32; query_mesh.num_vertices()])
-                            });
+                let res = implicits::surface_from_polymesh_with_samples(
+                    surface,
+                    bg_samples,
+                    params.into(),
+                )
+                .and_then(|mut surf| {
+                    surf.reverse_par(); // reverse polygons for compatibility with hdk
+                                        // Get or create a new potential attribute.
+                    let potential_attrib = query_mesh
+                        .remove_attrib::<VertexIndex>("potential")
+                        .ok()
+                        .unwrap_or_else(|| {
+                            Attribute::direct_from_vec(vec![0.0f32; query_mesh.num_vertices()])
+                        });
 
-                        let mut potential = potential_attrib
-                            .into_data()
-                            .cast_into_vec::<f64>()
-                            .unwrap_or_else(|| vec![0.0f64; query_mesh.num_vertices()]);
+                    let mut potential = potential_attrib
+                        .into_data()
+                        .cast_into_vec::<f64>()
+                        .unwrap_or_else(|| vec![0.0f64; query_mesh.num_vertices()]);
 
-                        match surf {
-                            ImplicitSurface::MLS(mls) => mls
-                                .query_topo(query_mesh.vertex_positions())
-                                .potential_par_interrupt(
-                                    query_mesh.vertex_positions(),
-                                    &mut potential,
-                                    interrupt,
-                                ),
-                            ImplicitSurface::Hrbf(hrbf) => ImplicitSurface::compute_hrbf_on_mesh(
-                                query_mesh,
-                                &hrbf.surf_base.samples,
+                    match surf {
+                        ImplicitSurface::MLS(mls) => mls
+                            .query_topo(query_mesh.vertex_positions())
+                            .potential_par_interrupt(
+                                query_mesh.vertex_positions(),
+                                &mut potential,
                                 interrupt,
                             ),
-                        }
-                        .ok();
+                        ImplicitSurface::Hrbf(hrbf) => ImplicitSurface::compute_hrbf_on_mesh(
+                            query_mesh,
+                            &hrbf.surf_base.samples,
+                            interrupt,
+                        ),
+                    }
+                    .ok();
 
-                        query_mesh.insert_attrib_data::<_, VertexIndex>("potential", potential)?;
-                        Ok(())
-                    },
-                );
+                    query_mesh.insert_attrib_data::<_, VertexIndex>("potential", potential)?;
+                    Ok(())
+                });
                 convert_to_cookresult(res.map(|_| true))
             }
         }

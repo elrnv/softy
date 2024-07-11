@@ -91,6 +91,34 @@ pub fn surface_from_trimesh<T: Real>(
 }
 
 /// A convenience routine for building an implicit surface from a given set of parameters and a
+/// given `TriMesh`. Background samples a used to smoothly fill in the holes in the field.
+pub fn surface_from_trimesh_with_samples<T: Real>(
+    surface: &TriMesh<f64>,
+    bg_samples: &PointCloud<f64>,
+    params: Params,
+) -> Result<ImplicitSurface<T>, Error> {
+    let mut surf_builder = ImplicitSurfaceBuilder::new();
+    surf_builder
+        .kernel(params.kernel)
+        .max_step(params.max_step)
+        .background_field(params.background_field)
+        .background_samples(bg_samples)
+        .sample_type(params.sample_type)
+        .trimesh(surface);
+
+    if let Some(base_radius) = params.base_radius {
+        surf_builder.base_radius(base_radius);
+    }
+
+    let surf = surf_builder.build_generic();
+
+    match surf {
+        Some(s) => Ok(s),
+        None => Err(Error::Failure),
+    }
+}
+
+/// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `PolyMesh`.
 pub fn surface_from_polymesh<T: Real>(
     surface: &PolyMesh<f64>,
@@ -98,6 +126,17 @@ pub fn surface_from_polymesh<T: Real>(
 ) -> Result<ImplicitSurface<T>, Error> {
     let surf_trimesh = TriMesh::from(surface.clone());
     surface_from_trimesh::<T>(&surf_trimesh, params)
+}
+
+/// A convenience routine for building an implicit surface from a given set of parameters and a
+/// given `PolyMesh`.
+pub fn surface_from_polymesh_with_samples<T: Real>(
+    surface: &PolyMesh<f64>,
+    bg_samples: &PointCloud<f64>,
+    params: Params,
+) -> Result<ImplicitSurface<T>, Error> {
+    let surf_trimesh = TriMesh::from(surface.clone());
+    surface_from_trimesh_with_samples::<T>(&surf_trimesh, bg_samples, params)
 }
 
 /// A convenience routine for building an implicit surface from a given set of parameters and a

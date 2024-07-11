@@ -17,6 +17,7 @@ pub struct ImplicitSurfaceBuilder<'mesh> {
     kernel: KernelType,
     bg_field: BackgroundFieldParams,
     mesh: SamplesMesh<'mesh>,
+    bg_samples: PointCloud<f64>,
     max_step: f64,
     base_radius: Option<f64>,
     sample_type: SampleType,
@@ -40,6 +41,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                 weighted: false,
             },
             mesh: SamplesMesh::None,
+            bg_samples: PointCloud::default(),
             max_step: 0.0, // This is a sane default for static implicit surfaces.
             base_radius: None,
             sample_type: SampleType::Vertex,
@@ -92,6 +94,11 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     /// `f32`.
     pub fn trimesh(&mut self, mesh: &'mesh TriMesh<f64>) -> &mut Self {
         self.mesh = SamplesMesh::TriMesh(mesh);
+        self
+    }
+
+    pub fn background_samples(&mut self, samples: &PointCloud<f64>) -> &mut Self {
+        self.bg_samples = samples.clone();
         self
     }
 

@@ -3,16 +3,7 @@
 Simulation tools and libraries for animating rigid and soft objects (including cloth) subject to
 frictional contacts against smooth implicit surfaces.
 
-This repository includes a reference implementation for [\[1\]].
-
-Softy and its documentation is a work in progress and contains loads of experimental code and
-unfinished prototypes for future works.
-
-Some relatively independent utilities have already been factored out of this repo in an effort to
-simplify the implementation and make parts of it useful for other purposes. Beware that some of
-these are documented (e.g. [`autodiff`](https://github.com/elrnv/autodiff.git),
-[`hdkrs`](https://github.com/elrnv/hdkrs.git)), but some are not
-(e.g. [`gut`](https://github.com/gut)).
+This repository includes a reference implementations for [\[1\]] and [\[2\]].
 
 # Overview
 
@@ -27,28 +18,16 @@ The included tools and libraries are organized in directories as follows
 
 These tools are mainly written in [Rust](https://www.rust-lang.org) with C/C++ wrappers.
 
-## Implicit Surfaces
-
-TBD
-
-## Finite element simulation of soft tissues and cloth
-
-TBD
-
-## Houdini Plugins
-
-TBD
-
-
 # Examples
 
-For simulation examples, please check our [Examples Repo](https://gitlab.com/elrnv/softy-examples.git).
+
 
 
 # References
 
- - [\[1\] Egor Larionov, Ye Fan, and Dinesh K. Pai. 2021. Frictional Contact on Smooth Elastic Solids. ACM
-   Trans. Graph. 40, 2, Article 15 (April 2021), 17 pages. DOI:https://doi.org/10.1145/3446663][\[1\]],
+ - [\[1\] Egor Larionov, Ye Fan, and Dinesh K. Pai. 2021. Frictional Contact on Smooth Elastic Solids.][\[1\]],
+ - [\[2\] Egor Larionov, Andreas Longva, Uri M. Ascher, Jan Bender, Dinesh K. Pai. 2024. 
+   Implicit Frictional Dynamics with Soft Constraints.][\[2\]],
 
 
 # C API conventions
@@ -80,3 +59,4 @@ This repository is licensed under the [Mozilla Public License, v. 2.0](https://m
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 [\[1\]]: https://doi.org/10.1145/3446663
+[\[2\]]: https://arxiv.org/abs/2211.10618

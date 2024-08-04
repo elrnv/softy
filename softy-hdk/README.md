@@ -27,6 +27,7 @@ Build and install this plugin using the [`cargo-hdk`](https://crates.io/cargo-hd
 cargo hdk --release
 ```
 
+
 ### Windows
 
 Building on Windows requires a few extra steps. These instructions are written specifically for Houdini 19.x. Other versions may require
@@ -34,7 +35,7 @@ different versions for Visual Studio and Intel MKL.
 
 1. Install Houdini 19.x.
 
-2. Launch Houdini to install an appropriate license. If this step is skipped the command-line steps below may faily or hang indefinitely.
+2. Launch Houdini to install an appropriate license. If this step is skipped the command-line steps below may fail or hang indefinitely.
 
 3. Install Visual Studio 2019
 

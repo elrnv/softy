@@ -10,6 +10,6 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "3", features = ["derive", "wrap_help"] }
 anyhow = "1"
-env_logger = "0.10"
+env_logger = { workspace = true }
 geo = { workspace = true }
 softy = { path = "../softy", features = ["mkl"] }

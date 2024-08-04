@@ -15,7 +15,7 @@ softy = { path = "../softy" }
 libc = "*"
 hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }
 log = "0.4"
-env_logger = "0.10"
+env_logger = { workspace = true }
 cxx = "1.0"
 thiserror = "1.0.16"
 

@@ -27,7 +27,7 @@
 #include <sstream>
 #include <utility>
 
-const UT_StringHolder SOP_SoftyScene::theSOPTypeName("hdk_softy_scene"_sh);
+const UT_StringHolder SOP_SoftyScene::theSOPTypeName("hdk_softy_scene");
 
 // Register sop operator
 void newSopOperator(OP_OperatorTable *table)
@@ -598,7 +598,7 @@ group {
 PRM_Template *
 SOP_SoftyScene::buildTemplates()
 {
-    static PRM_TemplateBuilder templ("SOP_SoftyScene.C"_sh, theDsFile);
+    static PRM_TemplateBuilder templ("SOP_SoftyScene.C", theDsFile);
     return templ.templates();
 }
 

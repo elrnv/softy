@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 num_cpus = "1"
-na = { package = "nalgebra", version = "0.32" }
+na = { workspace = true }
 tensr = { git = "https://github.com/elrnv/tensr.git", features = ["autodiff", "serde"] }
 flatk = { git = "https://github.com/elrnv/flatk.git", version = "0.5" }
 geo = { workspace = true }
@@ -22,12 +22,12 @@ unroll = "0.1"
 approx = "0.5"
 num-traits = "0.2"
 #jemallocator = "0.3"
-image = "0.24" # For visualizing large sparse matrices
+image = "0.25" # For visualizing large sparse matrices
 utils = { path = "../utils" }
 is_sorted = "0.1"
 sprs = "0.11"
 sprs-ldl = "0.10"
-ndarray = "0.15"
+ndarray = "0.16"
 thiserror = "1.0.16"
 lazycell = "1.2"
 log = "0.4"
@@ -50,7 +50,7 @@ mkl-corrode = { git = "https://github.com/elrnv/mkl-corrode.git", features = ["i
 
 [dev-dependencies]
 criterion = "0.3"
-env_logger = "0.10"
+env_logger = { workspace = true }
 
 [features]
 default = ["deterministic", "mkl"]

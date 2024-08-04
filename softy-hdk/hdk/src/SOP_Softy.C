@@ -26,7 +26,7 @@
 #include <sstream>
 #include <utility>
 
-const UT_StringHolder SOP_Softy::theSOPTypeName("hdk_softy"_sh);
+const UT_StringHolder SOP_Softy::theSOPTypeName("hdk_softy");
 
 // Register sop operator
 void newSopOperator(OP_OperatorTable *table)
@@ -654,7 +654,7 @@ int SOP_Softy::clearSolverLogs(void *data, int index, float t, const PRM_Templat
 PRM_Template *
 SOP_Softy::buildTemplates()
 {
-    static PRM_TemplateBuilder templ("SOP_Softy.C"_sh, theDsFile);
+    static PRM_TemplateBuilder templ("SOP_Softy.C", theDsFile);
     templ.setCallback("clearcache", SOP_Softy::clearSolverCache);
     templ.setCallback("clearlogs", SOP_Softy::clearSolverLogs);
     return templ.templates();

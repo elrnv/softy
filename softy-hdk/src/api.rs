@@ -51,6 +51,8 @@ pub(crate) enum Error {
     RegistryFull,
     #[error("Missing solver and mesh")]
     MissingSolverAndMesh,
+    #[error("Missing mesh")]
+    MissingMesh,
     #[error("Failed to create solver: {0}")]
     SolverCreate(#[from] softy::Error),
     #[error("Missing required mesh attribute: {0}")]
@@ -342,6 +344,73 @@ fn get_frictional_contacts<'a>(
         })
         .collect()
 }
+
+#[inline]
+pub(crate) fn new_scene(mesh: Option<Mesh>, params: SimParams) -> Result<Scene, Error> {
+    // Build a basic solver with a solid material.
+    let mut scene = if let Some(mut mesh) = mesh {
+        mesh.reverse_if(|_, cell_type| matches!(cell_type, geo::mesh::CellType::Triangle));
+        Scene::new((&params).into(), mesh)
+    } else {
+        return Err(Error::MissingMesh);
+    };
+
+    scene.set_materials(build_material_library(&params));
+
+    for (frictional_contact, indices, use_fixed) in get_frictional_contacts(&params) {
+        let GenericFrictionalContactParams::NL(frictional_contact) = frictional_contact;
+        for &collider_index in indices.1.iter() {
+            scene.add_frictional_contact(
+                frictional_contact,
+                (indices.0, collider_index as usize),
+                use_fixed,
+            );
+        }
+    }
+
+    scene.set_volume_zones_from_params(
+        params.zone_pressurizations,
+        params.compression_coefficients,
+        params
+            .hessian_approximation
+            .into_iter()
+            .map(|x| x != 0)
+            .collect::<Vec<_>>(),
+    );
+
+    Ok(scene)
+}
+
+/// Add a keyframe to the scene configuration.
+#[inline]
+pub(crate) fn add_keyframe(scene: &mut Scene, frame: u64, mesh_points: PointCloud) -> CookResult {
+    scene.add_keyframe(frame, mesh_points.vertex_positions.into_vec());
+    CookResult::Success(String::new())
+}
+
+#[inline]
+pub(crate) fn save(scene: &Scene, path: impl AsRef<std::path::Path>) -> CookResult {
+    let path = path.as_ref();
+    match path.extension().and_then(|x| x.to_str()) {
+        Some("sfrb") | Some("bin") => match scene.save_as_sfrb(path) {
+            Ok(()) => CookResult::Success(String::new()),
+            Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
+        },
+        Some("ron") => match scene.save_as_ron(path) {
+            Ok(()) => CookResult::Success(String::new()),
+            Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
+        },
+        Some("json") => match scene.save_as_json(path) {
+            Ok(()) => CookResult::Success(String::new()),
+            Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
+        },
+        Some(ext) => CookResult::Error(format!("Unsupported scene file extension: '.{}'", ext)),
+        None => CookResult::Error(format!(
+            "Scene file is missing an extension: one of '.sfrb', '.sfjb', '.ron' or '.json'."
+        )),
+    }
+}
+
 trait SolverBuilder {
     fn set_mesh(&mut self, mesh: Mesh, params: &SimParams) -> Result<(), Error>;
     fn set_volume_zone_coefficients(

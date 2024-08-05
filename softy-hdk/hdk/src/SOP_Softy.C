@@ -14,6 +14,7 @@
 #include <PRM/PRM_Include.h>
 #include <PRM/PRM_TemplateBuilder.h>
 #include <OP/OP_Operator.h>
+#include <OP/OP_AutoLockInputs.h>
 #include <OP/OP_OperatorTable.h>
 #include <GEO/GEO_PrimTetrahedron.h>
 #include <GEO/GEO_PrimPoly.h>
@@ -46,6 +47,36 @@ void newSopOperator(OP_OperatorTable *table)
 static const char *theDsFile = R"THEDSFILE(
 {
 name softy
+
+parm {
+    name "mode"
+    label "Mode"
+    type ordinal
+    default { "0" }
+    menu {
+        "step" "Step"
+        "export" "Export"
+    }
+}
+
+parm {
+    name "scenefile"
+    cppname "SceneFile"
+    label "Scene File"
+    type file
+    default { "" }
+    hidewhen "{ mode == 0 }"
+}
+
+parm {
+    name "framerange"
+    cppname "FrameRange"
+    label "Frame Range"
+    type intvector2
+    size 2
+    default { "$FSTART" "$FEND" }
+    hidewhen "{ mode == 0 }"
+}
 
 group {
     name "material"
@@ -651,6 +682,8 @@ public:
     virtual CookMode cookMode(const SOP_NodeParms *parms) const { return COOK_GENERATOR; }
 
     virtual void cook(const CookParms &cookparms) const;
+    void step(const CookParms &cookparms) const;
+    void exportConfig(const CookParms &cookparms) const;
 
     static const SOP_NodeVerb::Register<SOP_SoftyVerb> theVerb;
 };
@@ -861,18 +894,18 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
 
         switch (static_cast<SOP_SoftyEnums::Kernel>(sop_fc.kernel))
         {
-        case SOP_SoftyEnums::Kernel::SMOOTH:
-            fc_params.kernel = softy::Kernel::Smooth;
-            break;
-        case SOP_SoftyEnums::Kernel::APPROXIMATE:
-            fc_params.kernel = softy::Kernel::Approximate;
-            break;
-        case SOP_SoftyEnums::Kernel::CUBIC:
-            fc_params.kernel = softy::Kernel::Cubic;
-            break;
-        case SOP_SoftyEnums::Kernel::GLOBAL:
-            fc_params.kernel = softy::Kernel::Global;
-            break;
+            case SOP_SoftyEnums::Kernel::SMOOTH:
+                fc_params.kernel = softy::Kernel::Smooth;
+                break;
+            case SOP_SoftyEnums::Kernel::APPROXIMATE:
+                fc_params.kernel = softy::Kernel::Approximate;
+                break;
+            case SOP_SoftyEnums::Kernel::CUBIC:
+                fc_params.kernel = softy::Kernel::Cubic;
+                break;
+            case SOP_SoftyEnums::Kernel::GLOBAL:
+                fc_params.kernel = softy::Kernel::Global;
+                break;
         }
 
         fc_params.radius_multiplier = sop_fc.radiusmult;
@@ -916,6 +949,21 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
 // Entry point to the SOP
 void SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 {
+    const auto& sopparms = cookparms.parms<SOP_SoftyParms>();
+    auto mode = static_cast<SOP_SoftyEnums::Mode>(sopparms.getMode());
+    switch (mode)
+    {
+        case SOP_SoftyEnums::Mode::STEP:
+            step(cookparms);
+            break;
+        case SOP_SoftyEnums::Mode::EXPORT:
+            exportConfig(cookparms);
+            break;
+    }
+}
+
+void SOP_SoftyVerb::step(const SOP_NodeVerb::CookParms &cookparms) const
+{
     const GU_Detail *input0 = cookparms.inputGeo(0);
     if (!input0)
     {
@@ -926,7 +974,7 @@ void SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     softy::SimParams sim_params;
     bool collider_material_id_parse_error;
     std::tie(sim_params, collider_material_id_parse_error) =
-        build_sim_params(std::move(cookparms.parms<SOP_SoftyParms>()));
+        build_sim_params(cookparms.parms<SOP_SoftyParms>());
 
     auto interrupt_checker = std::make_unique<hdkrs::InterruptChecker>("Solving Softy");
 
@@ -995,4 +1043,114 @@ void SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     GU_Detail *detail = cookparms.gdh().gdpNC();
 
     write_solver_data(detail, std::move(res), solver_res.id);
+}
+
+void SOP_SoftyVerb::exportConfig(const SOP_NodeVerb::CookParms &cookparms) const
+{
+    auto add_cook_result_message = [&](hdkrs::CookResult &cook_result) -> bool {
+        auto &msg = cook_result.message;
+        switch (cook_result.tag) {
+            case hdkrs::CookResultTag::SUCCESS:
+                if (msg != rust::String()) {
+                    cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, msg.c_str());
+                }
+                break;
+            case hdkrs::CookResultTag::WARNING:
+                cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, msg.c_str());
+                break;
+            case hdkrs::CookResultTag::ERROR:
+                cookparms.sopAddError(UT_ERROR_OUTSTREAM, msg.c_str());
+                std::cerr << msg.c_str() << std::endl;
+                return false;
+        }
+        return true;
+    };
+
+    auto context = cookparms.getContext();
+
+    // Create mesh from first frame.
+    auto mesh = softy::new_mesh();
+
+    const GU_Detail *input0 = cookparms.inputGeo(0);
+    if (!input0)
+    {
+        // No inputs, nothing to do.
+        return;
+    }
+
+    mesh->set(*input0);
+
+    softy::SimParams sim_params;
+    bool collider_material_id_parse_error;
+    std::tie(sim_params, collider_material_id_parse_error) =
+            build_sim_params(cookparms.parms<SOP_SoftyParms>());
+
+    auto scene_result = softy::new_scene(std::move(mesh), sim_params);
+    if (!add_cook_result_message(scene_result.cook_result)) {
+        return;
+    }
+
+    auto scene = std::move(scene_result.scene);
+
+    // Add keyframes
+    auto frame_range = cookparms.parms<SOP_SoftyParms>().getFrameRange();
+    int begin_frame = frame_range[0];
+    int end_frame = frame_range[1];
+
+    std::vector<UT_Vector3> prev_pos;
+    prev_pos.reserve(input0->getNumPoints());
+    GA_Offset ptoff;
+    GA_FOR_ALL_PTOFF(input0, ptoff) {
+        prev_pos.push_back(input0->getPos3(ptoff));
+    }
+
+    for (int frame = begin_frame; frame <= end_frame; ++frame) {
+        OP_AutoLockInputs inputs(cookparms.getNode()); // Unlocked for next loop iteration.
+
+        // Convert to seconds
+        fpreal t = OPgetDirector()->getChannelManager()->getTime((fpreal)frame);
+        context.setTime(t);
+
+        // Lock input at the specified time.
+        if (inputs.lockInput(0, context) >= UT_ERROR_ABORT)
+            continue;
+
+        // Check if the positions have changed.
+        fpreal norm_squared = 0.0;
+        size_t i = 0;
+        GA_Offset ptoff;
+        GA_FOR_ALL_PTOFF(input0, ptoff) {
+            if (i >= prev_pos.size()) {
+                break;
+            }
+            auto new_pos = input0->getPos3(ptoff);
+            norm_squared += (prev_pos[i] - new_pos).length2();
+            prev_pos[i] = new_pos; // Update positions for next iteration.
+            i += 1;
+        }
+
+        if (norm_squared <= 0.0) {
+            continue;
+        }
+
+        auto points = softy::new_point_cloud();
+        points->set(*input0);
+        auto keyframe_result = scene->add_keyframe(frame-begin_frame, std::move(points));
+
+        if (!add_cook_result_message(keyframe_result.cook_result)) {
+            return;
+        }
+    }
+
+    auto scene_path = cookparms.parms<SOP_SoftyParms>().getSceneFile().c_str();
+    auto save_result = scene->save(scene_path);
+
+    if (!add_cook_result_message(save_result.cook_result)) {
+        return;
+    }
+
+    if (collider_material_id_parse_error)
+    {
+        cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, "Failed to parse some of the frictional contact collider material ids");
+    }
 }

@@ -42,6 +42,7 @@ extern crate lazy_static;
 mod api;
 
 use hdkrs::{PointCloud, PolyMesh, TetMesh, UnstructuredMesh};
+use softy::scene::Scene;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -196,6 +197,23 @@ mod ffi {
         pub derivative_test: u32,
     }
 
+    /// Result reported from `new_scene` function.
+    #[derive(Debug)]
+    pub struct SceneResult {
+        scene: Box<SoftyScene>,
+        cook_result: CookResult,
+    }
+
+    #[derive(Debug)]
+    pub struct SaveResult {
+        cook_result: CookResult,
+    }
+
+    #[derive(Debug)]
+    pub struct AddKeyframeResult {
+        cook_result: CookResult,
+    }
+
     /// Result reported from `register_new_solver` function.
     /// In case of failure, solver_id is set to a negative number.
     #[derive(Debug)]
@@ -251,7 +269,6 @@ mod ffi {
 
     extern "Rust" {
         type SoftySolver;
-        fn init_env_logger();
         fn register_new_solver(mesh: Box<Mesh>, sim_params: SimParams) -> RegistryResult;
         unsafe fn step<'a>(
             solver: Box<SoftySolver>,
@@ -262,6 +279,21 @@ mod ffi {
         fn clear_solver_registry();
 
         fn add_mesh(detail: Pin<&mut GU_Detail>, mesh: Box<Mesh>);
+    }
+
+    extern "Rust" {
+        type SoftyScene;
+        fn new_scene(mesh: Box<Mesh>, sim_params: SimParams) -> SceneResult;
+        unsafe fn add_keyframe<'a>(
+            self: Pin<&mut SoftyScene>,
+            frame: u64,
+            points: Box<Points>,
+        ) -> AddKeyframeResult;
+        fn save(self: Pin<&SoftyScene>, path: &str) -> SaveResult;
+    }
+
+    extern "Rust" {
+        fn init_env_logger();
     }
 
     #[namespace = "hdkrs"]
@@ -486,5 +518,65 @@ pub fn solve<'a>(
             mesh: new_mesh(),
             cook_result: cook_result.into(),
         }
+    }
+}
+
+/// Functions for exporting a scene config.
+
+/// Create a new scene.
+pub fn new_scene(mesh: Box<Mesh>, sim_params: SimParams) -> SceneResult {
+    match api::new_scene(mesh.mesh.map(|m| m.0), sim_params) {
+        Ok(scene) => SceneResult {
+            scene: Box::new(SoftyScene { scene: Some(scene) }),
+            cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
+        },
+        Err(err) => SceneResult {
+            scene: Box::new(SoftyScene { scene: None }),
+            cook_result: hdkrs::interop::CookResult::Error(format!("{}", err)).into(),
+        },
+    }
+}
+
+/// Opaque struct to represent a scene on the C side.
+#[derive(Debug)]
+pub struct SoftyScene {
+    scene: Option<Scene>,
+}
+
+impl Into<Option<Scene>> for SoftyScene {
+    fn into(self) -> Option<Scene> {
+        self.scene
+    }
+}
+
+/// Gets a valid solver and performs one step of the solve.
+impl SoftyScene {
+    fn add_keyframe<'a>(
+        mut self: Pin<&mut SoftyScene>,
+        frame: u64,
+        points: Box<Points>,
+    ) -> AddKeyframeResult {
+        let cook_result = if let Some(scene) = self.scene.as_mut() {
+            if let Some(points) = points.points {
+                api::add_keyframe(scene, frame, points.0)
+            } else {
+                hdkrs::interop::CookResult::Error("Missing points".to_string())
+            }
+        } else {
+            hdkrs::interop::CookResult::Error("Missing scene".to_string())
+        }
+        .into();
+        AddKeyframeResult { cook_result }
+    }
+
+    /// Perform one step of the solve given a solver.
+    pub fn save(self: Pin<&SoftyScene>, path: &str) -> SaveResult {
+        let cook_result = if let Some(scene) = self.scene.as_ref() {
+            api::save(scene, path)
+        } else {
+            hdkrs::interop::CookResult::Error("Missing scene".to_string())
+        }
+        .into();
+        SaveResult { cook_result }
     }
 }

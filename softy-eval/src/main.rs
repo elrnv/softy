@@ -84,6 +84,7 @@ pub fn try_main() -> Result<()> {
     let scene_config = match config_ext {
         "sfrb" | "bin" => softy::scene::Scene::load_from_sfrb(opt.config)?,
         "ron" => softy::scene::Scene::load_from_ron(opt.config)?,
+        "json" => softy::scene::Scene::load_from_json(opt.config)?,
         _ => anyhow::bail!("Unsupported config extension: '.{}'", config_ext),
     };
 

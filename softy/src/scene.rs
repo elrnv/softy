@@ -11,6 +11,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use geo::attrib::Attrib;
 use geo::topology::{CellIndex, VertexIndex};
 use serde::{Deserialize, Serialize};
+use serde_json as json;
 use thiserror::Error;
 
 use flatk::IntoStorage;
@@ -27,6 +28,8 @@ pub enum SerializeError {
     RonSerialize(#[from] ron::Error),
     #[error("Bincode: {}", .0)]
     Bincode(#[from] bincode::Error),
+    #[error("JSON serialize: {}", .0)]
+    JsonSerialize(#[from] json::Error),
     #[error("IO: {}", .0)]
     Io(#[from] std::io::Error),
     #[error("Missing a newline between RON file and binary scene data")]
@@ -536,12 +539,34 @@ impl Scene {
         })
     }
 
+    /// Saves this scene entirely as `json`.
+    ///
+    /// This can be very space inefficient since `SceneData` can be very large.
+    #[cfg(feature = "json")]
+    pub fn save_as_json(&self, path: impl AsRef<std::path::Path>) -> Result<(), SceneError> {
+        let path = path.as_ref();
+        File::create(path).map_err(SceneError::from).and_then(|f| {
+            let mut writer = BufWriter::new(f);
+            Ok(json::to_writer_pretty(&mut writer, self).map_err(SerializeError::from)?)
+        })
+    }
+
     /// Loads the scene from a `RON` file.
     pub fn load_from_ron(path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
         let path = path.as_ref();
         File::open(path).map_err(SceneError::from).and_then(|f| {
             let reader = BufReader::new(f);
             Ok(ron::de::from_reader(reader).map_err(SerializeError::from)?)
+        })
+    }
+
+    /// Loads the scene from a `JSON` file.
+    #[cfg(feature = "json")]
+    pub fn load_from_json(path: impl AsRef<std::path::Path>) -> Result<Self, SceneError> {
+        let path = path.as_ref();
+        File::open(path).map_err(SceneError::from).and_then(|f| {
+            let reader = BufReader::new(f);
+            Ok(json::from_reader(reader).map_err(SerializeError::from)?)
         })
     }
 

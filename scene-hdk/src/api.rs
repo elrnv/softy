@@ -330,6 +330,10 @@ pub(crate) fn save(scene: &Scene, path: impl AsRef<std::path::Path>) -> CookResu
             Ok(()) => CookResult::Success(String::new()),
             Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
         },
+        Some("json") => match scene.save_as_json(path) {
+            Ok(()) => CookResult::Success(String::new()),
+            Err(err) => CookResult::Error(format!("Failed to save scene file: {}", err)),
+        },
         Some(ext) => CookResult::Error(format!("Unsupported scene file extension: '.{}'", ext)),
         None => CookResult::Error(format!(
             "Scene file is missing an extension: one of '.sfrb', '.sfjb', '.ron' or '.json'."

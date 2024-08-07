@@ -48,6 +48,8 @@ pub enum SceneError {
     Solver(#[from] Box<crate::Error>),
     #[error("This library was compiled without JSON support.")]
     JSONUnsupported,
+    #[error("Interrupted by callback")]
+    Interrupted,
 }
 
 impl From<crate::Error> for SceneError {
@@ -581,7 +583,7 @@ impl Scene {
     pub fn run_with(
         &self,
         steps: u64,
-        callback: impl Fn(u64, StepResult, Mesh) -> bool,
+        mut callback: impl FnMut(u64, Mesh, Option<StepResult>) -> bool,
     ) -> Result<(), SceneError> {
         let mesh = self.scene.build_mesh()?;
         let mut solver_builder = SolverBuilder::new(self.config.sim_params.clone());
@@ -602,43 +604,32 @@ impl Scene {
         let mut animated_positions = self.scene.animation.first().unwrap().positions.clone();
 
         let mut keyframe_index = 1;
-        for frame in 0..steps {
+
+        if !callback(0, solver.mesh(), None) {
+            return Err(SceneError::Interrupted);
+        }
+
+        for frame in 1..=steps {
             let res = solver.step()?;
-            if !callback(frame, res, solver.mesh()) {
-                break;
+            if !callback(frame, solver.mesh(), Some(res)) {
+                return Err(SceneError::Interrupted);
             }
 
             if keyframe_index < self.scene.animation.len() {
-                let prev_keyframe = self.scene.animation[keyframe_index - 1].frame;
-
-                // Skip until the frame is in the range of keyframed animation.
-                if prev_keyframe >= frame {
-                    continue;
-                }
-
-                // Interpolate keyframed positions.
                 let next_keyframe = self.scene.animation[keyframe_index].frame;
-                let next_pos = &self.scene.animation[keyframe_index].positions;
 
-                // Copy next keyframe positions to temp array.
-                for (out_p, next) in animated_positions.iter_mut().zip(next_pos.iter()) {
-                    *out_p = *next;
-                }
+                if next_keyframe <= frame + 1 {
+                    let next_pos = &self.scene.animation[keyframe_index].positions;
 
-                if next_keyframe > frame {
-                    let prev_pos = &self.scene.animation[keyframe_index - 1].positions;
-                    let t = (frame - prev_keyframe) as f64 / (next_keyframe - prev_keyframe) as f64;
-                    for (out_p, prev) in animated_positions.iter_mut().zip(prev_pos.iter()) {
-                        for i in 0..3 {
-                            out_p[i] *= t;
-                            out_p[i] += prev[i] * (t - 1.0);
-                        }
+                    // Copy next keyframe positions to temp array.
+                    for (out_p, next) in animated_positions.iter_mut().zip(next_pos.iter()) {
+                        *out_p = *next;
                     }
-                } else {
-                    keyframe_index += 1;
-                }
 
-                solver.update_vertex_positions(&animated_positions)?;
+                    keyframe_index += 1;
+
+                    solver.update_vertex_positions(&animated_positions)?;
+                }
             }
         }
 

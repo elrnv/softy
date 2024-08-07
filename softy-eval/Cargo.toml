@@ -9,7 +9,11 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "3", features = ["derive", "wrap_help"] }
+clap-verbosity-flag = "1"
 anyhow = "1"
 env_logger = { workspace = true }
 geo = { workspace = true }
+gltfgen = { version = "0.8", git = "https://github.com/elrnv/gltfgen.git" }
 softy = { path = "../softy", features = ["mkl"] }
+ctrlc = "3"
+indicatif = "0.17"

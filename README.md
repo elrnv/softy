@@ -25,6 +25,8 @@ These tools are mainly written in [Rust](https://www.rust-lang.org) with C/C++ w
 There are two installation scripts available: `install_min.sh` and `install_all.sh`.
 Installing HDK plugins written in Rust that use other C++ libraries like MKL or TBB may conflict with Houdini's libraries. For this reasons `install_min.sh` is there to install only the necessary plugin and command-line tool to create and run simulations. If one wants to only run the included examples, simply install `softy-eval` and run the included configuration files, see the corresponding [`README.md`](softy-eval/README.md) for instructions.
 
+Going forward you need the Rust toolchain and Houdini installed.
+
 Most of the code included here is written in Rust, so you will need to have the Rust toolchain installed. Check [rust-lang.org](https://www.rust-lang.org/learn/get-started) for specific instructions. It is typical and recommended to install the `rustup` tool and then use it to install `cargo`.
 
 Next, install the [`cargo-hdk`](https://crates.io/cargo-hdk) tool with
@@ -33,6 +35,7 @@ cargo install cargo-hdk
 ```
 This tool helps orchestrate building and installing Rust plugins for Houdini's C++ API called the Houdini Development Kit (HDK).
 
+To install Houdini, go to [`sidefx.com`](https://www.sidefx.com/download/) create an account and install Houdini 20.5 (other versions may work, but this one was tested at the time of this writing).
 Before installing any of the plugins, you must source the Houdini environment variables found in the Houdini installation directory.
 For details on specific steps needed to build an HDK plugin see
 the [HDK Getting Started Guide](https://www.sidefx.com/docs/hdk/_h_d_k__intro__getting_started.html). Follow all

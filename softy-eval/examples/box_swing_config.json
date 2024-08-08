@@ -1,0 +1,204 @@
+{
+  "config": {
+    "sim_params": {
+      "gravity": [
+        0.0,
+        -9.81,
+        0.0
+      ],
+      "time_step": 0.041666668,
+      "velocity_clear_frequency": 0.0,
+      "residual_tolerance": 0.00001,
+      "acceleration_tolerance": null,
+      "velocity_tolerance": null,
+      "max_iterations": 100,
+      "linsolve": "Direct",
+      "line_search": {
+        "BackTracking": {
+          "c": 0.0001,
+          "rho": 0.5
+        }
+      },
+      "solver_type": "Newton",
+      "derivative_test": 0,
+      "contact_iterations": 5,
+      "time_integration": "BDF2",
+      "preconditioner": "ApproximateJacobi",
+      "log_file": null,
+      "project_element_hessians": false
+    },
+    "materials": [
+      {
+        "Fixed": {
+          "id": 0,
+          "properties": null
+        }
+      },
+      {
+        "SoftShell": {
+          "id": 1,
+          "properties": {
+            "bending_stiffness": 4.14,
+            "deformable": {
+              "elasticity": {
+                "model": "NeoHookean",
+                "parameters": {
+                  "BulkShear": {
+                    "bulk": 6100000.0,
+                    "shear": 122818.79
+                  }
+                }
+              },
+              "density": 1000.0,
+              "damping": 0.0
+            }
+          }
+        }
+      }
+    ],
+    "frictional_contacts": [],
+    "volume_zones": {
+      "zone_pressurizations": [],
+      "compression_coefficients": [],
+      "hessian_approximation": []
+    }
+  },
+  "scene": {
+    "mesh_topo": {
+      "indices": [
+        [
+          3,
+          1,
+          0,
+          2,
+          3,
+          0,
+          7,
+          5,
+          4,
+          6,
+          7,
+          4,
+          2,
+          7,
+          6,
+          3,
+          2,
+          6,
+          1,
+          4,
+          5,
+          0,
+          1,
+          5,
+          2,
+          0,
+          5,
+          7,
+          2,
+          5,
+          6,
+          4,
+          1,
+          3,
+          6,
+          1
+        ]
+      ],
+      "types": [
+        "Triangle"
+      ],
+      "vertex_attributes": {
+        "fixed": {
+          "I32": [
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "animated": {
+          "I32": [
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "cell_attributes": {
+        "mtl_id": {
+          "I32": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    "animation": [
+      {
+        "frame": 0,
+        "positions": [
+          [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          [
+            0.5,
+            0.5,
+            0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            0.5,
+            -0.5
+          ]
+        ]
+      }
+    ]
+  }
+}

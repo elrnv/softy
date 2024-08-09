@@ -192,7 +192,7 @@ fn trimesh_from_mesh(mesh: geo::Mesh<f64>) -> geo::TriMesh<f32> {
 
 pub fn main() {
     if let Err(err) = try_main() {
-        eprintln!("{}", err);
+        eprintln!("ERROR: {}", err);
         std::process::exit(1);
     }
 }
@@ -279,7 +279,7 @@ pub fn try_main() -> Result<()> {
 
             let mut meshes = Vec::new();
 
-            scene_config.run_with(opt.steps, |frame, mut mesh, result| {
+            let result = scene_config.run_with(opt.steps, |frame, mut mesh, result| {
                 bar.inc(1);
                 if !running.load(Ordering::SeqCst) {
                     return false;
@@ -340,34 +340,41 @@ pub fn try_main() -> Result<()> {
                 }
                 meshes.push((file_stem.to_string(), trimesh_from_mesh(mesh).into()));
                 true
-            })?;
+            });
 
-            let attrib_config = gltfgen::AttribConfig {
-                // attributes: &r#"{"vel": Vec3(f32), "contact": Vec3(f32), "friction": Vec3(f32), "net_force": Vec3(f32), "residual": Vec3(f32), "mass": f32, "animated": u32, "fixed": u32}"#.parse().unwrap(),
-                attributes: &r#"{"vel": Vec3(f32), "contact": Vec3(f32), "friction": Vec3(f32), "net_force": Vec3(f32), "residual": Vec3(f32)}"#.parse().unwrap(),
-                colors: &gltfgen::AttributeInfo::default(),
-                texcoords: &gltfgen::TextureAttributeInfo::default(),
-                material_attribute: "mtl_id",
-            };
+            if result.is_ok()
+                || result
+                    .as_ref()
+                    .is_err_and(|x| matches!(x, &softy::scene::SceneError::Interrupted))
+            {
+                let attrib_config = gltfgen::AttribConfig {
+                    // attributes: &r#"{"vel": Vec3(f32), "contact": Vec3(f32), "friction": Vec3(f32), "net_force": Vec3(f32), "residual": Vec3(f32), "mass": f32, "animated": u32, "fixed": u32}"#.parse().unwrap(),
+                    attributes: &r#"{"vel": Vec3(f32), "contact": Vec3(f32), "friction": Vec3(f32), "net_force": Vec3(f32), "residual": Vec3(f32)}"#.parse().unwrap(),
+                    colors: &gltfgen::AttributeInfo::default(),
+                    texcoords: &gltfgen::TextureAttributeInfo::default(),
+                    material_attribute: "mtl_id",
+                };
 
-            gltfgen::export::export_named_meshes(
-                meshes,
-                attrib_config,
-                gltfgen::export::ExportConfig {
-                    textures: Vec::new(),
-                    materials: Vec::new(),
-                    output: opt.output.into(),
-                    time_step: scene_config
-                        .config
-                        .sim_params
-                        .time_step
-                        .unwrap_or(1.0 / 24.0),
-                    insert_vanishing_frames: false,
-                    animate_normals: false,
-                    animate_tangents: false,
-                    quiet: opt.verbose.is_silent(),
-                },
-            );
+                gltfgen::export::export_named_meshes(
+                    meshes,
+                    attrib_config,
+                    gltfgen::export::ExportConfig {
+                        textures: Vec::new(),
+                        materials: Vec::new(),
+                        output: opt.output.into(),
+                        time_step: scene_config
+                            .config
+                            .sim_params
+                            .time_step
+                            .unwrap_or(1.0 / 24.0),
+                        insert_vanishing_frames: false,
+                        animate_normals: false,
+                        animate_tangents: false,
+                        quiet: opt.verbose.is_silent(),
+                    },
+                );
+            }
+            result?;
         }
         "vtu" | "vtk" => {
             let mut indexed_digits = file_stem.rmatch_indices(|x| char::is_ascii_digit(&x));

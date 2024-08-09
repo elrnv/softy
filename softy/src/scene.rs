@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 
+use bincode::Options;
 use geo::attrib::Attrib;
 use geo::topology::{CellIndex, VertexIndex};
 use serde::{Deserialize, Serialize};
@@ -505,7 +506,10 @@ impl Scene {
             writeln!(&mut writer).map_err(SerializeError::from)?;
 
             // Bincode for the data
-            Ok(bincode::serialize_into(&mut writer, &self.scene).map_err(SerializeError::from)?)
+            let opt = bincode::config::DefaultOptions::new().allow_trailing_bytes();
+            Ok(opt
+                .serialize_into(&mut writer, &self.scene)
+                .map_err(SerializeError::from)?)
         })
     }
 
@@ -522,7 +526,8 @@ impl Scene {
                     SerializeError::MissingNewlineBeforeBinaryData,
                 ));
             }
-            let scene = bincode::deserialize(&bytes[1..]).map_err(SerializeError::from)?;
+            let opt = bincode::config::DefaultOptions::new().allow_trailing_bytes();
+            let scene = opt.deserialize(&bytes[1..]).map_err(SerializeError::from)?;
             Ok(Scene { config, scene })
         })
     }

@@ -69,6 +69,7 @@ pub enum Attribute {
     Usize(Vec<usize>),
     F32x3(Vec<[f32; 3]>),
     F64x3(Vec<[f64; 3]>),
+    F32x2(Vec<[f32; 2]>),
 }
 
 impl Attribute {
@@ -87,6 +88,8 @@ impl Attribute {
             Attribute::F32x3(v)
         } else if let Ok(v) = attrib.direct_clone_into_vec::<[f64; 3]>() {
             Attribute::F64x3(v)
+        } else if let Ok(v) = attrib.direct_clone_into_vec::<[f32; 2]>() {
+            Attribute::F32x2(v)
         } else {
             return None;
         })
@@ -100,6 +103,7 @@ impl Attribute {
             Attribute::Usize(data) => geo::attrib::Attribute::direct_from_vec(data),
             Attribute::F32x3(data) => geo::attrib::Attribute::direct_from_vec(data),
             Attribute::F64x3(data) => geo::attrib::Attribute::direct_from_vec(data),
+            Attribute::F32x2(data) => geo::attrib::Attribute::direct_from_vec(data),
         }
     }
 }
@@ -134,7 +138,84 @@ pub struct MeshTopo {
     pub indices: Vec<Vec<usize>>,
     pub types: Vec<CellType>,
     pub vertex_attributes: HashMap<String, Attribute>,
+    pub cell_vertex_attributes: HashMap<String, Attribute>,
     pub cell_attributes: HashMap<String, Attribute>,
+    pub num_vertices: usize,
+}
+
+impl MeshTopo {
+    /// Filter out positions that are not marked as animated in a vertex attribute.
+    ///
+    /// If no integer vertex attribute named "animated" is found or frame is
+    /// zero, then this function acts as an identity.
+    pub fn filter_animated(&self, frame: u64, positions: Vec<[f64; 3]>) -> Vec<[f64; 3]> {
+        if frame == 0 {
+            return positions;
+        }
+        if let Some(animated) = self.vertex_attributes.get("animated") {
+            match animated {
+                Attribute::I32(x) => positions
+                    .into_iter()
+                    .zip(x.iter())
+                    .filter_map(|(pos, &x)| if x != 0 { Some(pos) } else { None })
+                    .collect(),
+                Attribute::I8(x) => positions
+                    .into_iter()
+                    .zip(x.iter())
+                    .filter_map(|(pos, &x)| if x != 0 { Some(pos) } else { None })
+                    .collect(),
+                Attribute::Usize(x) => positions
+                    .into_iter()
+                    .zip(x.iter())
+                    .filter_map(|(pos, &x)| if x != 0 { Some(pos) } else { None })
+                    .collect(),
+                _ => positions,
+            }
+        } else {
+            positions
+        }
+    }
+
+    pub fn update_positions_with_animated(
+        &self,
+        frame: u64,
+        animated_positions: &[[f64; 3]],
+        out_positions: &mut [[f64; 3]],
+    ) {
+        if frame == 0 {
+            if let Some(animated) = self.vertex_attributes.get("animated") {
+                match animated {
+                    Attribute::I32(x) => out_positions
+                        .iter_mut()
+                        .zip(x.iter())
+                        .filter_map(|(pos, &x)| if x != 0 { Some(pos) } else { None })
+                        .zip(animated_positions.iter())
+                        .for_each(|(out_p, anim_p)| *out_p = *anim_p),
+                    Attribute::I8(x) => out_positions
+                        .into_iter()
+                        .zip(x.iter())
+                        .filter_map(|(pos, &x)| if x != 0 { Some(pos) } else { None })
+                        .zip(animated_positions.iter())
+                        .for_each(|(out_p, anim_p)| *out_p = *anim_p),
+                    Attribute::Usize(x) => out_positions
+                        .into_iter()
+                        .zip(x.iter())
+                        .filter_map(|(pos, &x)| if x != 0 { Some(pos) } else { None })
+                        .zip(animated_positions.iter())
+                        .for_each(|(out_p, anim_p)| *out_p = *anim_p),
+                    _ => out_positions
+                        .iter_mut()
+                        .zip(animated_positions.iter())
+                        .for_each(|(out_p, anim_p)| *out_p = *anim_p),
+                }
+            }
+        } else {
+            out_positions
+                .iter_mut()
+                .zip(animated_positions.iter())
+                .for_each(|(out_p, anim_p)| *out_p = *anim_p);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -149,6 +230,12 @@ pub struct SceneData {
     // Mesh topology.
     mesh_topo: MeshTopo,
     /// A set of time stamped vertex positions.
+    ///
+    /// Only the first frame must include positions for all vertices.
+    /// Subsequent frames may contains positions for animated vertices only.
+    /// Animated vertices are marked with a vertex attribute named "animated"
+    /// stored in mesh_topo.vertex_attributes. If this attribute is missing,
+    /// then all vertices are expected in this Vec.
     animation: Vec<KeyframedVertexPositions>,
 }
 
@@ -159,6 +246,13 @@ impl SceneData {
     pub fn new(mesh: Mesh) -> Self {
         let vertex_attributes = mesh
             .vertex_attributes
+            .iter()
+            .filter_map(|(name, attrib)| {
+                Attribute::from_attrib_data(&attrib.data).map(|attrib| (name.clone(), attrib))
+            })
+            .collect();
+        let cell_vertex_attributes = mesh
+            .cell_vertex_attributes
             .iter()
             .filter_map(|(name, attrib)| {
                 Attribute::from_attrib_data(&attrib.data).map(|attrib| (name.clone(), attrib))
@@ -180,7 +274,9 @@ impl SceneData {
             indices: index_blocks,
             types: mesh.types.iter().map(|&t| CellType::from(t)).collect(),
             vertex_attributes,
+            cell_vertex_attributes,
             cell_attributes,
+            num_vertices: mesh.vertex_positions.len(),
         };
         let animation = vec![KeyframedVertexPositions {
             frame: 0,
@@ -198,12 +294,15 @@ impl SceneData {
     /// `frames` is zero. If the first element of `frames` is not zero, then the first keyframe
     /// will remain unchanged.
     ///
+    /// If the there is an "animated" vertex attribute present, then only the animated vertices will be stored.
+    ///
     /// # Panics
     ///
     /// This function will panic if
     ///   - `frames` and `positions` have different sizes,
-    ///   - they are empty, or
-    ///   - `frames` is not monotonically increasing.
+    ///   - they are empty,
+    ///   - `frames` is not monotonically increasing
+    ///   - the number of positions is not equal to `mesh_topo.num_vertices`.
     pub fn set_keyframes(
         &mut self,
         frames: impl AsRef<[u64]>,
@@ -226,16 +325,27 @@ impl SceneData {
             self.animation.truncate(1);
         }
 
-        self.animation.extend(
-            frames
-                .iter()
-                .zip(positions.into_iter())
-                .map(|(&frame, positions)| KeyframedVertexPositions { frame, positions }),
-        );
+        self.animation
+            .extend(
+                frames
+                    .iter()
+                    .zip(positions.into_iter())
+                    .map(|(&frame, positions)| {
+                        assert!(positions.len() == self.mesh_topo.num_vertices);
+                        KeyframedVertexPositions {
+                            frame,
+                            positions: self.mesh_topo.filter_animated(frame, positions),
+                        }
+                    }),
+            );
         self
     }
 
     /// Add a single keyframe to the animation.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if frame is 0 and the number of positions is not equal to `mesh_topo.num_positions`.
     pub fn add_keyframe(&mut self, frame: u64, positions: Vec<[f64; 3]>) -> &mut Self {
         // No panic since animation should always be non-empty to contain at least one set of vertex
         // positions.
@@ -243,20 +353,32 @@ impl SceneData {
         match frame.cmp(&last.frame) {
             Ordering::Greater => {
                 // Insert at the end. Presumably this is the most common scenario.
-                self.animation
-                    .push(KeyframedVertexPositions { frame, positions });
+                assert_eq!(positions.len(), self.mesh_topo.num_vertices);
+                self.animation.push(KeyframedVertexPositions {
+                    frame,
+                    positions: self.mesh_topo.filter_animated(frame, positions),
+                });
             }
             Ordering::Equal => {
                 // Times coincide, overwrite the last one
-                last.positions = positions;
+                assert_eq!(positions.len(), self.mesh_topo.num_vertices);
+                last.positions = self.mesh_topo.filter_animated(frame, positions);
             }
             Ordering::Less => {
+                assert_eq!(positions.len(), self.mesh_topo.num_vertices);
                 // Insert in the middle, or overwrite previous keyframe.
                 match self.animation.binary_search_by_key(&frame, |tp| tp.frame) {
-                    Ok(pos) => self.animation[pos].positions = positions,
-                    Err(pos) => self
-                        .animation
-                        .insert(pos, KeyframedVertexPositions { frame, positions }),
+                    Ok(pos) => {
+                        self.animation[pos].positions =
+                            self.mesh_topo.filter_animated(frame, positions)
+                    }
+                    Err(pos) => self.animation.insert(
+                        pos,
+                        KeyframedVertexPositions {
+                            frame,
+                            positions: self.mesh_topo.filter_animated(frame, positions),
+                        },
+                    ),
                 }
             }
         }
@@ -300,8 +422,6 @@ pub struct FrictionalContactConfig {
     #[serde(default)]
     pub params: FrictionalContactParams,
     /// Ids of colliding objects.
-    ///
-    /// the
     pub object_ids: (usize, usize),
     /// Also uses fixed vertices for collision.
     #[serde(default = "default_use_fixed")]
@@ -624,12 +744,14 @@ impl Scene {
                 let next_keyframe = self.scene.animation[keyframe_index].frame;
 
                 if next_keyframe <= frame + 1 {
-                    let next_pos = &self.scene.animation[keyframe_index].positions;
+                    let next_animated_pos = &self.scene.animation[keyframe_index].positions;
 
                     // Copy next keyframe positions to temp array.
-                    for (out_p, next) in animated_positions.iter_mut().zip(next_pos.iter()) {
-                        *out_p = *next;
-                    }
+                    self.scene.mesh_topo.update_positions_with_animated(
+                        next_keyframe,
+                        next_animated_pos,
+                        animated_positions.as_mut_slice(),
+                    );
 
                     keyframe_index += 1;
 

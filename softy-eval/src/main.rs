@@ -1,10 +1,12 @@
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
 use indicatif::{ProgressBar, ProgressStyle};
+use softy::nl_fem::StepResult;
+use softy::scene::SceneConfig;
 
 const ABOUT: &str = "
 Softy is a 3D FEM soft body and cloth simulation engine with two-way frictional contact coupling.";
@@ -197,6 +199,35 @@ pub fn main() {
     }
 }
 
+fn make_progress_bar(verbose: &Verbosity, steps: u64) -> ProgressBar {
+    if verbose.is_silent() {
+        ProgressBar::hidden()
+    } else {
+        ProgressBar::new(steps).with_style(
+            ProgressStyle::default_bar()
+                .progress_chars("=> ")
+                .template("{elapsed:4} [{bar:20.cyan}] {pos:>7}/{len:7} {msg}")
+                .expect("Failed to render the progress bar."),
+        )
+    }
+}
+
+fn log_scene_config(logfile: &Path, config: &SceneConfig) {
+    let f = std::fs::File::options().append(true).open(logfile).unwrap();
+    let mut buf = std::io::BufWriter::new(f);
+    writeln!(buf, "\nConfig:\n").unwrap();
+    config.write_as_ron(&mut buf).unwrap();
+    writeln!(buf).unwrap();
+}
+
+fn log_step(logfile: &Path, step_result: &Option<StepResult>, frame: u64) {
+    let mut f = std::fs::File::options().append(true).open(logfile).unwrap();
+    writeln!(f, "\nFrame {}:", frame).unwrap();
+    if let Some(result) = step_result {
+        writeln!(f, "{}", result).unwrap();
+    }
+}
+
 pub fn try_main() -> Result<()> {
     let opt = Opt::parse();
 
@@ -235,7 +266,7 @@ pub fn try_main() -> Result<()> {
         let _ = std::fs::File::create(logfile)?;
     }
 
-    let scene_config = match config_ext {
+    let scene = match config_ext {
         "sfrb" | "bin" => softy::scene::Scene::load_from_sfrb(opt.config)?,
         "ron" => softy::scene::Scene::load_from_ron(opt.config)?,
         "json" => softy::scene::Scene::load_from_json(opt.config)?,
@@ -253,44 +284,23 @@ pub fn try_main() -> Result<()> {
     .expect("Error setting Ctrl-C handler");
 
     // Progress bar
-    let bar = if opt.verbose.is_silent() {
-        ProgressBar::hidden()
-    } else {
-        ProgressBar::new(opt.steps).with_style(
-            ProgressStyle::default_bar()
-                .progress_chars("=> ")
-                .template("{elapsed:4} [{bar:20.cyan}] {pos:>7}/{len:7} {msg}")
-                .expect("Failed to render the progress bar."),
-        )
-    };
+    let bar = make_progress_bar(&opt.verbose, opt.steps);
 
     match ext {
         "gltf" | "glb" => {
             let logfile = opt.logfile.as_ref();
 
             // Write scene config so we know how the following log was created.
-            if let Some(ref logfile) = logfile {
-                let f = std::fs::File::options().append(true).open(logfile).unwrap();
-                let mut buf = std::io::BufWriter::new(f);
-                writeln!(buf, "\nConfig:\n").unwrap();
-                scene_config.config.write_as_ron(&mut buf).unwrap();
-                writeln!(buf).unwrap();
-            }
+            logfile.map(|f| log_scene_config(f, &scene.config));
 
             let mut meshes = Vec::new();
 
-            let result = scene_config.run_with(opt.steps, |frame, mut mesh, result| {
+            let result = scene.run_with(opt.steps, |frame, mut mesh, result| {
                 bar.inc(1);
                 if !running.load(Ordering::SeqCst) {
                     return false;
                 }
-                if let Some(ref logfile) = logfile {
-                    let mut f = std::fs::File::options().append(true).open(logfile).unwrap();
-                    writeln!(f, "\nFrame {}:", frame).unwrap();
-                    if let Some(result) = result {
-                        writeln!(f, "{}", result).unwrap();
-                    }
-                }
+                logfile.map(|f| log_step(f, &result, frame));
                 use geo::attrib::Attrib;
                 use geo::topology::VertexIndex;
                 // Convert vec3(f64) -> vec3(f32) attribs
@@ -351,7 +361,7 @@ pub fn try_main() -> Result<()> {
                     // attributes: &r#"{"vel": Vec3(f32), "contact": Vec3(f32), "friction": Vec3(f32), "net_force": Vec3(f32), "residual": Vec3(f32), "mass": f32, "animated": u32, "fixed": u32}"#.parse().unwrap(),
                     attributes: &r#"{"vel": Vec3(f32), "contact": Vec3(f32), "friction": Vec3(f32), "net_force": Vec3(f32), "residual": Vec3(f32)}"#.parse().unwrap(),
                     colors: &gltfgen::AttributeInfo::default(),
-                    texcoords: &gltfgen::TextureAttributeInfo::default(),
+                    texcoords: &r#"{"uv": f32}"#.parse().unwrap(),
                     material_attribute: "mtl_id",
                 };
 
@@ -362,11 +372,7 @@ pub fn try_main() -> Result<()> {
                         textures: Vec::new(),
                         materials: Vec::new(),
                         output: opt.output.into(),
-                        time_step: scene_config
-                            .config
-                            .sim_params
-                            .time_step
-                            .unwrap_or(1.0 / 24.0),
+                        time_step: scene.config.sim_params.time_step.unwrap_or(1.0 / 24.0),
                         insert_vanishing_frames: false,
                         animate_normals: false,
                         animate_tangents: false,
@@ -407,26 +413,14 @@ pub fn try_main() -> Result<()> {
             let logfile = opt.logfile.as_ref();
 
             // Write scene config so we know how the following log was created.
-            if let Some(ref logfile) = logfile {
-                let f = std::fs::File::options().append(true).open(logfile).unwrap();
-                let mut buf = std::io::BufWriter::new(f);
-                writeln!(buf, "\nConfig:\n").unwrap();
-                scene_config.config.write_as_ron(&mut buf).unwrap();
-                writeln!(buf).unwrap();
-            }
+            logfile.map(|logfile| log_scene_config(logfile, &scene.config));
 
-            scene_config.run_with(opt.steps, |frame, mesh, result| {
+            scene.run_with(opt.steps, |frame, mesh, result| {
                 bar.inc(1);
                 if !running.load(Ordering::SeqCst) {
                     return false;
                 }
-                if let Some(ref logfile) = logfile {
-                    let mut f = std::fs::File::options().append(true).open(logfile).unwrap();
-                    writeln!(f, "\nFrame {}:", frame).unwrap();
-                    if let Some(result) = result {
-                        writeln!(f, "{}", result).unwrap();
-                    }
-                }
+                logfile.map(|logfile| log_step(logfile, &result, frame));
                 geo::io::save_mesh(
                     &mesh,
                     out_path.join(out_file_name(frame)).with_extension(ext),

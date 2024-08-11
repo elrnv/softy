@@ -228,6 +228,27 @@ fn log_step(logfile: &Path, step_result: &Option<StepResult>, frame: u64) {
     }
 }
 
+/// Converts attribute of type T to type U.
+fn convert_attrib<T, U>(mesh: &mut geo::Mesh<f64>, name: &str, convert_elem: impl Fn(T) -> U)
+where
+    U: Default + geo::attrib::AttributeValue,
+    T: 'static,
+{
+    use geo::attrib::Attrib;
+    use geo::topology::VertexIndex;
+    let vec = mesh
+        .remove_attrib::<VertexIndex>(name)
+        .expect(&format!("existing {name} attribute"))
+        .into_data()
+        .into_vec::<T>()
+        .expect(&format!("{} attribute having type {}", name, stringify!(T)))
+        .into_iter()
+        .map(convert_elem)
+        .collect();
+    mesh.insert_attrib_data::<_, VertexIndex>(name, vec)
+        .expect(&format!("vacant attribute name \"{name}\""));
+}
+
 pub fn try_main() -> Result<()> {
     let opt = Opt::parse();
 
@@ -301,52 +322,22 @@ pub fn try_main() -> Result<()> {
                     return false;
                 }
                 logfile.map(|f| log_step(f, &result, frame));
-                use geo::attrib::Attrib;
-                use geo::topology::VertexIndex;
                 // Convert vec3(f64) -> vec3(f32) attribs
                 for name in ["vel", "friction", "residual", "contact"] {
-                    let vec32 = mesh
-                        .remove_attrib::<VertexIndex>(name)
-                        .expect(&format!("existing {name} attribute"))
-                        .into_data()
-                        .into_vec::<[f64; 3]>()
-                        .expect(&format!("{name} attribute having type [f64; 3]"))
-                        .into_iter()
-                        .map(|[x, y, z]| [x as f32, y as f32, z as f32])
-                        .collect();
-                    mesh.insert_attrib_data::<_, VertexIndex>(name, vec32)
-                        .expect(&format!("vacant attribute name \"{name}\""));
+                    convert_attrib(&mut mesh, name, |[x, y, z]: [f64; 3]| {
+                        [x as f32, y as f32, z as f32]
+                    });
                 }
                 // convert mass attrib
-                let scalar32 = mesh
-                    .remove_attrib::<VertexIndex>("mass")
-                    .expect("existing mass attribute")
-                    .into_data()
-                    .into_vec::<f64>()
-                    .expect("mass attribute having type f64")
-                    .into_iter()
-                    .map(|x| {
-                        if x.is_nan() || x.is_infinite() {
-                            -1.0 // cast nans and infinite masses to -1.0
-                        } else {
-                            x as f32
-                        }
-                    })
-                    .collect();
-                mesh.insert_attrib_data::<_, VertexIndex>("mass", scalar32)
-                    .expect("vacant attribute name \"mass\"");
+                convert_attrib(&mut mesh, "mass", |x: f64| {
+                    if x.is_nan() || x.is_infinite() {
+                        -1.0 // cast nans and infinite masses to -1.0
+                    } else {
+                        x as f32
+                    }
+                });
                 for name in ["fixed", "animated"] {
-                    let int = mesh
-                        .remove_attrib::<VertexIndex>(name)
-                        .expect(&format!("existing {name} attribute"))
-                        .into_data()
-                        .into_vec::<i32>()
-                        .expect(&format!("{name} attribute having type i32"))
-                        .into_iter()
-                        .map(|x| u32::try_from(x).unwrap_or(0))
-                        .collect();
-                    mesh.insert_attrib_data::<_, VertexIndex>(name, int)
-                        .expect(&format!("vacant attribute name \"{name}\""));
+                    convert_attrib(&mut mesh, name, |x: i32| u32::try_from(x).unwrap_or(0));
                 }
                 meshes.push((file_stem.to_string(), trimesh_from_mesh(mesh).into()));
                 true

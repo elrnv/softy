@@ -10,7 +10,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 
 use bincode::Options;
 use geo::attrib::Attrib;
-use geo::topology::{CellIndex, VertexIndex};
+use geo::topology::{CellIndex, CellVertexIndex, VertexIndex};
 use serde::{Deserialize, Serialize};
 use serde_json as json;
 use thiserror::Error;
@@ -182,7 +182,7 @@ impl MeshTopo {
         animated_positions: &[[f64; 3]],
         out_positions: &mut [[f64; 3]],
     ) {
-        if frame == 0 {
+        if frame != 0 {
             if let Some(animated) = self.vertex_attributes.get("animated") {
                 match animated {
                     Attribute::I32(x) => out_positions
@@ -208,13 +208,13 @@ impl MeshTopo {
                         .zip(animated_positions.iter())
                         .for_each(|(out_p, anim_p)| *out_p = *anim_p),
                 }
+                return;
             }
-        } else {
-            out_positions
-                .iter_mut()
-                .zip(animated_positions.iter())
-                .for_each(|(out_p, anim_p)| *out_p = *anim_p);
         }
+        out_positions
+            .iter_mut()
+            .zip(animated_positions.iter())
+            .for_each(|(out_p, anim_p)| *out_p = *anim_p);
     }
 }
 
@@ -403,6 +403,12 @@ impl SceneData {
             mesh.insert_attrib::<VertexIndex>(
                 name,
                 attrib.clone().into_geo_attrib::<VertexIndex>(),
+            )?;
+        }
+        for (name, attrib) in self.mesh_topo.cell_vertex_attributes.iter() {
+            mesh.insert_attrib::<CellVertexIndex>(
+                name,
+                attrib.clone().into_geo_attrib::<CellVertexIndex>(),
             )?;
         }
         for (name, attrib) in self.mesh_topo.cell_attributes.iter() {

@@ -61,6 +61,7 @@ unstable = ["criterion/real_blackbox"]
 mkl = ["mkl-corrode"]
 deterministic = [] # Enables seeded random state.
 json = ["serde_json"]
+ci = ["deterministic", "json"] # MKL not used in CI to avoid complex build steps.
 
 [[bench]]
 name = "box_stretch"

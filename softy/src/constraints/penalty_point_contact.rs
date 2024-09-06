@@ -3842,7 +3842,7 @@ mod tests {
     use crate::attrib_defines::*;
     use crate::nl_fem::state::{ResidualState, State};
     use crate::nl_fem::{NonLinearProblem, SimParams, SolverBuilder};
-    use crate::test_utils::{default_solid, num_static_configs, static_nl_params};
+    use crate::test_utils::{default_solid, static_nl_params, static_configs};
     use crate::{Elasticity, MaterialIdType};
     use ad::F1;
     use approx::assert_relative_eq;
@@ -4035,7 +4035,7 @@ mod tests {
             vec![1; surface.num_vertices()],
         )?;
 
-        for config_idx in 0..num_static_configs() {
+        for config_idx in static_configs() {
             let params = SimParams {
                 max_iterations: 50,
                 gravity: [0.0f32, -9.81, 0.0],

@@ -21,7 +21,7 @@ fn one_tet_solver(config_idx: u32) -> Solver<impl NLSolver<NLProblem<f64>, f64>,
 /// Test that the solver produces no change for an equilibrium configuration.
 #[test]
 fn equilibrium() {
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let params = SimParams {
             gravity: [0.0f32, 0.0, 0.0],
             ..static_nl_params(config_idx)
@@ -48,7 +48,7 @@ fn equilibrium() {
 #[test]
 fn simple_deformed() {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let mut solver = one_tet_solver(config_idx);
 
         geo::io::save_mesh(&solver.mesh(), "./out/before_one_tet.vtk").unwrap();
@@ -71,7 +71,7 @@ fn simple_deformed() {
 #[test]
 fn consistent_outer_iterations() -> Result<(), Error> {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let params = SimParams {
             ..static_nl_params(config_idx)
         };
@@ -105,7 +105,7 @@ fn volume_penalty() -> Result<(), Error> {
 
     let material = default_solid();
 
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let mut solver = SolverBuilder::new(static_nl_params(config_idx))
             .set_mesh(mesh.clone())
             .set_material(material)
@@ -130,7 +130,7 @@ fn volume_penalty_triangles() -> Result<(), Error> {
 
     let material = default_shell();
 
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let mut solver = SolverBuilder::new(static_nl_params(config_idx))
             .set_mesh(mesh.clone())
             .set_material(material)

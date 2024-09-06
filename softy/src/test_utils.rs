@@ -11,11 +11,6 @@ use geo::mesh::VertexPositions;
 use geo::ops::*;
 use geo::topology::{CellVertex, CellVertexIndex};
 
-/// Returns the total number of configurations availble.
-pub fn num_static_configs() -> u32 {
-    4
-}
-
 /// Returns an iterator of supported configs.
 pub fn static_configs() -> impl Iterator<Item = u32> {
     static_config_slice().iter().cloned()
@@ -41,7 +36,7 @@ pub fn static_config_slice() -> &'static [u32] {
 
 /// Gets the name of the config which points to a ron file in the assets directory.
 pub fn config_name(config: u32) -> &'static str {
-    assert!(config < num_static_configs());
+    assert!(config < 4);
     match config {
         0 => "direct_static_nl_params",
         1 => "direct_assisted_static_nl_params",

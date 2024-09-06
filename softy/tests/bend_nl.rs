@@ -127,7 +127,7 @@ fn quasi_static_deformed() -> Result<(), Error> {
 
     // Running the same sim again should produce deterministically identical results.
     // This used to fail with bending enabled.
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let mesh = make_three_tri_mesh();
         let mut solver = SolverBuilder::new(SimParams {
             velocity_clear_frequency: 20.0,

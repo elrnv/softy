@@ -211,7 +211,7 @@ fn single_tri_push() -> Result<(), Error> {
 
     let contact_tolerance = 0.001;
 
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let params = static_nl_params(config_idx);
         let mut solver = SolverBuilder::new(params.clone())
             .set_mesh(Mesh::from(trimesh.clone()))
@@ -324,7 +324,7 @@ fn tet_push() -> Result<(), Error> {
 
     compute_distance_potential_tetmesh(&orig_trimesh, &orig_tetmesh, kernel);
 
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let params = SimParams {
             gravity: [0.0f32; 3],
             ..static_nl_params(config_idx)
@@ -439,7 +439,7 @@ fn ball_tri_push_tester(
         vec![1; tetmesh.num_cells()],
     )?;
 
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let params = static_nl_params(config_idx);
 
         // If material is omitted it is assumed to be material 0 which is a completely fixed/animated mesh.

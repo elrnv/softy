@@ -395,7 +395,7 @@ fn box_slide_experiment() -> Result<(), Error> {
         ..Default::default()
     };
 
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let mut params = static_nl_params(config_idx);
         let pi = std::f64::consts::PI;
 

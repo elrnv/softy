@@ -38,7 +38,7 @@ pub fn contact_tester(
     num_steps: u32,
 ) -> Result<(), Error> {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let params = SimParams {
             time_step: Some(0.01),
             ..static_nl_params(config_idx)

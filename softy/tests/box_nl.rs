@@ -17,7 +17,7 @@ pub use test_utils::*;
 #[test]
 fn equilibrium() -> Result<(), Error> {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let params = SimParams {
             max_iterations: 1,
             gravity: [0.0f32; 3],
@@ -48,7 +48,7 @@ fn equilibrium() -> Result<(), Error> {
 #[test]
 fn stretch_plain() -> Result<(), Error> {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let mesh = make_stretched_box(4);
         let material: Material = load_material("assets/medium_solid_material.ron")?;
         let mut solver = SolverBuilder::new(NLParams {
@@ -70,7 +70,7 @@ fn stretch_plain() -> Result<(), Error> {
 #[ignore]
 fn stretch_plain_large() -> Result<(), Error> {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let mesh = make_stretched_box(10);
         let material: Material = load_material("assets/medium_solid_material.ron")?;
         let mut solver = SolverBuilder::new(NLParams {
@@ -88,7 +88,7 @@ fn stretch_plain_large() -> Result<(), Error> {
 #[test]
 fn stretch_volume_penalty() -> Result<(), Error> {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let material: Material = load_material("assets/medium_solid_material.ron")?;
         let mut mesh = make_stretched_box(4);
         mesh.insert_attrib_data::<VolumeZoneIdType, CellIndex>(
@@ -118,7 +118,7 @@ fn stretch_volume_penalty() -> Result<(), Error> {
 #[test]
 fn stretch_triangles() -> Result<(), Error> {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let material: Material = load_material("assets/soft_shell_material.ron")?;
         let mesh = make_stretched_box(2);
         let mesh = mesh.surface_trimesh();
@@ -143,7 +143,7 @@ fn stretch_triangles() -> Result<(), Error> {
 fn stretch_volume_penalty_triangles() -> Result<(), Error> {
     use geo::attrib::Attrib;
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let material: Material = load_material("assets/soft_shell_material.ron")?;
         let mesh = make_stretched_box(3);
         let mut mesh = mesh.surface_trimesh();
@@ -173,7 +173,7 @@ fn stretch_volume_penalty_triangles() -> Result<(), Error> {
 #[test]
 fn twist_plain() -> Result<(), Error> {
     init_logger();
-    for config_idx in 0..num_static_configs() {
+    for config_idx in static_configs() {
         let material: Material = load_material("assets/no_poisson_soft_solid_material.ron")?;
         let mesh = geo::io::load_tetmesh("assets/box_twist.vtk")?;
         let params = NLParams {

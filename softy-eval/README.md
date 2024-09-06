@@ -38,6 +38,17 @@ Supported outputs are `.glb`/`.gltf` and `.vtk`/`.vtu`.
 
 ## Examples
 
+The configuration files for running examples are stored using `git-lfs`, which
+must be installed and then the configurations pulled. To install `git-lfs`, run
+```
+git lfs install
+```
+
+To pull the configuration files, run
+```
+git lfs pull origin tvcg2024
+```
+
 The following examples from [\[2\]] can be reproduced with a single command:
 - `grasp` - the Figure 1 example (bottom row) can be generated with
 ```
